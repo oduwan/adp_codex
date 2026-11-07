@@ -60,6 +60,8 @@ class Memory:
     def _registered(self) -> None:
         safe_path(self.path)
         require(self.path.is_dir(), "Memory worktree is absent; use authorized init --apply")
+        require((self.path / ".git").is_file() and not (self.path / ".git").is_symlink(),
+                "Storage is not a registered linked memory worktree; unexpected files are refused")
         actual = value(self.path, "rev-parse", "--show-toplevel")
         require(Path(actual) == self.path, "Storage is not the selected memory worktree")
         common = value(self.path, "rev-parse", "--path-format=absolute", "--git-common-dir")
