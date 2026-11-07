@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import os
 import re
+import selectors
 import subprocess
+import time
 from pathlib import Path
 
 from .errors import ConfigurationError, GitError
@@ -21,20 +23,37 @@ def git(path: Path, *args: str, input: bytes | None = None,
     env.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0",
                GIT_CONFIG_NOSYSTEM="1")
     try:
-        # Files bound output without buffering arbitrary remote diagnostics in RAM.
-        import tempfile
-        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
-            result = subprocess.run(
-                ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-                 "-c", "protocol.ext.allow=never", "-C", str(path), *args],
-                input=input, stdout=output, stderr=errors, env=env, timeout=60,
-                check=False)
-            if result.returncode:
-                raise GitError(f"Git {args[0]} failed; inspect transport/auth or repository health")
-            if output.tell() > limit:
-                raise GitError(f"Git {args[0]} output exceeds the permitted size")
-            output.seek(0)
-            return output.read()
+        with subprocess.Popen(
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+             "-c", "protocol.ext.allow=never", "-c", "core.attributesFile=/dev/null",
+             "-c", "commit.gpgsign=false", "-C", str(path), *args],
+            stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env) as process:
+            try:
+                if input is not None:
+                    process.stdin.write(input)
+                    process.stdin.close()
+                output = bytearray()
+                deadline = time.monotonic() + 60
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not selector.select(remaining):
+                            raise GitError(f"Git {args[0]} timed out")
+                        block = os.read(process.stdout.fileno(), min(65536, limit + 1 - len(output)))
+                        if not block:
+                            break
+                        output.extend(block)
+                        if len(output) > limit:
+                            raise GitError(f"Git {args[0]} output exceeds the permitted size")
+                if process.wait(timeout=max(0.1, deadline - time.monotonic())):
+                    raise GitError(f"Git {args[0]} failed; inspect transport/auth or repository health")
+                return bytes(output)
+            except BaseException:
+                process.kill()
+                process.wait()
+                raise
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitError(f"Git {args[0]} unavailable or timed out") from exc
 

@@ -24,9 +24,17 @@ def run(path: Path, *args: str) -> str:
 
 
 def snapshot(root: Path) -> dict[str, str]:
-    return {str(p.relative_to(root)): ("link:" + os.readlink(p) if p.is_symlink()
-            else hashlib.sha256(p.read_bytes()).hexdigest())
-            for p in root.rglob("*") if p.is_file() or p.is_symlink()}
+    result = {}
+    for path in root.rglob("*"):
+        info = path.lstat()
+        if path.is_symlink():
+            content = "link:" + os.readlink(path)
+        elif path.is_file():
+            content = hashlib.sha256(path.read_bytes()).hexdigest()
+        else:
+            content = "directory"
+        result[str(path.relative_to(root))] = f"{info.st_mode}:{info.st_mtime_ns}:{content}"
+    return result
 
 
 class GitFixture(unittest.TestCase):

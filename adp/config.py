@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -22,8 +23,16 @@ def safe_path(path: Path) -> Path:
 
 def load_json(path: Path, limit: int = 65536) -> dict:
     safe_path(path)
-    if not path.is_file() or path.stat().st_size > limit:
-        raise ADPError("JSON must be a regular bounded file")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+            raise ADPError("JSON must be a regular bounded file")
+        raw = os.read(descriptor, limit + 1)
+        if len(raw) > limit:
+            raise ADPError("JSON payload exceeds size limit")
+    finally:
+        os.close(descriptor)
     def pairs(items: list[tuple[str, object]]) -> dict:
         data: dict = {}
         for key, item in items:
@@ -32,7 +41,7 @@ def load_json(path: Path, limit: int = 65536) -> dict:
             data[key] = item
         return data
     try:
-        data = json.loads(path.read_bytes(), object_pairs_hook=pairs,
+        data = json.loads(raw, object_pairs_hook=pairs,
                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise ADPError("Malformed JSON (duplicate keys and non-finite numbers forbidden)") from exc
