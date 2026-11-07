@@ -108,10 +108,11 @@ class ConfigurationTests(GitFixture):
         import contextlib
         import io
         marker = self.base / "executed"
-        helper = self.base / "git-remote-probe"
-        helper.write_text("#!/bin/sh\ntouch '" + str(marker) + "'\nexit 1\n")
-        helper.chmod(0o700)
-        for url in ("probe::ignored", "ext::ignored", "https://[broken", "ssh://host:bad/repo"):
+        for name in ("probe", "9probe"):
+            helper = self.base / ("git-remote-" + name)
+            helper.write_text("#!/bin/sh\ntouch '" + str(marker) + "'\nexit 1\n")
+            helper.chmod(0o700)
+        for url in ("probe::ignored", "9probe::ignored", "ext::ignored", "https://[broken", "ssh://host:bad/repo"):
             run(self.a, "remote", "set-url", "upstream", url)
             before = snapshot(self.base)
             with patch.dict(os.environ, {"PATH": str(self.base) + os.pathsep + os.environ["PATH"]}):

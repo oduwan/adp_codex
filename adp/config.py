@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,7 +52,7 @@ def load_json(path: Path, limit: int = 65536) -> dict:
 
 def remote_identity(url: str, root: Path) -> str:
     if (any(ord(c) < 32 for c in url) or url.startswith("-")
-            or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", url)):
+            or url.partition(":")[2].startswith(":")):
         raise ConfigurationError("Unsafe remote transport")
     if "://" in url:
         try:
