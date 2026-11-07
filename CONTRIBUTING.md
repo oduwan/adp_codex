@@ -4,14 +4,15 @@ Thank you for helping develop ADP Codex.
 
 ## Current phase
 
-The project currently ships a **planning-only skill scaffold**. Please do not describe it as an autonomous developer or advertise unimplemented CLI commands.
+The project ships accepted M1 portable memory and a **planning-only skill scaffold**. It remains non-autonomous; do not advertise unimplemented execution or discovery commands.
 
 Read [Architecture](docs/ARCHITECTURE.md), [Progress Guard](docs/PROGRESS_GUARD.md), [Policy Provider](docs/POLICY_PROVIDER.md), [Git workflow](docs/GIT_WORKFLOW.md) and [Roadmap](docs/ROADMAP.md) before proposing major changes.
 
-The Issue #1 branch includes a non-autonomous M1 package candidate. Its memory
-commands and synthetic acceptance checks are documented in
-[the CLI guide](docs/MEMORY_CLI.md); the accepted baseline and later milestones
-remain subject to review and separate integration.
+M1 was accepted and merged through PR #7. Its memory commands and synthetic
+acceptance checks are documented in [the CLI guide](docs/MEMORY_CLI.md). The
+Issue #2 guard candidate and explicit schema upgrade are documented in
+[the Guard API](docs/GUARD_API.md); they require independent exact-HEAD review
+and separate integration.
 
 ## Workflow
 

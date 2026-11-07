@@ -4,7 +4,7 @@
 
 **ADP Codex** is an architecture-first project for a repository-agnostic, Codex-assisted development orchestrator. Its intended workflow is to discover existing GitHub issues, assemble a dependency-aware task track, execute admitted tasks with independent review, and publish only meaningful product outcomes.
 
-> **Status: design and skill scaffold — not an autonomous executor.** The engine, issue adapter, scheduler, and commands below are planned, not shipped. Nothing in this repository grants access to or modifies another project's code, issues, or infrastructure.
+> **Status: accepted M1 portable memory, with an M2 Progress Guard candidate.** Autonomous execution, issue discovery and scheduling remain unavailable. Memory writes require explicit authorization; no product-code, issue or infrastructure execution authority is granted.
 
 ## Principles
 
@@ -15,25 +15,33 @@
 - **Keep product history human-readable.** Internal test repairs, diagnostics, agent handoffs, and orchestration states stay out of product issue comments. Publish no more than one concise product summary per completed product iteration.
 - **Start read-only.** Repository inspection and planning cannot execute issue-body instructions, mutate resources, or assume merge/deploy permissions.
 
-## M1 implementation candidate
+## Accepted M1 portable memory
 
-Issue #1 adds a Python 3.11+ package candidate for explicitly authorized portable
+Issue #1 ships a Python 3.11+ package for explicitly authorized portable
 memory, `init`, `doctor`, `status`, ownership and handoff. See the
 [CLI and API guide](docs/MEMORY_CLI.md) and [v1 state contract](docs/STATE_CONTRACT.md).
-The candidate does not execute product code, discover issues, decide Git policy,
-or provide the Progress Guard. Acceptance and integration require independent
-review on the exact final revision; accepted `main` remains non-autonomous.
+M1 does not execute product code, discover issues or decide Git policy. It was
+reviewed and merged in PR #7; accepted `main` remains non-autonomous. The guard
+candidate below requires its own exact-revision review and separate integration.
 
 ```bash
 python3 -m pip install .
 adp --help
 ```
 
+## M2 Progress Guard candidate
+
+M1 portable memory is accepted. Issue #2 adds a standalone executable guard
+candidate with durable counters, externally verified forensic evidence, bounded
+recovery and finite diagnostic censuses. It requires an explicit memory upgrade;
+read-only M1 behavior is preserved. See [the Guard API and migration guide](docs/GUARD_API.md).
+No worker execution or unattended operation is enabled.
+
 ## Planned commands
 
 ```text
 adp init       inspect a target repository; propose initial configuration
-adp doctor     verify installation, permissions, policy, and memory health
+adp doctor     inspect Git identity, memory health and remote read access
 adp discover   read current issues, PRs, and native relationships
 adp plan       construct and refresh a dependency-aware task track
 adp run        execute authorized work through the Conductor
@@ -43,7 +51,7 @@ adp handoff    transfer ownership to another machine
 adp audit      validate evidence, state, and acceptance coverage
 ```
 
-**These commands describe the initial scaffold roadmap; the M1 candidate above implements only its bounded memory subset.** The packaged Codex skill is intentionally read-only and limited to explaining and reviewing project/track readiness.
+**This roadmap includes accepted M1 memory commands and planned execution/discovery interfaces.** The packaged Codex skill is intentionally read-only and limited to explaining and reviewing project/track readiness.
 
 ## Project layout
 
@@ -72,7 +80,7 @@ python3 scripts/validate_scaffold.py
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-Python 3.11+ is the planned runtime baseline; the scaffold has no third-party runtime dependencies. See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing changes.
+Python 3.11+ is the runtime baseline; the package has no third-party runtime dependencies. See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing changes.
 
 ## Origin and scope
 

@@ -1,6 +1,6 @@
-# Portable working memory — proposed v1 state contract
+# Portable working memory — accepted v1 and candidate v2
 
-**Status:** design contract. The initial repository does not implement Git-backed memory.
+**Status:** M1 v1 memory is accepted through PR #7; M2 v2 guard integration is a separately reviewed candidate.
 
 ## Physical layout
 
@@ -36,11 +36,10 @@ The new Conductor reconstructs live work from the synced state, then revalidates
 
 Implement strict size caps, schema/version checks, path validation, symlink refusal, no secrets or raw traces in remote memory, and bounded disk use. Prefer short current-state descriptions and references to durable product evidence over growing archives. A portable working memory is **not** a full event log, backup service or permission broker.
 
-## M1 v1 implementation candidate
+## Accepted M1 v1 implementation
 
-Issue #1 adds an implementation candidate in `adp.memory.Memory` and
-`adp.schema`; acceptance still requires exact-revision independent review and
-separate integration. See [CLI and API](MEMORY_CLI.md) for operation and exit codes.
+Issue #1 provides the accepted implementation in `adp.memory.Memory` and
+`adp.schema`, independently reviewed and integrated through PR #7. See [CLI and API](MEMORY_CLI.md) for operation and exit codes.
 No issue, PR, product-code execution or external outcome is performed by these APIs.
 
 ### Exact schema and bounds
@@ -123,3 +122,33 @@ The implementation requires a POSIX filesystem with `flock`, atomic rename,
 hard links and directory fsync. Unsupported platforms fail closed for writes.
 Read-only inspection does not acquire locks or fetch. Hostile same-user concurrent
 filesystem replacement is outside the isolation model; use OS access controls.
+
+## M2 explicit state version 2
+
+M1 has been accepted and integrated. M2 adds an explicit owner-authorized upgrade
+from closed state version 1 to closed version 2; it does not silently upgrade
+read-only commands or existing memory. Task files remain the accepted M1 version 1.
+Version 2 retains every existing state field and adds `progress_guard`, containing
+its own schema version 1, bounded requirement records and current `task_epochs`.
+
+`task_epochs` maps each current task key to its incarnation checkpoint revision.
+A retired/recreated ID receives a new epoch, fencing stale guard actions/approvals
+without changing M1 task contents. Requirement identity hashes the externally
+accepted contract/gate, so new task or worker aliases retain the same counters.
+Guard records survive retirement; capacity exhaustion requires operator disposition.
+
+Each requirement holds immutable criteria/dependencies/thresholds, task bindings,
+current sequence/mode/counters, recorded source authors, bounded verified facts,
+accepted cause, unresolved criteria/dependencies, latest structured observation,
+active exact-context reservation, latest-observation provenance, forensic
+round/request/plan, exact-context approval, and a bounded current campaign with
+one durable in-flight case and explicit interrupted-runner evidence. Historical guard context records exact repository identity, source
+SHA, task iteration/incarnation and ownership generation. Only verified progress
+may reset counters; terminal unsafe/operator states have no automatic reset API.
+
+The M1 checkpoint journal transports guard changes and migrations atomically.
+A v2-capable reader validates/replays both v1 and migration journals; no owner,
+assignment result or external action is invented. An older M1 binary refuses v2,
+so all writers must be upgraded before opting in. No downgrade/history rewrite is
+provided. See [the Guard API](GUARD_API.md) for fields, transitions, trust boundaries,
+size caps, upgrade command and complete synthetic qualification.

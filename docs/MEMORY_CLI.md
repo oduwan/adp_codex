@@ -1,8 +1,8 @@
 # Portable memory CLI and API
 
-This issue branch implements the M1 coordination kernel. Accepted `main` remains
-non-autonomous; discovery, policy decisions, Progress Guard and worker execution
-are not implemented here. Python 3.11+ and Git are required. The runtime uses only
+M1 portable memory is accepted on `main`, which remains non-autonomous.
+Discovery, policy decisions and worker execution remain unavailable. Issue #2
+adds a separate [Progress Guard candidate and explicit upgrade](GUARD_API.md). Python 3.11+ and Git are required. The runtime uses only
 the Python standard library.
 
 ## Configuration and identity

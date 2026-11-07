@@ -1,4 +1,4 @@
-"""Bounded v1 current-state schema. Unknown fields are refused."""
+"""Bounded v1/v2 current-state schema. Unknown fields are refused."""
 from __future__ import annotations
 
 import hashlib
@@ -77,8 +77,14 @@ def result_schema(result: object) -> None:
 
 def bundle(state: dict, tasks: dict[str, dict], repository_id: str) -> None:
     require(type(tasks) is dict, "Invalid task collection")
-    fields(state, "schema_version repository_id revision generation owner task_keys assignment_sequence")
-    require(type(state["schema_version"]) is int and state["schema_version"] == 1, "Unsupported schema version")
+    version = state.get("schema_version") if type(state) is dict else None
+    require(type(version) is int and version in (1, 2), "Unsupported schema version")
+    fields(state, "schema_version repository_id revision generation owner task_keys assignment_sequence"
+           + (" progress_guard" if version == 2 else ""))
+    if version == 2:
+        from .guard_schema import guard_schema
+        guard_schema(state["progress_guard"], repository_id)
+        require(set(state["progress_guard"]["task_epochs"]) == set(tasks), "Guard task incarnation registry mismatch")
     require(state["repository_id"] == repository_id, "Repository identity mismatch")
     integer(state["revision"], 1)
     integer(state["generation"])
