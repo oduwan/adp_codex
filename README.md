@@ -62,7 +62,7 @@ Python 3.11+ is the planned runtime baseline; the scaffold has no third-party ru
 
 ## Origin and scope
 
-This project is informed by the field-tested ADP v2 coordination approach from [ESO_control](https://github.com/oduwan/ESO_control), but it is **not** a copy of that repository's project-specific safety, deployment, or release policy. The first integration target is GitHub; the system is designed to accommodate other repository providers later. Initial implementation and testing must use disposable synthetic Git repositories and fixture issues, not production worktrees.
+This design builds on earlier field experience with compact single-writer coordination and independent exact-revision review, but it does **not** copy any target repository's project-specific safety, deployment, or release policy. The first integration target is GitHub; the system is designed to accommodate other repository providers later. Initial implementation and testing must use disposable synthetic Git repositories and fixture issues, not production worktrees.
 
 ## Security and licensing
 
