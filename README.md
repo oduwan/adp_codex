@@ -15,6 +15,20 @@
 - **Keep product history human-readable.** Internal test repairs, diagnostics, agent handoffs, and orchestration states stay out of product issue comments. Publish no more than one concise product summary per completed product iteration.
 - **Start read-only.** Repository inspection and planning cannot execute issue-body instructions, mutate resources, or assume merge/deploy permissions.
 
+## M1 implementation candidate
+
+Issue #1 adds a Python 3.11+ package candidate for explicitly authorized portable
+memory, `init`, `doctor`, `status`, ownership and handoff. See the
+[CLI and API guide](docs/MEMORY_CLI.md) and [v1 state contract](docs/STATE_CONTRACT.md).
+The candidate does not execute product code, discover issues, decide Git policy,
+or provide the Progress Guard. Acceptance and integration require independent
+review on the exact final revision; accepted `main` remains non-autonomous.
+
+```bash
+python3 -m pip install .
+adp --help
+```
+
 ## Planned commands
 
 ```text
@@ -29,7 +43,7 @@ adp handoff    transfer ownership to another machine
 adp audit      validate evidence, state, and acceptance coverage
 ```
 
-**None of these CLI commands are implemented in the initial scaffold.** The packaged Codex skill is intentionally read-only and limited to explaining and reviewing project/track readiness.
+**These commands describe the initial scaffold roadmap; the M1 candidate above implements only its bounded memory subset.** The packaged Codex skill is intentionally read-only and limited to explaining and reviewing project/track readiness.
 
 ## Project layout
 

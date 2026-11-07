@@ -8,6 +8,11 @@ The project currently ships a **planning-only skill scaffold**. Please do not de
 
 Read [Architecture](docs/ARCHITECTURE.md), [Progress Guard](docs/PROGRESS_GUARD.md), [Policy Provider](docs/POLICY_PROVIDER.md), [Git workflow](docs/GIT_WORKFLOW.md) and [Roadmap](docs/ROADMAP.md) before proposing major changes.
 
+The Issue #1 branch includes a non-autonomous M1 package candidate. Its memory
+commands and synthetic acceptance checks are documented in
+[the CLI guide](docs/MEMORY_CLI.md); the accepted baseline and later milestones
+remain subject to review and separate integration.
+
 ## Workflow
 
 1. Open an issue that states the observable requirement, constraints and bounded acceptance tests. For cross-cutting design changes, discuss the contract before implementation.
