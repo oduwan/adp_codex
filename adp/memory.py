@@ -198,6 +198,10 @@ class Memory:
     def _checkpoint(self, head: str, state: dict, tasks: dict[str, dict]) -> dict:
         state["revision"] += 1
         state["task_keys"] = sorted(tasks)
+        if state["schema_version"] == 2:
+            epochs = state["progress_guard"]["task_epochs"]
+            state["progress_guard"]["task_epochs"] = {
+                task_key: epochs.get(task_key, state["revision"]) for task_key in tasks}
         bundle(state, tasks, self.config.identity)
         pending = {"base": head, "state": state, "tasks": tasks}
         atomic(self.control / "pending.json", encode(pending, MAX_JOURNAL))
@@ -457,3 +461,17 @@ class Memory:
             path.unlink()
             sync_directory(path.parent)
             return self.inspect()
+
+    def upgrade_guard(self, *, authorized: bool = False) -> dict:
+        """Explicit owner-only v1 -> v2 upgrade; M1 tasks are unchanged."""
+        if not authorized:
+            raise AuthorityError("Guard migration requires explicit memory-write authorization")
+        with locked(self.control):
+            head, state, tasks = self._start()
+            if state["schema_version"] == 2:
+                return self.inspect()
+            require(state["schema_version"] == 1, "Unsupported migration source")
+            state["schema_version"] = 2
+            state["progress_guard"] = {"schema_version": 1, "requirements": {},
+                                       "task_epochs": {task_key: state["revision"] + 1 for task_key in tasks}}
+            return self._checkpoint(head, state, tasks)

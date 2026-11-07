@@ -29,6 +29,14 @@ python3 -m pip install .
 adp --help
 ```
 
+## M2 Progress Guard candidate
+
+M1 portable memory is accepted. Issue #2 adds a standalone executable guard
+candidate with durable counters, externally verified forensic evidence, bounded
+recovery and finite diagnostic censuses. It requires an explicit memory upgrade;
+read-only M1 behavior is preserved. See [the Guard API and migration guide](docs/GUARD_API.md).
+No worker execution or unattended operation is enabled.
+
 ## Planned commands
 
 ```text

@@ -30,6 +30,8 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--authorize-memory-write", action="store_true")
     for command in ("doctor", "status", "recover", "handoff", "release", "cleanup-inbox"):
         commands.add_parser(command, parents=[common])
+    upgrade = commands.add_parser("guard-upgrade", parents=[common], help="Explicitly migrate owned memory to guard schema v2")
+    upgrade.add_argument("--authorize-memory-write", action="store_true")
     claim = commands.add_parser("claim", parents=[common])
     claim.add_argument("--owner", required=True)
     claim.add_argument("--takeover", action="store_true")
@@ -109,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if report["health"] == "SYNCED" else 4
         if command == "init":
             result = memory.initialize(authorized=args.authorize_memory_write)
+        elif command == "guard-upgrade":
+            result = memory.upgrade_guard(authorized=args.authorize_memory_write)
         elif command == "claim":
             result = memory.claim(args.owner, takeover=args.takeover,
                                   confirmed_stopped_owner=args.confirm_stopped_owner)

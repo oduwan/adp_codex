@@ -123,3 +123,32 @@ The implementation requires a POSIX filesystem with `flock`, atomic rename,
 hard links and directory fsync. Unsupported platforms fail closed for writes.
 Read-only inspection does not acquire locks or fetch. Hostile same-user concurrent
 filesystem replacement is outside the isolation model; use OS access controls.
+
+## M2 explicit state version 2
+
+M1 has been accepted and integrated. M2 adds an explicit owner-authorized upgrade
+from closed state version 1 to closed version 2; it does not silently upgrade
+read-only commands or existing memory. Task files remain the accepted M1 version 1.
+Version 2 retains every existing state field and adds `progress_guard`, containing
+its own schema version 1, bounded requirement records and current `task_epochs`.
+
+`task_epochs` maps each current task key to its incarnation checkpoint revision.
+A retired/recreated ID receives a new epoch, fencing stale guard actions/approvals
+without changing M1 task contents. Requirement identity hashes the externally
+accepted contract/gate, so new task or worker aliases retain the same counters.
+Guard records survive retirement; capacity exhaustion requires operator disposition.
+
+Each requirement holds immutable criteria/dependencies/thresholds, task bindings,
+current sequence/mode/counters, recorded source authors, bounded verified facts,
+accepted cause, unresolved criteria/dependencies, latest structured observation,
+active exact-context reservation, forensic round/request/plan, exact-context
+approval, and a bounded current campaign. Historical guard context records source
+SHA, task iteration/incarnation and ownership generation. Only verified progress
+may reset counters; terminal unsafe/operator states have no automatic reset API.
+
+The M1 checkpoint journal transports guard changes and migrations atomically.
+A v2-capable reader validates/replays both v1 and migration journals; no owner,
+assignment result or external action is invented. An older M1 binary refuses v2,
+so all writers must be upgraded before opting in. No downgrade/history rewrite is
+provided. See [the Guard API](GUARD_API.md) for fields, transitions, trust boundaries,
+size caps, upgrade command and complete synthetic qualification.

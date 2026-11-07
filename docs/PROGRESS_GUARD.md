@@ -54,3 +54,58 @@ A diagnostic census is **not** formal release acceptance. Preserve original cove
 ## Acceptance tests for this component
 
 Synthetic fixtures must prove all triggers, restart-persistent counters, genuine-progress resets, cosmetic-change non-resets, bounded forensic exit, protected full-survey continuation, safe escalation and non-pass accounting. No real product diagnosis is required to qualify the guard.
+
+## M2 executable implementation candidate
+
+Issue #2 implements this contract in `adp.guard.ProgressGuard`, with typed inputs
+and decisions in `adp.guard_types`. It is a standalone offline boundary backed
+by the accepted M1 Conductor checkpoint writer. It does not invoke workers,
+GitHub, repairs, product Git operations, policy decisions or unattended execution.
+The later execution integration must call this boundary before each action.
+M1 assignment records remain coordination metadata and grant no execution authority.
+
+See [Guard API and migration](GUARD_API.md) for the exact state machine, trust
+boundary, accounting, limits, upgrade commands and qualification commands.
+
+The executable defaults are the table above: 3 failed/stalled cycles, 2 unproductive
+corrections, a refusal of the third unfalsifiable exploratory proposal, and 3
+unresolved blocking review observations. Distinct wording of a blocking finding
+also counts conservatively until verified progress. Repeated PASS with no newly
+verified requirement, cause, dependency or correction still counts as stalled
+work; increasing PASS counts alone cannot reset the guard. Thresholds may only be
+made stricter when the accepted requirement is first admitted.
+
+A mandatory reservation permits exactly one observation. A second worker, new
+hypothesis, task alias, restart or source revision cannot bypass a pending
+reservation or its counters. Operator-verified contract/gate identity determines
+the requirement key; aliases bind the same durable record. Retirement retains
+that bounded record. Recreating a task creates a new incarnation and cannot make
+an old action or approval current. No reset or override API is provided.
+
+An independent, externally verified progress claim resets counters only after
+its exact baseline and measured transition are checked. Reused evidence and
+renamed cause facts cannot reset a stall. Requirement verification requires PASS
+and removal of precisely one admitted criterion; dependency resolution must name
+an admitted pending dependency. CORRECTION_APPROVED binds the exact source SHA,
+task iteration, incarnation and ownership generation. Source drift, including a
+change away and back to the same SHA, invalidates current approval.
+
+The first forensic request admits at most one reviewed discriminating action. If
+it produces no verified narrowing, one renewed independent review can admit one
+final bounded action. A second inconclusive proof produces the terminal
+OPERATOR_DECISION_REQUIRED boundary. Scope/dependency ownership conflicts or a
+review without a finite plan go directly to that boundary. UNCLASSIFIED with a
+finite plan defers uncertainty honestly; it does not become a product diagnosis.
+TEST_CORRUPTED requires positively evidenced external review and cannot relabel a
+failed or quarantined observation as PASS. A safety, authority, contamination or
+containment violation produces STOP_UNSAFE and cannot be reset by a proof.
+
+A campaign requires separately verified operator authority, an immutable inventory,
+quarantine set, evidence reference and containment budget. Its ordinary FAIL,
+ERROR and TIMEOUT results update counters but do not terminate its remaining
+inventory. Each next-case admission checks current revision/generation and time.
+Safety, contamination, clock/deadline or budget violations stop the campaign and
+leave remaining cases NOTRUN. Original inventory order and denominator never
+shrink. Quarantined observations retain raw outcomes and are counted separately
+from effective PASS. Campaigns are diagnostic censuses, never formal acceptance.
+Only one census is admitted without new independently verified progress.
