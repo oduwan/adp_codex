@@ -123,8 +123,11 @@ def campaign_spec(value: dict) -> None:
     budget(value, campaign=True)
 
 
-def context(value: dict) -> None:
-    fields(value, "task_key revision iteration generation task_epoch")
+def context(value: dict, repository_id: str | None = None) -> None:
+    fields(value, "repository_id task_key revision iteration generation task_epoch")
+    string(value["repository_id"])
+    if repository_id is not None:
+        require(value["repository_id"] == repository_id, "Guard context repository identity mismatch")
     require(isinstance(value["task_key"], str) and KEY.fullmatch(value["task_key"]), "Invalid guard task key")
     sha(value["revision"], nullable=True)
     integer(value["iteration"], 1)
@@ -132,7 +135,7 @@ def context(value: dict) -> None:
     integer(value["task_epoch"], 1)
 
 
-def record(value: dict, identifier: str) -> None:
+def record(value: dict, identifier: str, repository_id: str | None = None) -> None:
     fields(value, "contract gate acceptance dependencies limits tasks sequence mode counters authors seen_facts cause unresolved pending_dependencies last last_event active forensic_round request plan approval campaign campaign_runs reason")
     require(requirement_id(value["contract"], value["gate"]) == identifier, "Guard requirement identity mismatch")
     strings(value["acceptance"], MAX_ACCEPTANCE, 128, nonempty=True)
@@ -167,7 +170,7 @@ def record(value: dict, identifier: str) -> None:
         choice(value["last_event"], {"attempt", "campaign"})
     if value["last"] is not None:
         fields(value["last"], "context action observation counters")
-        context(value["last"]["context"])
+        context(value["last"]["context"], repository_id)
         action(value["last"]["action"])
         observation(value["last"]["observation"])
         fields(value["last"]["counters"], COUNTERS)
@@ -177,7 +180,7 @@ def record(value: dict, identifier: str) -> None:
         active = value["active"]
         fields(active, "id context action bounded started deadline")
         string(active["id"], 64)
-        context(active["context"])
+        context(active["context"], repository_id)
         action(active["action"])
         require(type(active["bounded"]) is bool, "Invalid bounded action flag")
         integer(active["started"])
@@ -189,7 +192,7 @@ def record(value: dict, identifier: str) -> None:
         string(request["id"], 64)
         integer(request["round"], 1)
         require(request["round"] == value["forensic_round"], "Forensic request round mismatch")
-        context(request["context"])
+        context(request["context"], repository_id)
         string(request["baseline"], 64)
         strings(request["excluded_authors"], MAX_AUTHORS, 128)
         strings(request["evidence"], 4, nonempty=True)
@@ -198,7 +201,7 @@ def record(value: dict, identifier: str) -> None:
         fields(request["counters"], COUNTERS)
         for counter in request["counters"].values():
             integer(counter)
-        context(request["observation_context"])
+        context(request["observation_context"], repository_id)
         if request["hypothesis"] is not None:
             string(request["hypothesis"], 512)
         if request["outcome"] is not None:
@@ -213,7 +216,7 @@ def record(value: dict, identifier: str) -> None:
         string(value["plan"]["reference"])
     if value["approval"] is not None:
         fields(value["approval"], "context reviewer reference subject")
-        context(value["approval"]["context"])
+        context(value["approval"]["context"], repository_id)
         string(value["approval"]["reviewer"], 128)
         string(value["approval"]["reference"])
         string(value["approval"]["subject"], 64)
@@ -221,7 +224,7 @@ def record(value: dict, identifier: str) -> None:
         campaign = value["campaign"]
         fields(campaign, "id context spec results started deadline last_time samples payload_bytes stopped active_case interruption")
         string(campaign["id"], 64)
-        context(campaign["context"])
+        context(campaign["context"], repository_id)
         campaign_spec(campaign["spec"])
         results = campaign["results"]
         require(type(results) is list and len(results) == len(campaign["spec"]["inventory"]), "Campaign denominator changed")
@@ -277,7 +280,7 @@ def record(value: dict, identifier: str) -> None:
     encode(value)
 
 
-def guard_schema(value: dict) -> None:
+def guard_schema(value: dict, repository_id: str | None = None) -> None:
     fields(value, "schema_version requirements task_epochs")
     require(type(value["schema_version"]) is int and value["schema_version"] == 1, "Unsupported guard schema")
     epochs = value["task_epochs"]
@@ -289,4 +292,4 @@ def guard_schema(value: dict) -> None:
     require(type(requirements) is dict and len(requirements) <= MAX_REQUIREMENTS, "Guard requirement bound exceeded")
     for identifier, requirement in requirements.items():
         require(isinstance(identifier, str) and KEY.fullmatch(identifier), "Invalid requirement ID")
-        record(requirement, identifier)
+        record(requirement, identifier, repository_id)

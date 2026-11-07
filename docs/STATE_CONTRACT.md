@@ -142,7 +142,7 @@ current sequence/mode/counters, recorded source authors, bounded verified facts,
 accepted cause, unresolved criteria/dependencies, latest structured observation,
 active exact-context reservation, latest-observation provenance, forensic
 round/request/plan, exact-context approval, and a bounded current campaign with
-one durable in-flight case and explicit interrupted-runner evidence. Historical guard context records source
+one durable in-flight case and explicit interrupted-runner evidence. Historical guard context records exact repository identity, source
 SHA, task iteration/incarnation and ownership generation. Only verified progress
 may reset counters; terminal unsafe/operator states have no automatic reset API.
 

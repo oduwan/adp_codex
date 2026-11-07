@@ -83,7 +83,7 @@ def bundle(state: dict, tasks: dict[str, dict], repository_id: str) -> None:
            + (" progress_guard" if version == 2 else ""))
     if version == 2:
         from .guard_schema import guard_schema
-        guard_schema(state["progress_guard"])
+        guard_schema(state["progress_guard"], repository_id)
         require(set(state["progress_guard"]["task_epochs"]) == set(tasks), "Guard task incarnation registry mismatch")
     require(state["repository_id"] == repository_id, "Repository identity mismatch")
     integer(state["revision"], 1)

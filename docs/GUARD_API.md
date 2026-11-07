@@ -45,9 +45,12 @@ guard records remain bounded and retain stalls across aliases or retirement.
 Every mutating operation requires its current local owner and synchronized remote.
 `inspect`, evidence-subject construction, `campaign_summary` and
 `require_approval` are observational. A `Decision` contains a `DecisionKind`, reason,
-operation scope and exact `Baseline`: contract/gate, canonical task key, source
+operation scope and exact `Baseline`: repository identity, contract/gate, canonical task key, source
 SHA, task iteration/incarnation, ownership generation, requirement sequence,
-record digest and unresolved acceptance set.
+record digest and unresolved acceptance set. Every stored action, forensic,
+approval and census context also binds the repository identity. The schema
+requires that identity to match M1 repository selection, so a shared verifier
+cannot replay one repository's evidence in another with otherwise identical data.
 
 The four decisions are ALLOW, FORENSIC_REQUIRED, STOP_UNSAFE and
 OPERATOR_DECISION_REQUIRED. A denied attempt raises `GuardRefusal` carrying that

@@ -166,6 +166,7 @@ class Campaign:
 
 @dataclass(frozen=True)
 class Baseline:
+    repository_id: str
     requirement_id: str
     contract: str
     gate: str

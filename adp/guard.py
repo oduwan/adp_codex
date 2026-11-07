@@ -54,7 +54,7 @@ class ProgressGuard:
 
     @staticmethod
     def _context(state: dict, task: dict) -> dict:
-        return {"task_key": task["key"], "revision": task["source_revision"],
+        return {"repository_id": state["repository_id"], "task_key": task["key"], "revision": task["source_revision"],
                 "iteration": task["iteration"], "generation": state["generation"],
                 "task_epoch": state["progress_guard"]["task_epochs"][task["key"]]}
 
@@ -74,7 +74,7 @@ class ProgressGuard:
 
     @staticmethod
     def _baseline(identifier: str, state: dict, task: dict, item: dict) -> Baseline:
-        return Baseline(identifier, item["contract"], item["gate"], task["key"],
+        return Baseline(state["repository_id"], identifier, item["contract"], item["gate"], task["key"],
                         task["source_revision"], task["iteration"], state["generation"],
                         state["progress_guard"]["task_epochs"][task["key"]], item["sequence"], digest(item), tuple(item["unresolved"]))
 
@@ -118,7 +118,7 @@ class ProgressGuard:
             value = transition(state, task, item)
             if encode(item) != before:
                 item["sequence"] += 1
-                record(item, identifier)
+                record(item, identifier, self.memory.config.identity)
                 self.memory._checkpoint(head, state, tasks)
             return value, self._decision(identifier, state, task, item)
 
@@ -171,7 +171,7 @@ class ProgressGuard:
                     "plan": None, "approval": None, "campaign": None, "campaign_runs": 0,
                     "reason": "Admitted baseline; a bounded attempt may be reserved"}
                 requirements[identifier] = item
-            record(item, identifier)
+            record(item, identifier, self.memory.config.identity)
             self.memory._checkpoint(head, state, tasks)
             return identifier
 
