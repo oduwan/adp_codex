@@ -4,10 +4,11 @@ Scope: this repository only (`oduwan/adp_codex`). This is **not** a policy templ
 
 ## Current phase
 
-- Implement an architecture-first, skill-only scaffold. An autonomous executor, `adp init`, `adp discover`, and `adp run` do **not** exist yet.
-- Do not claim that the scaffold can launch Codex subagents, migrate external ADP memory, or safely merge product PRs.
-- Before implementation read `docs/ARCHITECTURE.md`, `docs/PROGRESS_GUARD.md`, `docs/POLICY_PROVIDER.md`, and `docs/ROADMAP.md`.
-- Work on one bounded issue at a time. Avoid adding repository-specific constants or policy into the engine design.
+- The M0 architecture-and-skill scaffold is complete. Implementation proceeds through the bounded, dependency-ordered issues #1–#6; do not rebuild M0 as a prerequisite.
+- The autonomous engine and `adp init`, `adp discover`, and `adp run` do **not** yet exist on the accepted main branch. Update capability claims only after the corresponding implementation is reviewed, merged, and qualified.
+- Before implementation read the active issue and `docs/ARCHITECTURE.md`, `docs/STATE_CONTRACT.md`, `docs/PROGRESS_GUARD.md`, `docs/POLICY_PROVIDER.md`, and `docs/ROADMAP.md`.
+- Keep each implementation inside its issue's accepted scope; dependencies are entry gates. No dependent issue may treat unmerged work as an accepted prerequisite.
+- Prefer one coherent code change and Draft PR per issue, with explicit tests and independent exact-revision review. Avoid target-repository-specific constants, policy, or source imports in the portable engine.
 
 ## Mandatory design constraints
 
