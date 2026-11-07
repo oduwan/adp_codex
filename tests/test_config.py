@@ -102,6 +102,28 @@ class ConfigurationTests(GitFixture):
             with self.assertRaises(ADPError):
                 Config.discover(self.a, branch="memory", storage=storage)
 
+    def test_remote_helper_and_malformed_urls_are_controlled_refusals(self) -> None:
+        from unittest.mock import patch
+        from adp.cli import main
+        import contextlib
+        import io
+        marker = self.base / "executed"
+        helper = self.base / "git-remote-probe"
+        helper.write_text("#!/bin/sh\ntouch '" + str(marker) + "'\nexit 1\n")
+        helper.chmod(0o700)
+        for url in ("probe::ignored", "ext::ignored", "https://[broken", "ssh://host:bad/repo"):
+            run(self.a, "remote", "set-url", "upstream", url)
+            before = snapshot(self.base)
+            with patch.dict(os.environ, {"PATH": str(self.base) + os.pathsep + os.environ["PATH"]}):
+                with self.assertRaises(ConfigurationError):
+                    self.config().remote_head()
+                with contextlib.redirect_stderr(io.StringIO()):
+                    code = main(["init", "--dry-run", "--repo", str(self.a),
+                                 "--memory-branch", "memory", "--storage", str(self.base / "memory")])
+                self.assertEqual(code, 2)
+            self.assertFalse(marker.exists())
+            self.assertEqual(before, snapshot(self.base))
+
     def test_unsafe_identity_and_remote(self) -> None:
         run(self.a, "config", "user.email", "root@host.local")
         with self.assertRaises(ConfigurationError):

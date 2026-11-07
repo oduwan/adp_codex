@@ -4,10 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from .errors import ADPError, ConfigurationError
 from .git import git, value
@@ -51,10 +52,16 @@ def load_json(path: Path, limit: int = 65536) -> dict:
 
 
 def remote_identity(url: str, root: Path) -> str:
-    if any(ord(c) < 32 for c in url) or url.startswith(("-", "ext::")):
+    if (any(ord(c) < 32 for c in url) or url.startswith("-")
+            or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", url)):
         raise ConfigurationError("Unsafe remote transport")
     if "://" in url:
-        parsed = urlsplit(url)
+        try:
+            parsed = urlsplit(url)
+            hostname = parsed.hostname
+            parsed.port  # validate malformed/non-numeric ports observationally
+        except ValueError as exc:
+            raise ConfigurationError("Malformed remote URL") from exc
         if parsed.scheme not in ("https", "ssh", "file", "git"):
             raise ConfigurationError("Unsupported remote transport")
         if parsed.password or (parsed.username and parsed.scheme != "ssh") or parsed.query or parsed.fragment:
@@ -62,7 +69,9 @@ def remote_identity(url: str, root: Path) -> str:
         if parsed.scheme == "file":
             if parsed.netloc not in ("", "localhost"):
                 raise ConfigurationError("Non-local file remote")
-            return "file:" + str(Path(parsed.path).resolve())
+            return "file:" + str(Path(unquote(parsed.path)).resolve())
+        if not hostname:
+            raise ConfigurationError("Remote URL requires a hostname")
         return f"{parsed.scheme}://{parsed.netloc.lower()}/{parsed.path.strip('/').removesuffix('.git')}"
     if ":" in url and not url.startswith("/"):
         host, path = url.split(":", 1)
