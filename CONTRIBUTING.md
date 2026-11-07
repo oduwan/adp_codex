@@ -6,12 +6,12 @@ Thank you for helping develop ADP Codex.
 
 The project currently ships a **planning-only skill scaffold**. Please do not describe it as an autonomous developer or advertise unimplemented CLI commands.
 
-Read [Architecture](docs/ARCHITECTURE.md), [Progress Guard](docs/PROGRESS_GUARD.md), [Policy Provider](docs/POLICY_PROVIDER.md) and [Roadmap](docs/ROADMAP.md) before proposing major changes.
+Read [Architecture](docs/ARCHITECTURE.md), [Progress Guard](docs/PROGRESS_GUARD.md), [Policy Provider](docs/POLICY_PROVIDER.md), [Git workflow](docs/GIT_WORKFLOW.md) and [Roadmap](docs/ROADMAP.md) before proposing major changes.
 
 ## Workflow
 
 1. Open an issue that states the observable requirement, constraints and bounded acceptance tests. For cross-cutting design changes, discuss the contract before implementation.
-2. Create a focused branch. Keep changes limited to one coherent issue and preserve intended external project policies.
+2. Start from current `main` on an isolated issue-specific branch, following [the repository Git policy](docs/GIT_WORKFLOW.md). Use Conventional Commits with `Refs #N` and an explicit, safe Git author identity. Keep changes limited to one coherent issue and preserve intended external project policies.
 3. Update tests and docs alongside code. Use synthetic Git remotes, fixtures and disposable worktrees; never write to a production repository during automated tests.
 4. Run local scaffold checks:
    ```bash
@@ -22,7 +22,7 @@ Read [Architecture](docs/ARCHITECTURE.md), [Progress Guard](docs/PROGRESS_GUARD.
 
 Do not weaken checks, count skipped/quarantined tests as PASS, or conceal uncertain outcomes. The Progress Guard is a core invariant and must be exercised with negative tests before autonomous execution is enabled.
 
-The repository does not specify commit-message conventions for other projects. Their conventions must come through external policy providers.
+The Conventional Commits convention in [Git workflow](docs/GIT_WORKFLOW.md) applies **only to this repository**. ADP must discover and respect a target repository's external Git policy; do not copy these conventions into the engine as hard-coded behavior.
 
 ## Coding standards
 

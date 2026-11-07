@@ -47,7 +47,7 @@ tests/test_scaffold.py
 .github/workflows/scaffold.yml
 ```
 
-See [Architecture](docs/ARCHITECTURE.md), [Progress Guard](docs/PROGRESS_GUARD.md), [External policy](docs/POLICY_PROVIDER.md), and [Roadmap](docs/ROADMAP.md).
+See [Architecture](docs/ARCHITECTURE.md), [Progress Guard](docs/PROGRESS_GUARD.md), [External policy](docs/POLICY_PROVIDER.md), [Repository Git workflow](docs/GIT_WORKFLOW.md), and [Roadmap](docs/ROADMAP.md).
 
 ## Getting started (scaffold)
 

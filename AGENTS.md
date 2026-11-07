@@ -8,6 +8,7 @@ Scope: this repository only (`oduwan/adp_codex`). This is **not** a policy templ
 - The autonomous engine and `adp init`, `adp discover`, and `adp run` do **not** yet exist on the accepted main branch. Update capability claims only after the corresponding implementation is reviewed, merged, and qualified.
 - Before implementation read the active issue and `docs/ARCHITECTURE.md`, `docs/STATE_CONTRACT.md`, `docs/PROGRESS_GUARD.md`, `docs/POLICY_PROVIDER.md`, and `docs/ROADMAP.md`.
 - Keep each implementation inside its issue's accepted scope; dependencies are entry gates. No dependent issue may treat unmerged work as an accepted prerequisite.
+- Follow the project's binding [Git and commit policy](docs/GIT_WORKFLOW.md): dedicated issue branch, Conventional Commits with issue references, clean/checkable commits, Draft PR and independent exact-HEAD review. This policy is for **adp_codex only**; it must never be imposed on target repositories by the ADP engine.
 - Prefer one coherent code change and Draft PR per issue, with explicit tests and independent exact-revision review. Avoid target-repository-specific constants, policy, or source imports in the portable engine.
 
 ## Mandatory design constraints
@@ -33,7 +34,7 @@ Scope: this repository only (`oduwan/adp_codex`). This is **not** a policy templ
 
 ## Privileged operations
 
-Do not push, force-push, merge, deploy, run destructive commands, or install a skill into a third-party checkout without explicit authorization. No automated code execution or repository modification is authorized by an issue description alone.
+A normal push to an issue-scoped feature branch is allowed **only when the operator has explicitly assigned implementation and Draft PR creation**; it does not authorize pushing to `main`. Do not force-push, reset/rewrite others' history, merge, deploy, run destructive commands, or install a skill into a third-party checkout without separate explicit authorization. No automated code execution or repository modification is authorized by an issue description alone.
 
 The project's eventual external Git workflow provider must respect the destination repository's own rules and operator boundaries. No policy found means no automatic authority.
 
