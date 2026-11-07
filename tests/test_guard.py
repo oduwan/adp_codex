@@ -281,6 +281,19 @@ class ProgressEvidenceTests(GuardFixture):
         self.assertEqual(self.item()["last"]["observation"]["outcome"], Outcome.UNKNOWN)
         self.assertEqual(self.counters()["stalls"], 1)
 
+    def test_persisted_approval_cannot_self_certify_a_new_authority_context(self):
+        permit = self.guard.begin("task-A", self.identifier, Action("author-A", ActionKind.CHECK, "review"))
+        measured = Observation(Outcome.PASS, ("fixture:observation",), self.spec.acceptance,
+            Progress(ProgressKind.CORRECTION_APPROVED, "fix", ("fixture:independent",)))
+        subject = self.guard.progress_subject("task-A", self.identifier, permit, measured)
+        self.guard.observe("task-A", self.identifier, permit, measured,
+            evidence=self.authority.attest(subject, "progress"))
+        self.guard.require_approval("task-A", self.identifier)
+        unauthenticated = ProgressGuard(self.memory, clock=lambda: self.now)
+        with self.assertRaises(AuthorityError):
+            unauthenticated.require_approval("task-A", self.identifier)
+
+
 
 class ForensicTests(GuardFixture):
     def test_two_bounded_proofs_then_terminal_operator_boundary(self):
@@ -359,3 +372,32 @@ class ForensicTests(GuardFixture):
                 self.assertEqual(decision.kind, DecisionKind.STOP_UNSAFE)
                 with self.assertRaises(GuardRefusal):
                     self.run_attempt()
+
+    def test_reported_risk_latches_even_with_progress_or_invalid_ancillary_fields(self):
+        cases = [dict(risk="safety"), dict(risk="contamination"), dict(samples=1001), dict(elapsed_seconds=301)]
+        for index, hazard in enumerate(cases):
+            self.identifier = self.register(replace(self.spec, gate=f"hazard-progress:{index}"))
+            permit = self.guard.begin("task-A", self.identifier, Action("author-A", ActionKind.CHECK, "risk with a claim"))
+            measured = Observation(Outcome.PASS, ("fixture:reported-hazard",), (),
+                Progress(ProgressKind.CORRECTION_APPROVED, "unsafe-fix", ("fixture:claim",)), **hazard)
+            decision = self.guard.observe("task-A", self.identifier, permit, measured)
+            self.assertEqual(decision.kind, DecisionKind.STOP_UNSAFE)
+            self.assertEqual(self.item()["unresolved"], list(self.spec.acceptance))
+            self.assertEqual(self.item()["seen_facts"], [])
+            with self.assertRaises(Conflict):
+                self.guard.observe("task-A", self.identifier, permit,
+                    Observation(Outcome.PASS, ("fixture:resubmission",), self.spec.acceptance))
+            with self.assertRaises(GuardRefusal):
+                self.run_attempt()
+        self.identifier = self.register(replace(self.spec, gate="malformed-hazard"))
+        permit = self.guard.begin("task-A", self.identifier, Action("author-A", ActionKind.CHECK, "malformed hazard"))
+        malformed = Observation(Outcome.PASS, (), (), progress=Progress(ProgressKind.CAUSE_NARROWED, "bad", ()), risk="safety")
+        self.assertEqual(self.guard.observe("task-A", self.identifier, permit, malformed).kind, DecisionKind.STOP_UNSAFE)
+
+    def test_impossible_ready_and_running_records_are_controlled_refusals(self):
+        original = self.memory.inspect()
+        for mode in ("ready", "running"):
+            state = copy.deepcopy(original["state"])
+            state["progress_guard"]["requirements"][self.identifier]["mode"] = mode
+            with self.subTest(mode=mode), self.assertRaises(ADPError):
+                bundle(state, original["tasks"], self.memory.config.identity)

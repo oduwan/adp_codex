@@ -128,6 +128,7 @@ class ForensicRequest(TypedDict):
     counters: dict[str, int]
     hypothesis: str | None
     outcome: str | None
+    observation_context: dict
     cause: str | None
     reason: str
 
@@ -192,7 +193,18 @@ class Permit:
     decision: Decision
 
 
+@dataclass(frozen=True)
+class CasePermit:
+    token: str
+    case_id: str
+    decision: Decision
+
+
 def data(value: object) -> dict:
     """Normalize dataclass tuples/enums into the bounded JSON representation."""
     import json
-    return json.loads(json.dumps(asdict(value), allow_nan=False))
+    from .errors import ADPError
+    try:
+        return json.loads(json.dumps(asdict(value), allow_nan=False))
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ADPError("Malformed typed guard input") from exc

@@ -103,7 +103,9 @@ containment violation produces STOP_UNSAFE and cannot be reset by a proof.
 A campaign requires separately verified operator authority, an immutable inventory,
 quarantine set, evidence reference and containment budget. Its ordinary FAIL,
 ERROR and TIMEOUT results update counters but do not terminate its remaining
-inventory. Each next-case admission checks current revision/generation and time.
+inventory. Each next-case admission durably reserves exactly one method and checks current
+revision/generation and time. Duplicate admissions and unsolicited completions
+are refused, including after restart.
 Safety, contamination, clock/deadline or budget violations stop the campaign and
 leave remaining cases NOTRUN. Original inventory order and denominator never
 shrink. Quarantined observations retain raw outcomes and are counted separately

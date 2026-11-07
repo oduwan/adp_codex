@@ -8,16 +8,16 @@ from collections.abc import Callable
 from dataclasses import asdict
 from typing import TypeVar
 
-from .errors import AuthorityError, Conflict
+from .errors import ADPError, AuthorityError, Conflict
 from .guard_schema import (COUNTERS, MAX_FACTS, action, campaign_spec, digest,
                            limits, observation, record, report, requirement_id,
                            strings)
-from .guard_types import (Action, ActionKind, Attestation, Baseline, Campaign,
+from .guard_types import (Action, ActionKind, Attestation, Baseline, Campaign, CasePermit,
                           Classification, Decision, DecisionKind, EvidenceAuthority,
                           ForensicReport, ForensicRequest, Observation, Outcome, Permit, ProgressKind,
                           Requirement, data)
 from .memory import Memory
-from .schema import encode, integer, key, require, string
+from .schema import encode, integer, require, string
 from .storage import locked
 
 T = TypeVar("T")
@@ -167,7 +167,7 @@ class ProgressGuard:
                     "mode": "normal", "counters": {name: 0 for name in COUNTERS.split()},
                     "authors": [], "seen_facts": [], "cause": None,
                     "unresolved": list(spec.acceptance), "pending_dependencies": list(spec.dependencies),
-                    "last": None, "active": None, "forensic_round": 0, "request": None,
+                    "last": None, "last_event": None, "active": None, "forensic_round": 0, "request": None,
                     "plan": None, "approval": None, "campaign": None, "campaign_runs": 0,
                     "reason": "Admitted baseline; a bounded attempt may be reserved"}
                 requirements[identifier] = item
@@ -308,24 +308,44 @@ class ProgressGuard:
 
     def observe(self, task_id: str, identifier: str, permit: Permit,
                 measured: Observation, *, evidence: Attestation | None = None) -> Decision:
-        measured_data = data(measured)
-        observation(measured_data)
+        require(isinstance(measured, Observation), "Expected a typed guard observation")
+        input_error = None
+        try:
+            supplied = data(measured)
+            observation(supplied)
+        except ADPError as exc:
+            supplied = None
+            input_error = exc
         def transition(state: dict, task: dict, item: dict) -> None:
-            active = self._active(state, task, item, permit.token)
+            active = item["active"]
+            if active is None or active["id"] != permit.token:
+                raise Conflict("Attempt token is absent, stale or already terminal")
             now = self._now()
-            unsafe = (measured.risk is not None or now < active["started"] or now > active["deadline"]
-                      or measured.elapsed_seconds > active["action"]["seconds"]
-                      or measured.samples > active["action"]["samples"]
-                      or measured.payload_bytes > active["action"]["payload_bytes"])
+            risk = measured.risk if isinstance(measured.risk, str) and measured.risk in (
+                "safety", "authority", "contamination", "containment") else None
+            exceeded = any(type(getattr(measured, name)) is int and getattr(measured, name) > active["action"][budget]
+                           for name, budget in (("elapsed_seconds", "seconds"), ("samples", "samples"),
+                                                ("payload_bytes", "payload_bytes")))
+            unsafe = risk is not None or now < active["started"] or now > active["deadline"] or exceeded
             if unsafe:
-                require(measured_data["unresolved"] == item["unresolved"] and measured.progress is None,
-                        "Unsafe observations cannot advance acceptance or claim progress")
+                # A reported hazard takes precedence over inadmissible progress
+                # or ancillary malformed fields. Never leave a reusable permit.
+                measured_data = copy.deepcopy(supplied) if supplied is not None else data(
+                    Observation(Outcome.UNKNOWN, ("guard:invalid-payload-with-risk",), (), risk=risk or "containment"))
+                measured_data["progress"] = None
+                measured_data["unresolved"] = list(item["unresolved"])
+                measured_data["risk"] = risk or "containment"
                 meaningful = False
             else:
+                self._active(state, task, item, permit.token)
+                if input_error is not None:
+                    raise input_error
+                measured_data = supplied
                 subject = digest({"baseline": asdict(self._baseline(identifier, state, task, item)),
                                   "permit": permit.token, "observation": measured_data})
                 meaningful = self._progress(state, task, item, measured_data, evidence, subject)
             self._account(item, active["action"], measured_data, meaningful)
+            item["last_event"] = "attempt"
             item["last"] = {"context": active["context"], "action": active["action"],
                             "observation": measured_data, "counters": copy.deepcopy(item["counters"])}
             item["active"] = None
@@ -338,6 +358,7 @@ class ProgressGuard:
                     item["mode"] = "forensic"
                     item["reason"] = "Bounded proof did not narrow uncertainty; one renewed independent reassessment remains"
                     item["request"] = None
+                    item["plan"] = None
             else:
                 self._threshold(item)
         _, decision = self._change(task_id, identifier, transition)
@@ -352,6 +373,7 @@ class ProgressGuard:
             expired = self._now() < active["started"] or self._now() > active["deadline"]
             measured = data(Observation(Outcome.UNKNOWN, (evidence_reference,), tuple(item["unresolved"])))
             self._account(item, active["action"], measured, False)
+            item["last_event"] = "attempt"
             item["last"] = {"context": active["context"], "action": active["action"],
                             "observation": measured, "counters": copy.deepcopy(item["counters"])}
             item["active"] = None
@@ -364,6 +386,7 @@ class ProgressGuard:
                     item["mode"] = "forensic"
                     item["reason"] = "Interrupted bounded proof needs the final independent reassessment"
                     item["request"] = None
+                    item["plan"] = None
             else:
                 self._threshold(item)
         _, decision = self._change(task_id, identifier, transition)
@@ -384,15 +407,20 @@ class ProgressGuard:
                 require(item["forensic_round"] < 2, "No further forensic reassessment is permitted")
                 item["forensic_round"] += 1
             baseline = digest(item)
-            refs = (item["last"]["observation"]["evidence"] if item["last"] else
-                    [campaign["spec"]["evidence_reference"]] if campaign else ["guard:unfalsifiable-proposals"])
+            from_campaign = item["last_event"] == "campaign"
+            refs = ([campaign["spec"]["evidence_reference"]] if from_campaign else
+                    item["last"]["observation"]["evidence"] if item["last"] else ["guard:unfalsifiable-proposals"])
+            observed = [outcome for outcome in campaign["results"] if outcome is not None] if from_campaign else []
+            latest_context = campaign["context"] if from_campaign else item["last"]["context"] if item["last"] else context
             request = {"id": digest({"baseline": baseline, "context": context}),
                        "round": item["forensic_round"], "context": context, "baseline": baseline,
                        "excluded_authors": list(item["authors"]), "evidence": refs,
                        "contract": item["contract"], "gate": item["gate"], "unresolved": list(item["unresolved"]),
                        "counters": copy.deepcopy(item["counters"]),
-                       "hypothesis": item["last"]["action"]["hypothesis"] if item["last"] else None,
-                       "outcome": item["last"]["observation"]["outcome"] if item["last"] else None,
+                       "hypothesis": ("Finite campaign method: " + campaign["spec"]["inventory"][len(observed) - 1]
+                                      if from_campaign else item["last"]["action"]["hypothesis"] if item["last"] else None),
+                       "outcome": observed[-1] if from_campaign else item["last"]["observation"]["outcome"] if item["last"] else None,
+                       "observation_context": copy.deepcopy(latest_context),
                        "cause": item["cause"], "reason": item["reason"]}
             item["request"] = request
             return copy.deepcopy(request)
@@ -434,6 +462,9 @@ class ProgressGuard:
                 or item["approval"]["context"] != self._context(state, task)):
             raise GuardRefusal(Decision(DecisionKind.FORENSIC_REQUIRED,
                 "Independent correction approval is absent or invalidated by source/generation change", decision.baseline))
+        approval = item["approval"]
+        self._verify(Attestation(approval["reviewer"], approval["reference"], approval["subject"]),
+                     "progress", approval["subject"], authors=item["authors"])
         return decision.baseline
 
     def campaign_subject(self, task_id: str, identifier: str, spec: Campaign) -> str:
@@ -456,7 +487,8 @@ class ProgressGuard:
             now = self._now()
             campaign = {"id": subject, "context": self._context(state, task), "spec": proposed,
                         "results": [None] * len(spec.inventory), "started": now, "deadline": now + spec.seconds,
-                        "last_time": now, "samples": 0, "payload_bytes": 0, "stopped": None}
+                        "last_time": now, "samples": 0, "payload_bytes": 0, "stopped": None,
+                        "active_case": None, "interruption": None}
             item["campaign"] = campaign
             item["campaign_runs"] = 1
             # Reserve the worst-case representation before admitting the survey.
@@ -467,12 +499,14 @@ class ProgressGuard:
         token, _ = self._change(task_id, identifier, transition)
         return token
 
-    def next_case(self, task_id: str, identifier: str, token: str) -> tuple[str, Decision]:
-        """Enforce containment before admitting each method; never run the method."""
-        def transition(state: dict, task: dict, item: dict) -> str | None:
+    def next_case(self, task_id: str, identifier: str, token: str) -> CasePermit:
+        """Durably reserve exactly one next method before returning a case permit."""
+        def transition(state: dict, task: dict, item: dict) -> dict | None:
             campaign = item["campaign"]
             require(campaign is not None and campaign["id"] == token, "Campaign token is stale")
             if item["mode"] in ("unsafe", "operator") or campaign["stopped"] is not None:
+                return None
+            if campaign["active_case"] is not None:
                 return None
             if None not in campaign["results"]:
                 raise Conflict("Campaign is complete")
@@ -482,40 +516,69 @@ class ProgressGuard:
                 campaign["stopped"] = "stale source/generation, clock or deadline"
                 self._terminal(item, "Campaign containment no longer holds", unsafe=True)
                 return None
-            return campaign["spec"]["inventory"][campaign["results"].index(None)]
+            index = campaign["results"].index(None)
+            case_id = campaign["spec"]["inventory"][index]
+            case = {"id": digest({"campaign": token, "index": index, "sequence": item["sequence"]}),
+                    "case_id": case_id, "index": index, "started": now}
+            campaign["active_case"] = case
+            campaign["last_time"] = now
+            return copy.deepcopy(case)
         case, decision = self._change(task_id, identifier, transition)
         if case is None:
+            if decision.kind not in (DecisionKind.STOP_UNSAFE, DecisionKind.OPERATOR_DECISION_REQUIRED):
+                decision = Decision(DecisionKind.FORENSIC_REQUIRED,
+                    "Record or explicitly abandon the already reserved case before admitting another", decision.baseline, "campaign")
             raise GuardRefusal(decision)
-        return case, Decision(DecisionKind.ALLOW, "Only this next method in the fixed campaign is admitted", decision.baseline, "campaign")
+        return CasePermit(case["id"], case["case_id"], Decision(DecisionKind.ALLOW,
+            "Only this reserved method in the fixed campaign is admitted", decision.baseline, "campaign"))
 
-    def record_case(self, task_id: str, identifier: str, token: str, case_id: str,
+    @staticmethod
+    def _case(item: dict, token: str, permit: CasePermit) -> tuple[dict, dict]:
+        campaign = item["campaign"]
+        require(campaign is not None and campaign["id"] == token, "Campaign token is stale")
+        if item["mode"] in ("unsafe", "operator") or campaign["stopped"] is not None:
+            raise Conflict("Campaign is stopped")
+        case = campaign["active_case"]
+        if (not isinstance(permit, CasePermit) or case is None
+                or case["id"] != permit.token or case["case_id"] != permit.case_id):
+            raise Conflict("An exact durably reserved case permit is required")
+        return campaign, case
+
+    def record_case(self, task_id: str, identifier: str, token: str, permit: CasePermit,
                     outcome: Outcome, *, samples: int = 0, payload_bytes: int = 0,
                     risk: str | None = None) -> Decision:
-        require(isinstance(outcome, str) and outcome in set(Outcome) - {Outcome.UNKNOWN}, "Invalid campaign measured outcome")
-        integer(samples)
-        integer(payload_bytes)
-        if risk is not None:
-            require(risk in ("safety", "authority", "contamination", "containment"), "Invalid campaign stop reason")
+        recognized_risk = risk if isinstance(risk, str) and risk in ("safety", "authority", "contamination", "containment") else None
+        try:
+            require(isinstance(outcome, str) and outcome in set(Outcome) - {Outcome.UNKNOWN}, "Invalid campaign measured outcome")
+            integer(samples)
+            integer(payload_bytes)
+            if risk is not None:
+                require(recognized_risk is not None, "Invalid campaign stop reason")
+        except ADPError:
+            if recognized_risk is None:
+                raise
+            # An explicit hazard is never discarded due to malformed ancillary
+            # measurements. ERROR describes an invalid runner report, not PASS.
+            outcome = outcome if isinstance(outcome, str) and outcome in set(Outcome) - {Outcome.UNKNOWN} else Outcome.ERROR
+            samples = samples if type(samples) is int and 0 <= samples < 10**18 else 0
+            payload_bytes = payload_bytes if type(payload_bytes) is int and 0 <= payload_bytes < 10**18 else 0
+            risk = recognized_risk
         def transition(state: dict, task: dict, item: dict) -> None:
-            campaign = item["campaign"]
-            require(campaign is not None and campaign["id"] == token, "Campaign token is stale")
-            if item["mode"] in ("unsafe", "operator") or campaign["stopped"] is not None or None not in campaign["results"]:
-                raise Conflict("Campaign is stopped or complete")
-            index = campaign["results"].index(None)
-            require(case_id == campaign["spec"]["inventory"][index], "Campaign must preserve original order and denominator")
+            campaign, case = self._case(item, token, permit)
+            index = case["index"]
             now = self._now()
             stale = campaign["context"] != self._context(state, task)
             exceeded = (now < campaign["last_time"] or now > campaign["deadline"]
                         or campaign["samples"] + samples > campaign["spec"]["samples"]
                         or campaign["payload_bytes"] + payload_bytes > campaign["spec"]["payload_bytes"])
-            # The reported case remains observed even if its execution exceeded a
-            # bound; only remaining cases become NOTRUN. No failure is erased.
             campaign["results"][index] = outcome
+            campaign["active_case"] = None
             campaign["last_time"] = now
             campaign["samples"] += samples
             campaign["payload_bytes"] += payload_bytes
             measured = data(Observation(Outcome(outcome), (campaign["spec"]["evidence_reference"],), tuple(item["unresolved"])))
             self._account(item, {"kind": ActionKind.CHECK}, measured, False)
+            item["last_event"] = "campaign"
             if stale or exceeded or risk is not None:
                 campaign["stopped"] = "stale revision/generation" if stale else risk or "containment"
                 self._terminal(item, "Campaign stopped for a real safety, contamination or containment constraint", unsafe=True)
@@ -525,7 +588,24 @@ class ProgressGuard:
         state, task, item = self._snapshot(task_id, identifier)
         campaign = item["campaign"]
         if campaign["stopped"] is None and None in campaign["results"]:
-            return Decision(DecisionKind.ALLOW, "Continue only the remaining explicitly authorized inventory", decision.baseline, "campaign")
+            return Decision(DecisionKind.ALLOW, "Only another durably reserved remaining case may proceed", decision.baseline, "campaign")
+        return decision
+
+    def abandon_case(self, task_id: str, identifier: str, token: str, permit: CasePermit,
+                     *, evidence_reference: str) -> Decision:
+        """Acknowledge a lost runner result as ERROR and stop the affected census."""
+        string(evidence_reference)
+        def transition(state: dict, task: dict, item: dict) -> None:
+            campaign, case = self._case(item, token, permit)
+            campaign["results"][case["index"]] = Outcome.ERROR
+            campaign["active_case"] = None
+            campaign["interruption"] = {"case_id": case["case_id"], "evidence": evidence_reference}
+            campaign["stopped"] = "interrupted case; runner outcome unavailable"
+            measured = data(Observation(Outcome.ERROR, (evidence_reference,), tuple(item["unresolved"])))
+            self._account(item, {"kind": ActionKind.CHECK}, measured, False)
+            item["last_event"] = "campaign"
+            self._terminal(item, "Interrupted in-flight method needs operator disposition; no method PASS is inferred", unsafe=True)
+        _, decision = self._change(task_id, identifier, transition)
         return decision
 
     def campaign_summary(self, task_id: str, identifier: str) -> dict:

@@ -5,7 +5,7 @@ import hashlib
 
 from .git import SHA
 from .schema import KEY, encode, fields, integer, require, string
-from .guard_types import (ActionKind, Classification, DecisionKind, Limits,
+from .guard_types import (ActionKind, Classification, Limits,
                           Outcome, ProgressKind)
 
 MAX_REQUIREMENTS = 16
@@ -133,7 +133,7 @@ def context(value: dict) -> None:
 
 
 def record(value: dict, identifier: str) -> None:
-    fields(value, "contract gate acceptance dependencies limits tasks sequence mode counters authors seen_facts cause unresolved pending_dependencies last active forensic_round request plan approval campaign campaign_runs reason")
+    fields(value, "contract gate acceptance dependencies limits tasks sequence mode counters authors seen_facts cause unresolved pending_dependencies last last_event active forensic_round request plan approval campaign campaign_runs reason")
     require(requirement_id(value["contract"], value["gate"]) == identifier, "Guard requirement identity mismatch")
     strings(value["acceptance"], MAX_ACCEPTANCE, 128, nonempty=True)
     strings(value["dependencies"], MAX_ACCEPTANCE, 128)
@@ -163,6 +163,8 @@ def record(value: dict, identifier: str) -> None:
     require(value["forensic_round"] <= 2, "Forensic reassessment bound exceeded")
     integer(value["campaign_runs"])
     require(value["campaign_runs"] <= 1, "Repeated census without progress")
+    if value["last_event"] is not None:
+        choice(value["last_event"], {"attempt", "campaign"})
     if value["last"] is not None:
         fields(value["last"], "context action observation counters")
         context(value["last"]["context"])
@@ -183,7 +185,7 @@ def record(value: dict, identifier: str) -> None:
         require(active["deadline"] == active["started"] + active["action"]["seconds"], "Action deadline changed")
     if value["request"] is not None:
         request = value["request"]
-        fields(request, "id round context baseline excluded_authors evidence contract gate unresolved counters hypothesis outcome cause reason")
+        fields(request, "id round context baseline excluded_authors evidence contract gate unresolved counters hypothesis outcome observation_context cause reason")
         string(request["id"], 64)
         integer(request["round"], 1)
         require(request["round"] == value["forensic_round"], "Forensic request round mismatch")
@@ -196,6 +198,7 @@ def record(value: dict, identifier: str) -> None:
         fields(request["counters"], COUNTERS)
         for counter in request["counters"].values():
             integer(counter)
+        context(request["observation_context"])
         if request["hypothesis"] is not None:
             string(request["hypothesis"], 512)
         if request["outcome"] is not None:
@@ -216,7 +219,7 @@ def record(value: dict, identifier: str) -> None:
         string(value["approval"]["subject"], 64)
     if value["campaign"] is not None:
         campaign = value["campaign"]
-        fields(campaign, "id context spec results started deadline last_time samples payload_bytes stopped")
+        fields(campaign, "id context spec results started deadline last_time samples payload_bytes stopped active_case interruption")
         string(campaign["id"], 64)
         context(campaign["context"])
         campaign_spec(campaign["spec"])
@@ -230,6 +233,40 @@ def record(value: dict, identifier: str) -> None:
         require(campaign["deadline"] == campaign["started"] + campaign["spec"]["seconds"], "Campaign deadline changed")
         if campaign["stopped"] is not None:
             string(campaign["stopped"], 128)
+        if campaign["active_case"] is not None:
+            case = campaign["active_case"]
+            fields(case, "id case_id index started")
+            string(case["id"], 64)
+            integer(case["index"])
+            integer(case["started"])
+            require(case["index"] < len(results) and results[case["index"]] is None
+                    and case["index"] == results.index(None)
+                    and case["case_id"] == campaign["spec"]["inventory"][case["index"]],
+                    "Invalid or reordered in-flight campaign case")
+        if campaign["interruption"] is not None:
+            fields(campaign["interruption"], "case_id evidence")
+            require(campaign["interruption"]["case_id"] in campaign["spec"]["inventory"], "Invalid interrupted case")
+            string(campaign["interruption"]["evidence"])
+    if value["mode"] in ("ready", "running"):
+        require(value["request"] is not None and value["plan"] is not None
+                and value["plan"]["report"]["plan"] is not None,
+                "Ready/running guard requires an independent finite review plan")
+    if value["mode"] == "ready":
+        require(value["active"] is None, "Ready guard already has an active attempt")
+    if value["mode"] == "running":
+        require(value["active"] is not None and value["active"]["bounded"], "Running guard requires its bounded reservation")
+    if value["active"] is not None and value["active"]["bounded"]:
+        require(value["mode"] in ("running", "unsafe"), "Bounded reservation has an inconsistent mode")
+    if value["mode"] == "normal":
+        require(value["request"] is None and value["plan"] is None, "Normal guard cannot carry an unresolved forensic plan")
+    if value["plan"] is not None:
+        require(value["request"] is not None and value["plan"]["report"]["request_id"] == value["request"]["id"],
+                "Forensic plan/request mismatch")
+    if value["last_event"] == "attempt":
+        require(value["last"] is not None, "Latest attempt observation is missing")
+    if value["last_event"] == "campaign":
+        require(value["campaign"] is not None and any(outcome is not None for outcome in value["campaign"]["results"]),
+                "Latest campaign observation is missing")
     encode(value)
 
 

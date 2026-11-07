@@ -110,12 +110,15 @@ references and independent exact-subject evidence. Cause narrowing extends the
 accepted cause chain and cannot reuse its evidence under another label. A
 correction at the same SHA cannot be repeatedly renamed to reset counters. The
 unresolved set changes only by the proved transition. Invalid evidence leaves the
-reservation pending and cannot silently admit another attempt.
+reservation pending and cannot silently admit another attempt. A reported hazard
+takes priority over contradictory progress, removed criteria or malformed
+ancillary data: the guard consumes the permit, preserves the unresolved baseline
+and latches STOP_UNSAFE. Such a hazard cannot disappear through resubmission.
 
 Use `abandon(..., evidence_reference=...)` to acknowledge interrupted work as
 UNKNOWN. It preserves counters and consumes a bounded proof if one was reserved.
 Stale work must be abandoned explicitly; recovery never invents its result.
-`require_approval` refuses absent or invalidated exact-source approval. It grants
+`require_approval` refuses absent or invalidated exact-source approval and revalidates the persisted receipt with the external authority. It grants
 no Git/merge authority and does not replace other acceptance requirements.
 
 ## Finite forensic recovery
@@ -123,6 +126,9 @@ no Git/merge authority and does not replace other acceptance requirements.
 `request_forensic` returns a typed request with exact source context, baseline
 digest, accepted contract/gate, hypothesis, measured outcome, counters, unresolved
 criteria, accepted cause, excluded authors and durable evidence references.
+The request separately names the actual observation context, which may precede
+the current source context. After a census it uses the current census artifact
+and latest method outcome, never an older ordinary attempt as if it were current.
 It does not spawn a reviewer. Repeated reads of the same current request do not
 consume another round. Stale source/generation requires a new request.
 
@@ -146,8 +152,15 @@ starts a new productive cycle while retaining accepted facts and evidence.
 
 `Campaign(inventory, evidence_reference, quarantined, seconds, samples,
 payload_bytes)` fixes its original finite inventory and containment. `start_campaign`
-requires exact operator evidence. `next_case` admits only the next original method;
-`record_case` stores its actual PASS/FAIL/ERROR/TIMEOUT/SKIP/NOTRUN outcome. Ordinary
+requires exact operator evidence. `next_case` durably reserves only the next original method and returns a typed
+`CasePermit`. Repeated admission, including after restart, is refused until that
+permit is consumed. `record_case(task_id, requirement_id, campaign_token,
+case_permit, outcome)` requires that exact permit and stores the actual
+PASS/FAIL/ERROR/TIMEOUT/SKIP/NOTRUN outcome. Unsolicited or duplicate results cannot
+consume inventory. `abandon_case(..., evidence_reference=...)` explicitly records
+an interrupted runner result as ERROR and stops the census; it infers no method
+PASS or completed external action. The evidence reference records the missing
+runner observation, rather than asserting a product assertion failure. Ordinary
 assertions, errors and timeouts do not abort the finite survey, even when their
 counters require forensics outside the survey. Other attempts and forensic work
 are blocked while an inventory is active. A terminal operator/unsafe decision
@@ -176,8 +189,8 @@ at 64 KiB. There are at most 16 requirement records, 16 acceptance criteria and
 16 dependencies per record, 16 recorded authors, 32 accepted fact fingerprints,
 64 task aliases per requirement, and one current campaign of at most 256 methods.
 Only the latest observation, review/plan and census are retained. No raw logs,
-chat history or unbounded event archive is serialized. Full JSON/schema validation
-runs before every checkpoint; capacity exhaustion fails closed and requires
+chat history or unbounded event archive is serialized. Full JSON/schema validation, including consistency between modes, finite plans,
+requests and in-flight reservations, runs before every checkpoint; capacity exhaustion fails closed and requires
 operator disposition. Campaign admission preflights its maximum result footprint.
 
 Defaults: failed/stalled cycles 3; corrections 2; blocking reviews 3; exploratory
