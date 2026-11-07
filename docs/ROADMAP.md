@@ -1,49 +1,56 @@
 # Implementation roadmap
 
-**Status:** approved architecture direction, proposed implementation sequence. Issue links will be maintained in GitHub; no phase below is complete merely because its design exists.
-
-The first supported provider is GitHub, with Python 3.11+ and a portable Codex skill. The separate engine must work on two synthetic repositories with different rules. ESO_control is a reference use case, not a dependency or test target for initial development.
+**Status:** M0 scaffold complete. M1–M6 are implementation milestones, not yet available features. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
 
 ## Milestones
 
-### M0 — repository foundation and verified skill scaffold
+### M0 — Architecture and skill scaffold (complete)
 
-Deliver a portable plugin manifest, a focused planning-only Codex skill, English architecture/guard/policy/discovery contracts, contribution and security rules, and an executable scaffold validation with CI. **Does not include autonomous execution.**
+Deliver portable `plugin.json`, focused read-only `SKILL.md`, English architecture/guard/policy/discovery contracts, contributor/security rules, executable scaffold validation and CI.
 
-### M1 — portable memory engine and initialization
+**Evidence:** [scaffold commit](https://github.com/oduwan/adp_codex/commit/6d404f2d37061a0b33e6d168868cc48141e4b823) and its successful GitHub Actions run. No autonomous execution is included.
 
-Extract the general single-writer state model, config storage, safe `init`, ownership claim/handoff, atomic inbox delivery, remote synchronization, rejection of stale results, and `doctor` checks. No ESO-specific paths, hard-coded Git remote, project Issue numbers or branch names.
+### M1 — Portable memory, initialization and doctor ([#1](https://github.com/oduwan/adp_codex/issues/1))
 
-**Gate:** synthetic two-clone conflict, crash/handoff, malformed schema, owner fencing and portability tests.
+Implement configurable single-writer working memory, `init`, `doctor`, claiming and handoff, atomic inbox delivery, stale-result refusal and restart recovery. Do not hard-code remotes, branch conventions or repository identity.
 
-### M2 — executable Progress Guard and review contracts
+**Gate:** synthetic two-clone conflict, safe takeover, malformed-schema and portable handoff tests.
 
-Implement persistent guard counters, factual progress scoring, finite forensic response, classification taxonomy, safe retry gates and exact-revision review bindings. Test full-inventory campaigns that continue across ordinary FAIL while preserving NOTRUN and quarantine accounting.
+### M2 — Executable Progress Guard ([#2](https://github.com/oduwan/adp_codex/issues/2))
 
-**Gate:** synthetic spiral scenarios and all safety-negative cases must pass.
+Implement persistent anti-loop counters, progress evidence, independent forensic reassessment, bounded exits, exact-revision approval guards and non-fail-fast diagnostic campaign semantics.
 
-### M3 — GitHub discovery and external policy providers
+**Gate:** synthetic diagnostic-spiral and false-PASS adversarial tests.
 
-Implement read-only `discover`/`plan`, pagination and dependency reconciliation, prompt-injection-resistant issue intake and an external Git workflow interface with safe-deny behavior.
+### M3 — External project policy provider ([#3](https://github.com/oduwan/adp_codex/issues/3))
 
-**Gate:** two conflicting synthetic Git policy profiles; no write during discovery.
+Extract branch, commit, validation, PR, merge and release rules from project-owned policies. ADP provides coordination, not a competing Git workflow.
 
-### M4 — skill-facing Conductor and bounded execution
+**Gate:** two incompatible synthetic policy profiles; unknown authority is denied, never invented.
 
-Wire `run`, `status`, `resume`, `handoff`, independent reviewer delegation and one product-summary-per-iteration publishing. Execute only tasks admitted by policy, within explicit resource and operator limits.
+### M4 — GitHub issue discovery and planning ([#4](https://github.com/oduwan/adp_codex/issues/4))
 
-**Gate:** end-to-end synthetic multi-worker task track, restart and recovered publication without duplicates.
+Implement read-only `discover`, `plan` and refresh: issue and PR ingestion, native and confirmed dependency edges, cycles, readiness classification and deterministic reconciliation.
 
-### M5 — independent portability and release qualification
+**Gate:** pagination, permissions, stale-HEAD, dependency-cycle and prompt-injection fixtures; zero discovery writes.
 
-Demonstrate a clean install in a second unrelated repository, two-machine simulated handoff, history integrity and acceptance matrix. Final release decisions remain operator-authorized.
+### M5 — Conductor execution and product reporting ([#5](https://github.com/oduwan/adp_codex/issues/5))
 
-**Gate:** independent exact-revision security/code review, full intended-scope tests and an explicit release go/no-go.
+Wire policy-gated `run`, `status`, `resume`, `handoff`, bounded parallel subagents, independent exact-revision review and idempotent one-summary-per-product-iteration publication.
 
-## Development principles
+**Gate:** synthetic multi-worker track, restart, reviewer rejection and recovered publication without duplicates.
 
-- Work progresses through separately reviewable small PRs; do not build a monolithic engine before validating state and guard contracts.
-- Avoid elaborate cryptographic manifests or redundant storage checks that do not protect a real boundary.
-- Keep the existing project-specific ADP v2 operational; never force-migrate active work as part of extracting code.
-- Maintain one truthful public product update per completed product iteration, not an internal status-receipt stream.
-- Every feature must have a finite acceptance story and negative tests. Missing evidence is UNKNOWN, not PASS.
+### M6 — Cross-repository portability and release qualification ([#6](https://github.com/oduwan/adp_codex/issues/6))
+
+Demonstrate clean installation on unrelated repositories, cross-clone handoff, external policy differences, execution authorization boundaries and honest acceptance accounting. Keep real product repos unchanged during tests.
+
+**Gate:** all intended tests, independent exact-revision security/code review, documented limits and explicit operator release authorization. Select license before advertising an open-source release.
+
+## Development rules
+
+- Every implementation milestone has a bounded scope and negative tests.
+- Review the final exact revision independently. Re-review after changes.
+- Preserve the existing target project's working state during adaptation.
+- No raw diagnostic log streams or test-infrastructure work in product Issues/PR status comments.
+- Never count `SKIP`, `NOTRUN`, `ERROR`, `TEST_CORRUPTED` or `UNCLASSIFIED` as an accepted PASS.
+- No automatic merges, deployment or release permissions without an explicit external policy.
