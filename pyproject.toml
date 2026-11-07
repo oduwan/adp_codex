@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adp-codex"
+version = "0.1.0"
+description = "Portable, explicitly authorized Git coordination memory"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+adp = "adp.cli:main"
+
+[tool.setuptools]
+packages = ["adp"]

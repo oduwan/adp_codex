@@ -1,0 +1,62 @@
+"""Argument-only Git calls with observational defaults and bounded outputs."""
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+from pathlib import Path
+
+from .errors import ConfigurationError, GitError
+
+SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+
+
+def git(path: Path, *args: str, input: bytes | None = None,
+        limit: int = 8 * 1024 * 1024) -> bytes:
+    env = os.environ.copy()
+    # Do not inherit an unrelated caller's index, worktree, or repository.
+    for key in list(env):
+        if key.startswith("GIT_"):
+            del env[key]
+    env.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0",
+               GIT_CONFIG_NOSYSTEM="1")
+    try:
+        # Files bound output without buffering arbitrary remote diagnostics in RAM.
+        import tempfile
+        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+            result = subprocess.run(
+                ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                 "-c", "protocol.ext.allow=never", "-C", str(path), *args],
+                input=input, stdout=output, stderr=errors, env=env, timeout=60,
+                check=False)
+            if result.returncode:
+                raise GitError(f"Git {args[0]} failed; inspect transport/auth or repository health")
+            if output.tell() > limit:
+                raise GitError(f"Git {args[0]} output exceeds the permitted size")
+            output.seek(0)
+            return output.read()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitError(f"Git {args[0]} unavailable or timed out") from exc
+
+
+def value(path: Path, *args: str) -> str:
+    return git(path, *args).decode("utf-8", "strict").strip()
+
+
+def optional_config(path: Path, name: str) -> str | None:
+    # --get-regexp exits 1 for absence; --list permits an observational lookup.
+    entries = value(path, "config", "--null", "--list").split("\0")
+    matches = [entry.split("\n", 1)[1] for entry in entries
+               if entry.startswith(name.lower() + "\n")]
+    return matches[-1] if matches else None
+
+
+def author(path: Path) -> tuple[str, str]:
+    name = optional_config(path, "user.name") or ""
+    email = optional_config(path, "user.email") or ""
+    if (not name.strip() or len(name) > 100 or any(ord(c) < 32 for c in name)
+            or "<" in name or ">" in name or "/" in name or "\\" in name
+            or not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", email)
+            or email.endswith((".local", ".localhost", ".internal"))):
+        raise ConfigurationError("Configure an explicit public/project-safe Git user.name and user.email")
+    return name, email
