@@ -84,7 +84,10 @@ Only the owning Conductor can accept a matching pending assignment.
 
 Every canonical writer holds an OS-backed local advisory lock shared by linked
 worktrees. A bounded, atomically replaced local `pending.json` records the complete
-next checkpoint and its exact parent before touching canonical files. Individual
+next checkpoint and its exact parent before touching canonical files. Bounded deterministic scratch slots permit recovery after a process dies during
+file replacement. Only destinations named in the validated owned journal (or
+known local inbox assignments) are cleaned; interrupted unpublished deliveries
+remain unaccepted. Individual
 JSON files use fsync and atomic replacement; a commit is the portable transaction
 boundary. Recovery validates and completes that same transaction without inventing
 an owner or rewriting a terminal job. The local journal is deleted only after

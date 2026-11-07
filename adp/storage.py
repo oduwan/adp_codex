@@ -1,8 +1,9 @@
 """Local atomic files and one process-wide/interprocess mutation queue."""
 from __future__ import annotations
 
+import hashlib
 import os
-import tempfile
+import stat
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -22,11 +23,30 @@ def sync_directory(path: Path) -> None:
         os.close(fd)
 
 
+def temporary_slot(path: Path) -> Path:
+    """One bounded scratch slot per destination; callers hold the memory lock."""
+    return path.parent / (".adp-tmp-" + hashlib.sha256(path.name.encode()).hexdigest())
+
+
+def clear_slot(path: Path, limit: int) -> bool:
+    temporary = safe_path(temporary_slot(path))
+    if not temporary.exists():
+        return False
+    info = temporary.stat()
+    if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+        raise ADPError("Unsafe interrupted atomic-write slot")
+    temporary.unlink()
+    sync_directory(temporary.parent)
+    return True
+
+
 def atomic(path: Path, raw: bytes, *, replace: bool = True) -> None:
     safe_path(path)
     safe_path(path.parent)
-    fd, name = tempfile.mkstemp(prefix=".adp-tmp-", dir=path.parent)
-    temporary = Path(name)
+    temporary = safe_path(temporary_slot(path))
+    # The slot is ADP-owned scratch; unlink rather than truncate an old inode.
+    clear_slot(path, 65 * 65536)
+    fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(raw)

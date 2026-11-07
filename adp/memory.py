@@ -14,7 +14,7 @@ from .git import SHA, author, git, value
 from .schema import (KEY, MAX_ASSIGNMENTS, MAX_JOURNAL, MAX_JSON, MAX_RESULT,
                      MAX_TASKS, bundle, decode, encode, fields, key, require,
                      result_schema, string)
-from .storage import atomic, locked, sync_directory
+from .storage import atomic, clear_slot, locked, sync_directory
 
 IGNORE = b"/inbox/\n"
 
@@ -267,7 +267,7 @@ class Memory:
         """
         author(self.config.root)
         with locked(self.control):
-            self._layout()
+            self._registered()
             pending_path = self.control / "pending.json"
             if pending_path.exists():
                 pending = load_json(pending_path, MAX_JOURNAL)
@@ -278,8 +278,17 @@ class Memory:
                 require(pending["state"]["revision"] == previous["revision"] + 1, "Invalid pending revision")
                 if not (self._owns(previous["owner"]) or self._owns(pending["state"]["owner"])):
                     raise Conflict("Recovery requires the original local owner credential")
+                # Only destinations named in this validated owned transaction
+                # may have their private scratch slots removed.
+                clear_slot(self.path / "state.json", MAX_JSON)
+                for task_key in pending["tasks"]:
+                    clear_slot(self.path / "tasks" / (task_key + ".json"), MAX_JSON)
                 self._finish(pending)
             else:
+                _, committed_tasks = self._read_ref(value(self.path, "rev-parse", "HEAD"))
+                for task in committed_tasks.values():
+                    for assignment_id in task["assignments"]:
+                        clear_slot(self.path / "inbox" / (key(assignment_id) + ".json"), MAX_RESULT)
                 head, state, _ = self._local()
                 remote = self.config.remote_head()
                 if remote == head:
@@ -400,10 +409,10 @@ class Memory:
             job = self._envelope(envelope, state, tasks)
             job["status"] = "accepted"
             job["result"] = envelope["result"]
-            outcome = self._checkpoint(head, state, tasks)
+            self._checkpoint(head, state, tasks)
             path.unlink()
             sync_directory(path.parent)
-            return outcome
+            return self.inspect()
 
     def cleanup_inbox(self) -> dict:
         """Remove only deliveries already durably accepted with identical content."""

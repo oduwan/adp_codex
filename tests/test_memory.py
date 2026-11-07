@@ -207,6 +207,51 @@ class MemoryTests(MemoryFixture):
             self.other.initialize(authorized=True)
         self.assertFalse(self.other.path.exists())
 
+    def test_process_death_during_atomic_replacement_and_inbox_delivery(self) -> None:
+        self.initialize()
+        import json
+        import os
+        import subprocess
+        import sys
+        envelope = self.envelope(identifier="atomic-delivery")
+        program = r"""
+import json, os, sys
+from pathlib import Path
+from unittest.mock import patch
+from adp.config import Config
+from adp.memory import Memory
+root, storage, target = sys.argv[1:]
+memory = Memory(Config.discover(Path(root), branch="coordination/current", storage=Path(storage)))
+operation = os.link if target == "inbox" else os.replace
+def interrupted(src, dst):
+    destination = Path(dst)
+    if ((target == "tasks" and destination.parent.name == "tasks")
+        or (target == "state" and destination.name == "state.json")
+        or (target == "inbox" and destination.parent.name == "inbox")):
+        os._exit(99)
+    return operation(src, dst)
+with patch("adp.storage.os." + ("link" if target == "inbox" else "replace"), side_effect=interrupted):
+    if target == "inbox":
+        memory.deliver(json.loads(sys.stdin.read()))
+    else:
+        memory.add_task("atomic-" + target)
+"""
+        root = str(__import__("pathlib").Path(__file__).resolve().parents[1])
+        env = {**os.environ, "PYTHONPATH": root, "PYTHONDONTWRITEBYTECODE": "1"}
+        for target in ("tasks", "state", "inbox"):
+            child = subprocess.run([sys.executable, "-c", program, str(self.a),
+                str(self.memory.path), target], env=env, input=json.dumps(envelope),
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(child.returncode, 99, child.stderr)
+            self.memory.recover()
+            self.assertEqual(self.memory.inspect()["health"], "SYNCED")
+            self.assertEqual(list(self.memory.path.rglob(".adp-tmp-*")), [])
+        job = self.memory.inspect()["tasks"][envelope["task_key"]]["assignments"][envelope["assignment_id"]]
+        self.assertEqual(job["status"], "pending")
+        self.assertIsNone(job["result"])
+        self.memory.deliver(envelope)
+        self.memory.accept(envelope["assignment_id"])
+
     def test_actual_remote_push_rejection_and_retry(self) -> None:
         self.initialize()
         hook = self.remote / "hooks" / "pre-receive"

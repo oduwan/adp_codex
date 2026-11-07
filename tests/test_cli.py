@@ -115,4 +115,3 @@ class ProcessMemoryTests(MemoryFixture):
         self.memory.discard_inbox(envelope["assignment_id"], confirmed=True)
         self.memory.recover()
         self.assertEqual(self.memory.inspect()["health"], "SYNCED")
-
