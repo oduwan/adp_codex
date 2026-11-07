@@ -1,6 +1,6 @@
 # Progress Guard — mandatory anti-loop contract
 
-**Status:** design specification for an executable guard, not yet implemented. Safety and honesty invariants are mandatory in all future execution modes.
+**Status:** binding contract with a scoped M2 implementation candidate described below. Safety and honesty invariants remain mandatory; autonomous execution is unavailable.
 
 ## Goal
 

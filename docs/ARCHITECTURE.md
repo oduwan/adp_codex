@@ -1,6 +1,6 @@
 # Architecture and system boundaries
 
-**Status:** normative design goals, not implemented runtime behavior.
+**Status:** normative design goals. M1 memory is accepted; M2 guard is a scoped candidate. Discovery, policy integration and autonomous execution remain future work.
 
 ## Purpose
 
@@ -37,7 +37,9 @@ adp init -> adp doctor -> adp discover -> adp plan
                          product PR and summary
 ```
 
-The commands above are proposed interfaces; none is available in this scaffold.
+The flow includes accepted M1 memory commands and proposed future interfaces.
+The M2 candidate provides a standalone guard API and explicit memory upgrade;
+it does not enable `run` or worker execution.
 
 ## Memory and concurrency
 

@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-**Status:** M0 scaffold complete. M1–M6 are implementation milestones, not yet available features. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
+**Status:** M0 scaffold and M1 portable memory are accepted. M2 has an implementation candidate; M3–M6 remain planned milestones. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
 
 ## Milestones
 
@@ -10,11 +10,11 @@ Deliver portable `plugin.json`, focused read-only `SKILL.md`, English architectu
 
 **Evidence:** [scaffold commit](https://github.com/oduwan/adp_codex/commit/6d404f2d37061a0b33e6d168868cc48141e4b823) and its successful GitHub Actions run. No autonomous execution is included.
 
-### M1 — Portable memory, initialization and doctor ([#1](https://github.com/oduwan/adp_codex/issues/1))
+### M1 — Portable memory, initialization and doctor (accepted, [#1](https://github.com/oduwan/adp_codex/issues/1))
 
 Implement configurable single-writer working memory, `init`, `doctor`, claiming and handoff, atomic inbox delivery, stale-result refusal and restart recovery. Do not hard-code remotes, branch conventions or repository identity.
 
-**Gate:** synthetic two-clone conflict, safe takeover, malformed-schema and portable handoff tests.
+**Gate:** synthetic two-clone conflict, safe takeover, malformed-schema and portable handoff tests. Accepted through [PR #7](https://github.com/oduwan/adp_codex/pull/7), merged at `2064fdf83c540e761ef55f3bc394fe625cd20df4`.
 
 ### M2 — Executable Progress Guard ([#2](https://github.com/oduwan/adp_codex/issues/2))
 

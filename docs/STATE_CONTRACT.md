@@ -1,6 +1,6 @@
-# Portable working memory — proposed v1 state contract
+# Portable working memory — accepted v1 and candidate v2
 
-**Status:** design contract. The initial repository does not implement Git-backed memory.
+**Status:** M1 v1 memory is accepted through PR #7; M2 v2 guard integration is a separately reviewed candidate.
 
 ## Physical layout
 
@@ -36,11 +36,10 @@ The new Conductor reconstructs live work from the synced state, then revalidates
 
 Implement strict size caps, schema/version checks, path validation, symlink refusal, no secrets or raw traces in remote memory, and bounded disk use. Prefer short current-state descriptions and references to durable product evidence over growing archives. A portable working memory is **not** a full event log, backup service or permission broker.
 
-## M1 v1 implementation candidate
+## Accepted M1 v1 implementation
 
-Issue #1 adds an implementation candidate in `adp.memory.Memory` and
-`adp.schema`; acceptance still requires exact-revision independent review and
-separate integration. See [CLI and API](MEMORY_CLI.md) for operation and exit codes.
+Issue #1 provides the accepted implementation in `adp.memory.Memory` and
+`adp.schema`, independently reviewed and integrated through PR #7. See [CLI and API](MEMORY_CLI.md) for operation and exit codes.
 No issue, PR, product-code execution or external outcome is performed by these APIs.
 
 ### Exact schema and bounds
