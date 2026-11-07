@@ -190,3 +190,34 @@ class CampaignTests(GuardFixture):
         with self.assertRaises(Conflict):
             self.guard.record_case("task-A", self.identifier, token, permit, Outcome.PASS)
         self.assertFalse(self.guard.campaign_summary("task-A", self.identifier)["all_observed_pass"])
+
+    def test_mixed_measurements_cannot_erase_known_campaign_containment(self):
+        cases = ((2, -1), (-1, 2), (10**30, -1))
+        for index, (samples, payload) in enumerate(cases):
+            self.identifier = self.register(replace(self.spec, gate=f"mixed-containment:{index}"))
+            token = self.start(Campaign(("one", "two"), "fixture:mixed-budget", samples=1, payload_bytes=1))
+            permit = self.guard.next_case("task-A", self.identifier, token)
+            decision = self.guard.record_case("task-A", self.identifier, token, permit,
+                Outcome.PASS, samples=samples, payload_bytes=payload)
+            self.assertEqual(decision.kind, DecisionKind.STOP_UNSAFE)
+            with self.assertRaises(Conflict):
+                self.guard.record_case("task-A", self.identifier, token, permit, Outcome.PASS)
+            with self.assertRaises(GuardRefusal):
+                self.guard.next_case("task-A", self.identifier, token)
+            campaign = self.item()["campaign"]
+            self.assertLessEqual(campaign["samples"], 2)
+            self.assertLessEqual(campaign["payload_bytes"], 2)
+        self.identifier = self.register(replace(self.spec, gate="large-accumulator"))
+        token = self.start(Campaign(("one", "two", "three"), "fixture:large-count", samples=1))
+        self.record(token, "one", Outcome.PASS, samples=1)
+        second = self.guard.next_case("task-A", self.identifier, token)
+        self.assertEqual(self.guard.record_case("task-A", self.identifier, token, second,
+            Outcome.PASS, samples=10**18 - 1).kind, DecisionKind.STOP_UNSAFE)
+        self.assertEqual(self.item()["campaign"]["samples"], 2)
+        self.identifier = self.register(replace(self.spec, gate="malformed-expired-case"))
+        token = self.start(Campaign(("one", "two"), "fixture:expired", seconds=1))
+        permit = self.guard.next_case("task-A", self.identifier, token)
+        self.now += 2
+        self.assertEqual(self.guard.record_case("task-A", self.identifier, token, permit,
+            None, payload_bytes=-1).kind, DecisionKind.STOP_UNSAFE)
+        self.assertEqual(self.guard.campaign_summary("task-A", self.identifier)["counts"]["ERROR"], 1)

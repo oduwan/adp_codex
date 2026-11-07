@@ -317,6 +317,8 @@ class ProgressGuard:
             supplied = None
             input_error = exc
         def transition(state: dict, task: dict, item: dict) -> None:
+            if item["mode"] in ("unsafe", "operator"):
+                raise GuardRefusal(self._decision(identifier, state, task, item))
             active = item["active"]
             if active is None or active["id"] != permit.token:
                 raise Conflict("Attempt token is absent, stale or already terminal")
@@ -368,6 +370,8 @@ class ProgressGuard:
         """Acknowledge interrupted/stale work as UNKNOWN; never silently retry it."""
         string(evidence_reference)
         def transition(state: dict, task: dict, item: dict) -> None:
+            if item["mode"] in ("unsafe", "operator"):
+                raise GuardRefusal(self._decision(identifier, state, task, item))
             active = item["active"]
             require(active is not None, "There is no reserved attempt to abandon")
             expired = self._now() < active["started"] or self._now() > active["deadline"]
@@ -460,6 +464,8 @@ class ProgressGuard:
         decision = self._decision(identifier, state, task, item)
         if (decision.kind != DecisionKind.ALLOW or item["approval"] is None
                 or item["approval"]["context"] != self._context(state, task)):
+            if decision.kind in (DecisionKind.STOP_UNSAFE, DecisionKind.OPERATOR_DECISION_REQUIRED):
+                raise GuardRefusal(decision)
             raise GuardRefusal(Decision(DecisionKind.FORENSIC_REQUIRED,
                 "Independent correction approval is absent or invalidated by source/generation change", decision.baseline))
         approval = item["approval"]
@@ -548,39 +554,41 @@ class ProgressGuard:
                     outcome: Outcome, *, samples: int = 0, payload_bytes: int = 0,
                     risk: str | None = None) -> Decision:
         recognized_risk = risk if isinstance(risk, str) and risk in ("safety", "authority", "contamination", "containment") else None
+        input_error = None
         try:
             require(isinstance(outcome, str) and outcome in set(Outcome) - {Outcome.UNKNOWN}, "Invalid campaign measured outcome")
             integer(samples)
             integer(payload_bytes)
             if risk is not None:
                 require(recognized_risk is not None, "Invalid campaign stop reason")
-        except ADPError:
-            if recognized_risk is None:
-                raise
-            # An explicit hazard is never discarded due to malformed ancillary
-            # measurements. ERROR describes an invalid runner report, not PASS.
-            outcome = outcome if isinstance(outcome, str) and outcome in set(Outcome) - {Outcome.UNKNOWN} else Outcome.ERROR
-            samples = samples if type(samples) is int and 0 <= samples < 10**18 else 0
-            payload_bytes = payload_bytes if type(payload_bytes) is int and 0 <= payload_bytes < 10**18 else 0
-            risk = recognized_risk
+        except ADPError as exc:
+            input_error = exc
         def transition(state: dict, task: dict, item: dict) -> None:
             campaign, case = self._case(item, token, permit)
             index = case["index"]
             now = self._now()
             stale = campaign["context"] != self._context(state, task)
-            exceeded = (now < campaign["last_time"] or now > campaign["deadline"]
-                        or campaign["samples"] + samples > campaign["spec"]["samples"]
-                        or campaign["payload_bytes"] + payload_bytes > campaign["spec"]["payload_bytes"])
-            campaign["results"][index] = outcome
+            sample_overflow = type(samples) is int and samples > campaign["spec"]["samples"] - campaign["samples"]
+            payload_overflow = type(payload_bytes) is int and payload_bytes > campaign["spec"]["payload_bytes"] - campaign["payload_bytes"]
+            exceeded = now < campaign["last_time"] or now > campaign["deadline"] or sample_overflow or payload_overflow
+            unsafe = stale or exceeded or recognized_risk is not None
+            if input_error is not None and not unsafe:
+                raise input_error
+            actual = outcome if isinstance(outcome, str) and outcome in set(Outcome) - {Outcome.UNKNOWN} else Outcome.ERROR
+            observed_samples = samples if type(samples) is int and samples >= 0 else 0
+            observed_payload = payload_bytes if type(payload_bytes) is int and payload_bytes >= 0 else 0
+            campaign["results"][index] = actual
             campaign["active_case"] = None
             campaign["last_time"] = now
-            campaign["samples"] += samples
-            campaign["payload_bytes"] += payload_bytes
-            measured = data(Observation(Outcome(outcome), (campaign["spec"]["evidence_reference"],), tuple(item["unresolved"])))
+            # Saturating overflow sentinels remain bounded even when an invalid
+            # or near-integer-limit measurement accompanies the real hazard.
+            campaign["samples"] = min(campaign["spec"]["samples"] + 1, campaign["samples"] + observed_samples)
+            campaign["payload_bytes"] = min(campaign["spec"]["payload_bytes"] + 1, campaign["payload_bytes"] + observed_payload)
+            measured = data(Observation(Outcome(actual), (campaign["spec"]["evidence_reference"],), tuple(item["unresolved"])))
             self._account(item, {"kind": ActionKind.CHECK}, measured, False)
             item["last_event"] = "campaign"
-            if stale or exceeded or risk is not None:
-                campaign["stopped"] = "stale revision/generation" if stale else risk or "containment"
+            if unsafe:
+                campaign["stopped"] = "stale revision/generation" if stale else recognized_risk or "containment"
                 self._terminal(item, "Campaign stopped for a real safety, contamination or containment constraint", unsafe=True)
             else:
                 self._threshold(item)

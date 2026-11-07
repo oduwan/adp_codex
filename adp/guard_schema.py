@@ -230,6 +230,9 @@ def record(value: dict, identifier: str) -> None:
                 choice(outcome, set(Outcome) - {Outcome.UNKNOWN})
         for name in ("started", "deadline", "last_time", "samples", "payload_bytes"):
             integer(campaign[name])
+        require(campaign["samples"] <= campaign["spec"]["samples"] + 1
+                and campaign["payload_bytes"] <= campaign["spec"]["payload_bytes"] + 1,
+                "Campaign overflow counters must remain bounded")
         require(campaign["deadline"] == campaign["started"] + campaign["spec"]["seconds"], "Campaign deadline changed")
         if campaign["stopped"] is not None:
             string(campaign["stopped"], 128)
@@ -256,7 +259,11 @@ def record(value: dict, identifier: str) -> None:
     if value["mode"] == "running":
         require(value["active"] is not None and value["active"]["bounded"], "Running guard requires its bounded reservation")
     if value["active"] is not None and value["active"]["bounded"]:
-        require(value["mode"] in ("running", "unsafe"), "Bounded reservation has an inconsistent mode")
+        require(value["mode"] == "running", "Bounded reservation has an inconsistent mode")
+    if value["mode"] in ("unsafe", "operator"):
+        require(value["active"] is None, "Terminal guard cannot retain an actionable reservation")
+        require(value["campaign"] is None or value["campaign"]["active_case"] is None,
+                "Terminal guard cannot retain an actionable campaign case")
     if value["mode"] == "normal":
         require(value["request"] is None and value["plan"] is None, "Normal guard cannot carry an unresolved forensic plan")
     if value["plan"] is not None:

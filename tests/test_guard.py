@@ -401,3 +401,25 @@ class ForensicTests(GuardFixture):
             state["progress_guard"]["requirements"][self.identifier]["mode"] = mode
             with self.subTest(mode=mode), self.assertRaises(ADPError):
                 bundle(state, original["tasks"], self.memory.config.identity)
+
+    def test_terminal_state_cannot_retain_or_abandon_a_running_proof(self):
+        self.stall()
+        result, _ = self.review()
+        permit = self.bounded(result.plan)
+        original = self.memory.inspect()
+        for mode in ("unsafe", "operator"):
+            state = copy.deepcopy(original["state"])
+            state["progress_guard"]["requirements"][self.identifier]["mode"] = mode
+            with self.subTest(mode=mode), self.assertRaises(ADPError):
+                bundle(state, original["tasks"], self.memory.config.identity)
+        self.guard.observe("task-A", self.identifier, permit,
+            Observation(Outcome.ERROR, ("fixture:unsafe-proof",), self.spec.acceptance, risk="safety"))
+        for operation in (
+            lambda: self.guard.abandon("task-A", self.identifier, evidence_reference="fixture:no-reset"),
+            lambda: self.guard.require_approval("task-A", self.identifier),
+            lambda: self.run_attempt(),
+        ):
+            with self.assertRaises(GuardRefusal) as denied:
+                operation()
+            self.assertEqual(denied.exception.decision.kind, DecisionKind.STOP_UNSAFE)
+        self.assertEqual(self.guard.inspect("task-A", self.identifier).kind, DecisionKind.STOP_UNSAFE)

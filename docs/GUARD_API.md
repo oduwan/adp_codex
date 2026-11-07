@@ -113,7 +113,9 @@ unresolved set changes only by the proved transition. Invalid evidence leaves th
 reservation pending and cannot silently admit another attempt. A reported hazard
 takes priority over contradictory progress, removed criteria or malformed
 ancillary data: the guard consumes the permit, preserves the unresolved baseline
-and latches STOP_UNSAFE. Such a hazard cannot disappear through resubmission.
+and latches STOP_UNSAFE. Such a hazard cannot disappear through resubmission. Terminal guard states may
+not retain executable reservations, and observation/abandonment cannot reopen
+them. Approval checks retain terminal STOP/operator decision severity.
 
 Use `abandon(..., evidence_reference=...)` to acknowledge interrupted work as
 UNKNOWN. It preserves counters and consumes a bounded proof if one was reserved.
@@ -170,6 +172,11 @@ No inventory replacement, duplicate terminal result, reordered method or increas
 budget is admitted. Safety/authority, evidence contamination, source/generation
 drift, clock regression, deadline or sample/payload exhaustion stops it. An
 observed violating case keeps its actual result; remaining methods stay NOTRUN.
+A known overflow, expired deadline or stale context is persisted even when an
+ancillary measurement is malformed. Invalid runner outcomes are recorded as ERROR
+when such a hazard must latch. Cumulative sample/payload counters saturate at
+the admitted budget plus one on overflow; that value means "budget exceeded",
+with exact raw measurements retained only in the referenced evidence artifact.
 `next_case` checks current containment before a method is admitted. The surrounding
 runner must call it before every method and enforce in-method cancellation;
 M2 does not execute or interrupt code. The clock is a trusted UTC-seconds provider;
