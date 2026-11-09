@@ -18,6 +18,8 @@ def decision(number, *arguments):
         operation, yes, no, operand = rows[pointer]
         if operation == 0x20:
             accumulator = struct.unpack_from('I', data, operand)[0]
+        elif operation == 0x54:
+            accumulator &= operand
         elif operation in (0x15, 0x35, 0x45):
             condition = (accumulator == operand if operation == 0x15 else
                          accumulator >= operand if operation == 0x35 else bool(accumulator & operand))

@@ -46,6 +46,11 @@ and defaults to KILL for every unlisted syscall, including unknown/future calls.
 An explicit read-only query/memory/timer/lifecycle allowlist excludes filesystem
 mutation, writable open/openat, process/thread creation, setsid, Internet/raw
 sockets, namespace changes, tracing, alternate open and kernel/IPC mutation.
+Mappings must have exactly MAP_PRIVATE type bits; MAP_SHARED, SHARED_VALIDATE,
+mixed and absent mapping types are fatal. This also prevents a later mprotect
+upgrade of a shared file mapping without pretending that the stateless filter
+tracks mappings. Only NORMAL, DONTNEED and FREE advice is permitted on private
+memory; MADV_REMOVE, privileged and unknown advice is fatal.
 Writes are restricted to the original stdout/stderr pipes; closing/replacing/
 duplicating those descriptors is forbidden. A caught write error followed by exit zero cannot
 manufacture PASS: the mutation syscall kills the process before its handler can
@@ -258,3 +263,46 @@ failure emits only safe stage/binary-presence/error-type metadata; absent OS
 capability never becomes a passing synthetic fixture. Final clean-source CI,
 the bounded discriminator and independent exact-HEAD verdict/blocker are attached
 to the Draft PR after this report commit; no future qualification is claimed here.
+
+## Preserved final-review corrections
+
+Independent exact-revision review of `aa227446126695c70eba4f773fcabbde3d001ba8`
+returned CHANGES_REQUIRED: emitted CBPF allowed shared-file mmap and MADV_REMOVE,
+contrary to the terminal mutation-attempt contract. Its controls confirmed private
+anonymous mapping ALLOW, modern fchmodat2 KILL and unknown syscall KILL. Private
+filter-domain proof SHA256
+`e206a09966d81ff04a5a6e2da22fcbc7b45d1cc6ec65a452fb534e27a0eaff90`;
+review packet SHA256
+`7a513be1e7a17e4c658282376b030f2fd84a4bbec22063f5591ebcc3db5fc644`.
+The actual end-to-end mapping discriminator was NOTRUN after a fresh
+probe-network TimeoutExpired under the existing3s budget. No OS false PASS or
+filesystem mutation is claimed; retained observation SHA256
+`e35731c31d5f873c7c4ee13c5ac7ef688ce974d9887af073df0f4adaa9c3d8ba`.
+
+The privately built official Python3.12.16 runtime initially produced a
+134,952,451-byte image, rejected by the unchanged128MiB bound. An unused static
+compilation archive alone contributed65,778,798bytes. This was a fixture closure
+defect, not proof of unavailable kernel isolation. Admission FAIL SHA256
+`6d061555739f1ed287d966b050a9c5219338bc0b09340c0bbb7d19b496b45437`.
+The fixture now excludes compilation-only `config-*` directories while retaining
+all required runtime modules; the production bound is unchanged. Official source
+archive SHA256 `710c3e75dac8b2f258d9cd0f76e5c4c2e9175fac9e249c98901552f7cf33b7dd`;
+private native binary SHA256
+`49044f1960912bd14a167a805b39e3a88796ebf1636632db5a919c3cbd843cd7`.
+
+Two pure regression methods failed before correction (nine failing subtest
+assertions), private log SHA256
+`5f4777b093a9f5f0b5040d9012af77220553dad0dfbfe206df59968af3dfaa50`.
+They passed2/2 after the narrow filter/fixture correction on both native versions.
+A separate frozen three-method security inventory adds those two pure methods
+and an actual OS shared-mapping/removal refusal case. The original17 sandbox,
+three accounting and210 accepted inventories remain unchanged. Final native
+23-method campaigns, normal-push CI and fresh exact-HEAD review remain required.
+
+The prior aa22744 CI3.12 run passed210/210 and installation6/6; M7 recorded
+3PASS/17NOTRUN of20 with a separate class-fixture SKIP at policy admission
+(binary present, ADPError). Evidence SHA256
+`fa3d68fedb0be4a574dd075d13ecdb0aa39d3769d87a1237d14ca08c4e085d5e`.
+That run exposed only one3.12 job despite the two-version matrix;3.11 inventory
+is UNKNOWN, not inferred from earlier CI. Subsequent complete qualification and
+review attestations belong to the exact final Draft PR revision.

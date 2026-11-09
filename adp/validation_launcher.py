@@ -16,7 +16,7 @@ import struct
 
 def seccomp_program() -> bytes:
     # Linux x86_64 only. Unknown/new and x32 syscalls fail closed.
-    load, equal, greater_equal, bits, ret = 0x20, 0x15, 0x35, 0x45, 0x06
+    load, equal, greater_equal, bits, mask, ret = 0x20, 0x15, 0x35, 0x45, 0x54, 0x06
     kill, allow = 0x80000000, 0x7fff0000
     rows = [(load, 0, 0, 4), (equal, 1, 0, 0xc000003e), (ret, 0, 0, kill),
             (load, 0, 0, 0), (greater_equal, 0, 1, 0x40000000), (ret, 0, 0, kill)]
@@ -47,11 +47,20 @@ def seccomp_program() -> bytes:
                  (equal, 0, 1, 0), (ret, 0, 0, allow), (ret, 0, 0, kill)])
     branch(157, [(load, 0, 0, 16), (equal, 0, 1, 39), (ret, 0, 0, allow),
                  (equal, 0, 1, 21), (ret, 0, 0, allow), (ret, 0, 0, kill)])
+    # Only private mappings can exist after exec. This prevents shared-file
+    # mutation and later mprotect upgrades without pretending to track VMAs.
+    branch(9, [(load, 0, 0, 40), (mask, 0, 0, 0x0f), (equal, 0, 1, 2),
+               (ret, 0, 0, allow), (ret, 0, 0, kill)])
+    advice = [(load, 0, 0, 32)]
+    for value in (0, 4, 8):  # NORMAL/DONTNEED/FREE affect private memory only.
+        advice.extend(((equal, 0, 1, value), (ret, 0, 0, allow)))
+    advice.append((ret, 0, 0, kill))
+    branch(28, advice)  # MADV_REMOVE, privileged and unknown advice are fatal.
     # Read-only queries, process-local memory/signal/timer operations, bounded
     # pipe/event descriptors and lifecycle exit/wait. No filesystem mutator,
     # process creator, network effect, credential change or new syscall is here.
-    allowed = (0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 21, 22,
-               23, 24, 25, 27, 28, 34, 35, 36, 37, 38, 39, 59, 60, 61, 63,
+    allowed = (0, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 17, 19, 21, 22,
+               23, 24, 25, 27, 34, 35, 36, 37, 38, 39, 59, 60, 61, 63,
                78, 79, 80, 81, 89, 95, 96, 97, 98, 99, 100, 102, 104, 107,
                108, 110, 111, 115, 118, 120, 121, 124, 125, 127, 128, 130,
                131, 137, 138, 140, 143, 145, 146, 147, 148, 158, 186, 201,

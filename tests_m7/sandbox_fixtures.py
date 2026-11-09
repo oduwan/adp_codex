@@ -22,7 +22,7 @@ def runtime_image(root: Path) -> Path:
     stdlib = Path(sysconfig.get_path('stdlib'))
     destination = root / 'runtime/lib' / stdlib.name
     shutil.copytree(stdlib, destination, ignore=shutil.ignore_patterns('__pycache__', 'site-packages',
-                    'dist-packages', 'test', 'tests', 'idlelib', 'tkinter', 'ensurepip'))
+                    'dist-packages', 'test', 'tests', 'idlelib', 'tkinter', 'ensurepip', 'config-*'))
     # Trusted installed interpreter/library dependencies only; no target code,
     # credential stores, whole /usr mount, package installation or shell.
     dependencies = {Path(sys.executable).resolve(), *stdlib.glob('lib-dynload/*.so')}
