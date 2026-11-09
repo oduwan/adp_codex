@@ -45,6 +45,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--authorize-disposable-execution", action="store_true")
     parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--keep-artifacts", action="store_true", help="Retain private disposable Git/memory/runtime receipts for independent audit")
     args = parser.parse_args()
     if not args.authorize_disposable_execution:
         parser.error("explicit disposable execution authority required")
@@ -74,9 +75,13 @@ def main():
     except Exception as exc:
         report.update(qualified=False, error=type(exc).__name__ + ": " + str(exc))
     finally:
+        if args.keep_artifacts:
+            report["artifacts"] = str(fixture.base)
+            fixture.temp._finalizer.detach()
         report["evidence_digest"] = digest(report)
         args.evidence.write_text(json.dumps(report, indent=2, sort_keys=True))
-        fixture.doCleanups()
+        if not args.keep_artifacts:
+            fixture.doCleanups()
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["qualified"] else 7
 

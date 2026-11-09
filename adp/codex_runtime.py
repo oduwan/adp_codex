@@ -173,9 +173,21 @@ class CodexExecRuntime:
                 self._save(request.id, record)
                 return self._observation(request.id, record)
             record.update(status=RuntimeStatus.RUNNING, pid=process.pid, start_time=_start_time(process.pid))
-            self._save(request.id, record)
             with self._mutex:
                 self._live[request.id] = (process, request, self.clock())
+            try:
+                self._save(request.id, record)
+            except BaseException:
+                # A failed receipt write cannot leave an unobserved live child.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=5)
+                process.stdout.close()
+                with self._mutex:
+                    self._live.pop(request.id, None)
+                raise
             return self._observation(request.id, record)
 
     def wait(self, request_id):

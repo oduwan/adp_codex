@@ -40,7 +40,7 @@ def validation_result(raw):
 
 
 def job_schema(job):
-    fields(job, "request_id role generation revision source_ref host context status permit result receipt checks seconds deadline samples payload_bytes elapsed used_samples used_bytes started request_digest outside_digest admin_digest")
+    fields(job, "request_id role generation revision source_ref host context status permit result receipt checks seconds deadline samples payload_bytes elapsed used_samples used_bytes started request_digest outside_digest admin_digest result_digest")
     fingerprint(job["request_id"])
     require(job["role"] in set(Role), "Invalid worker role")
     integer(job["generation"], 1)
@@ -68,6 +68,8 @@ def job_schema(job):
     fingerprint(job["request_digest"])
     fingerprint(job["outside_digest"])
     fingerprint(job["admin_digest"])
+    if job["result_digest"] is not None:
+        fingerprint(job["result_digest"])
 
 
 def worker_result(result: WorkerResult):

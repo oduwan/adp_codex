@@ -63,3 +63,13 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual([v.denominator for v in result],[2,3])
         self.assertEqual(result[0].outcome,Outcome.TIMEOUT)
         self.assertNotEqual(result[1].outcome,Outcome.PASS)
+
+    def test_expired_total_budget_does_not_launch_any_later_command(self):
+        from unittest.mock import patch
+        command=CheckCommand('unit',(sys.executable,'-c','raise AssertionError("must not run")'),2,2)
+        validator=SubprocessValidation((command,),trusted_disposable=True)
+        with patch('adp.execution_ports.time.monotonic',side_effect=[0,2]),patch('adp.execution_ports.subprocess.Popen') as process:
+            result=validator.run(self.root,self.sha,('unit',),seconds=1)
+        process.assert_not_called()
+        self.assertEqual(result[0].outcome,Outcome.NOTRUN)
+        self.assertEqual(result[0].denominator,2)

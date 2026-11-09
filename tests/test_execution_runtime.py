@@ -89,3 +89,19 @@ class RuntimeTests(unittest.TestCase):
         schema = output_schema(WorkerResult)
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(set(schema["required"]), set(schema["properties"]))
+
+    def test_failed_running_receipt_write_kills_launched_process(self):
+        from unittest.mock import patch
+        from adp.errors import ADPError
+        original=self.runtime._save
+        launched=[]
+        def save(rid,record):
+            if record['status']==RuntimeStatus.RUNNING:
+                launched.append(record['pid'])
+                raise OSError('synthetic receipt durability failure')
+            return original(rid,record)
+        with patch.object(self.runtime,'_save',side_effect=save):
+            with self.assertRaises(OSError): self.runtime.dispatch(self.request('timeout',5))
+        self.assertEqual(len(launched),1)
+        self.assertFalse(_group_alive(launched[0]))
+        self.assertEqual(self.runtime.observe(self.request('timeout',5).id).status,RuntimeStatus.UNKNOWN)

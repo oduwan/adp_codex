@@ -178,14 +178,16 @@ python scripts/validate_scaffold.py
 Real runtime qualification is deliberately opt-in, outside unattended CI:
 
 ```bash
-python scripts/qualify_codex_runtime.py --authorize-disposable-execution --evidence /tmp/adp-real-proof.json
+python scripts/qualify_codex_runtime.py --authorize-disposable-execution --keep-artifacts --evidence /tmp/adp-real-proof.json
 ```
 
 This provisions actual disposable Git repos, real M1–M4, explicit synthetic project
 policy/operator authority, a real Codex Developer then independent Reviewer,
 actual source commit/checks and an idempotent local forge. It records CLI version,
 ADP source HEAD, genuine thread IDs, product SHA and compact audit evidence outside
-history. Fixture-runtime unit tests are explicitly synthetic and never substituted
+history. `--keep-artifacts` retains the private disposable Git/memory/runtime
+receipts for independent audit; omit it to delete the disposable fixture on exit.
+Fixture-runtime unit tests are explicitly synthetic and never substituted
 for this proof. Raw runtime records/logs, tokens and local memory are not committed.
 
 Strict production network-CAS, arbitrary validation sandbox qualification, release

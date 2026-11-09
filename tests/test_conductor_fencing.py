@@ -83,3 +83,38 @@ class FencingTests(ExecutionFixture):
         second=self.conductor.resume(self.admissions[:1],maximum_parallel=1,authorized=True)
         self.assertEqual(second['status'],'COMPLETE',second)
         self.assertEqual(self.runtime.dispatch_count,2)
+
+    def test_unreadable_memory_cannot_hide_a_launched_worker_from_stop(self):
+        from unittest.mock import patch
+        rid='c'*64
+        self.conductor._launched.add(rid)
+        self.runtime.observations[rid]=RuntimeObservation(rid,self.runtime.host,RuntimeStatus.RUNNING,None,None,'fixture:running',0)
+        cancelled=[]
+        def cancel(request_id):
+            cancelled.append(request_id)
+            return RuntimeObservation(request_id,self.runtime.host,RuntimeStatus.CANCELLED,None,None,'fixture:stopped',0)
+        self.runtime.cancel=cancel
+        with patch.object(self.conductor,'_task',side_effect=ADPError('synthetic memory unavailable')):
+            self.assertEqual(self.conductor._quiesce(self.admissions),[])
+        self.assertEqual(cancelled,[rid])
+
+    def test_observed_publication_cannot_complete_after_local_sha_drift(self):
+        from test_config import run
+        original=self.conductor._measured
+        injected=[]
+        def measured(admission,job,*args,**kwargs):
+            if job['role']==Role.COORDINATION and not injected:
+                injected.append(True)
+                # Every external result already exists; local source is now stale.
+                run(self.projects['one'].root,'update-ref','refs/heads/work/one',self.initial)
+                raise OSError('synthetic crash and local source drift after reporting')
+            return original(admission,job,*args,**kwargs)
+        self.conductor._measured=measured
+        first=self.conductor.run(self.admissions[:1],maximum_parallel=1,authorized=True)
+        self.assertEqual(first['status'],'STOPPED',first)
+        self.assertEqual(len(self.forge._read()['items']),2)
+        self.conductor._measured=original
+        again=self.conductor.resume(self.admissions[:1],maximum_parallel=1,authorized=True)
+        self.assertEqual(again['status'],'STOPPED',again)
+        self.assertNotEqual(self.conductor._task(self.admissions[0])['stage'],'COMPLETE')
+        self.assertEqual(self.runtime.dispatch_count,2)

@@ -179,6 +179,11 @@ class SubprocessValidation:
         deadline = time.monotonic() + seconds
         for command in self.commands:
             require(command.argv and command.denominator > 0 and 0 < command.seconds <= 300, "Invalid explicit validation budget")
+            if time.monotonic() >= deadline:
+                counts = tuple(OutcomeCount(name, command.denominator if name == Outcome.NOTRUN else 0) for name in Outcome)
+                results.append(ValidationResult(command.name, revision, Outcome.NOTRUN, command.denominator, 0,
+                    "validation:budget-exhausted", counts, 0))
+                continue
             counts, quarantined, passed = (), 0, 0
             try:
                 # No forge/ADP credentials or arbitrary parent variables in test code.
