@@ -4,15 +4,16 @@ Thank you for helping develop ADP Codex.
 
 ## Current phase
 
-The project ships accepted M1 portable memory and a **planning-only skill scaffold**. It remains non-autonomous; do not advertise unimplemented execution or discovery commands.
+The project ships accepted M1 portable memory, accepted M2 Progress Guard and a **planning-only skill scaffold**. It remains non-autonomous; do not advertise unimplemented execution or discovery commands.
 
 Read [Architecture](docs/ARCHITECTURE.md), [Progress Guard](docs/PROGRESS_GUARD.md), [Policy Provider](docs/POLICY_PROVIDER.md), [Git workflow](docs/GIT_WORKFLOW.md) and [Roadmap](docs/ROADMAP.md) before proposing major changes.
 
 M1 was accepted and merged through PR #7. Its memory commands and synthetic
 acceptance checks are documented in [the CLI guide](docs/MEMORY_CLI.md). The
-Issue #2 guard candidate and explicit schema upgrade are documented in
-[the Guard API](docs/GUARD_API.md); they require independent exact-HEAD review
-and separate integration.
+accepted Issue #2 guard and explicit schema upgrade are documented in
+[the Guard API](docs/GUARD_API.md), accepted through PR #8. The Issue #3 policy
+provider candidate is documented in [the Policy API](docs/POLICY_API.md); it
+requires independent exact-HEAD review and separate integration.
 
 ## Workflow
 

@@ -1,6 +1,6 @@
-# Portable working memory — accepted v1 and candidate v2
+# Portable working memory — accepted v1 and v2
 
-**Status:** M1 v1 memory is accepted through PR #7; M2 v2 guard integration is a separately reviewed candidate.
+**Status:** M1 v1 memory is accepted through PR #7; M2 v2 guard integration is accepted through PR #8. M3 changes neither schema.
 
 ## Physical layout
 

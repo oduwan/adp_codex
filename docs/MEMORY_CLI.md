@@ -2,7 +2,7 @@
 
 M1 portable memory is accepted on `main`, which remains non-autonomous.
 Discovery, policy decisions and worker execution remain unavailable. Issue #2
-adds a separate [Progress Guard candidate and explicit upgrade](GUARD_API.md). Python 3.11+ and Git are required. The runtime uses only
+adds the accepted [Progress Guard and explicit upgrade](GUARD_API.md) through PR #8. Python 3.11+ and Git are required. The runtime uses only
 the Python standard library.
 
 ## Configuration and identity

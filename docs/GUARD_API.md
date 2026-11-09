@@ -1,6 +1,6 @@
 # Executable Progress Guard API and migration
 
-M2 is an implementation candidate for Issue #2. The accepted M1 behavior remains
+M2 is accepted through PR #8 for Issue #2. The accepted M1 behavior remains
 available, and no autonomous execution is enabled. Runtime integration belongs to
 its separately admitted milestone. The module uses the standard library only.
 
