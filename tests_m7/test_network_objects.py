@@ -1,11 +1,13 @@
 import tempfile
 import unittest
+import json
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from adp.errors import ADPError
 from adp.network_git import GitHubCAS, GitHubTarget
-from adp.network_objects import closure, commit_payload, object_oid, tree_payload
+from adp.network_objects import closure, commit_payload, object_oid, oid, tree_payload
 from network_fixtures import ObjectServer, git_bytes, gv
 
 
@@ -52,6 +54,8 @@ class ObjectQualification(unittest.TestCase):
         self.assertFalse(self.server.mutations)
 
     def test_unsafe_tree_forms_refuse(self):
+        for invalid in ("0" * 40, "a" * 39, "A" * 40, None, True):
+            with self.subTest(invalid=invalid), self.assertRaises(ADPError): oid(invalid)
         sha = bytes.fromhex(self.first)
         for raw in (b"160000 submodule\0" + sha, b"100644 ../escape\0" + sha, b"100644 .git\0" + sha,
                     b"100644 duplicate\0" + sha + b"100644 duplicate\0" + sha,
@@ -99,6 +103,16 @@ class ObjectQualification(unittest.TestCase):
         self.assertEqual(len(self.client.refs()), 2)
         self.server.wrong_identity = True
         with self.assertRaises(ADPError): self.client.refs()
+        self.server.wrong_identity = False
+        original = self.server.request
+        def boolean_database(*args, **kwargs):
+            reply = original(*args, **kwargs)
+            value = json.loads(reply.body)
+            value["data"]["node"]["databaseId"] = True
+            return self.server.response(value)
+        aliased = GitHubCAS(replace(self.target, database_id=1), self.server)
+        with patch.object(self.server, "request", side_effect=boolean_database), self.assertRaises(ADPError):
+            aliased.refs()
 
     def test_interrupted_transport_is_write_ahead_fenced_across_restart(self):
         control = self.base / "private-control"; control.mkdir(mode=0o700)

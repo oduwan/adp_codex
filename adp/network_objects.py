@@ -22,7 +22,7 @@ OID = re.compile(r"[0-9a-f]{40}\Z")
 
 
 def oid(value: object) -> str:
-    require(type(value) is str and OID.fullmatch(value) is not None,
+    require(type(value) is str and OID.fullmatch(value) is not None and value != "0" * 40,
             "UNSUPPORTED_ATOMIC_REF: exact SHA1 object required")
     return value
 

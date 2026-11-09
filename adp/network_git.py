@@ -191,7 +191,8 @@ class GitHubCAS:
         require(type(raw) is dict and not raw.get("errors") and type(raw.get("data")) is dict,
                 "UNKNOWN: incomplete GraphQL repository observation")
         repo = raw["data"].get("node")
-        require(type(repo) is dict and (repo.get("id"), repo.get("databaseId"), repo.get("nameWithOwner"))
+        require(type(repo) is dict and type(repo.get("databaseId")) is int
+                and (repo.get("id"), repo.get("databaseId"), repo.get("nameWithOwner"))
                 == (self.target.node_id, self.target.database_id, self.target.owner + "/" + self.target.name),
                 "UNKNOWN: canonical GitHub repository binding changed")
         return repo
