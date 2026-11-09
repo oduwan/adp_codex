@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 from pathlib import PurePosixPath
 
 from .config import Config, remote_identity
@@ -11,6 +12,28 @@ from .guard import GuardRefusal, ProgressGuard
 from .policy_schema import parse_profile, sha as exact_sha, validate_snapshot
 from .policy_types import Document, Ref, RepositorySnapshot, Safety, SourceKind, Task
 from .schema import require, string
+
+
+def working_tree_digest(root) -> str | None:
+    """Opt-in bounded stage precondition; never follows untracked symlinks."""
+    diff = git(root, "diff", "--no-ext-diff", "--no-textconv", "--binary", limit=1048576)
+    paths = git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+    paths = [p for p in paths if p]
+    if len(paths) > 32:
+        return None
+    result = hashlib.sha256(diff)
+    total = len(diff)
+    for raw in sorted(paths):
+        path = root / raw.decode("utf-8", "strict")
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 1048576:
+            return None
+        content = path.read_bytes()
+        total += len(content)
+        if total > 1048576:
+            return None
+        result.update(raw + b"\0" + str(metadata.st_mode).encode() + b"\0" + content)
+    return result.hexdigest()
 
 
 class MockRepositoryAdapter:
@@ -33,7 +56,8 @@ class GitPolicyAdapter:
     """
     def __init__(self, config: Config, *, profiles: tuple[str, ...] = (),
                  governance: tuple[str, ...] = ("AGENTS.md", "CONTRIBUTING.md"),
-                 contracts: tuple[str, ...] = (), injected: tuple[Document, ...] = ()):
+                 contracts: tuple[str, ...] = (), injected: tuple[Document, ...] = (),
+                 fingerprint_worktree: bool = False):
         self.config = config
         self.paths = tuple((p, kind) for paths, kind in (
             (governance, SourceKind.GOVERNANCE), (profiles, SourceKind.PROFILE),
@@ -48,6 +72,7 @@ class GitPolicyAdapter:
                 "Unsafe policy source path")
         require(len({p for p, _ in self.paths}) == len(self.paths), "Duplicate policy path")
         self.injected = injected
+        self.fingerprint_worktree = fingerprint_worktree
 
     def inspect(self) -> RepositorySnapshot:
         # Revalidate even a Config constructed directly instead of discovered.
@@ -107,7 +132,7 @@ class GitPolicyAdapter:
         result = RepositorySnapshot(cfg.identity, cfg.remote, fingerprint, source_ref, head,
             index, not unstaged and not untracked, tuple(sorted(local_refs, key=lambda r: r.name)),
             tuple(sorted(remote_refs, key=lambda r: r.name)), tuple(sorted(documents, key=lambda d: d.reference)),
-            known, diagnostics, relation)
+            known, diagnostics, relation, working_tree_digest(root) if self.fingerprint_worktree else None)
         validate_snapshot(result)
         # Reject a racing read instead of returning an internally mixed HEAD/index.
         require(value(root, "rev-parse", "HEAD") == head

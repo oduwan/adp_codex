@@ -1,6 +1,6 @@
 # Architecture and system boundaries
 
-**Status:** normative design goals. M1 memory, M2 guard and M3 policy decisions are accepted. M4 read-only discovery/planning is a scoped candidate; autonomous execution remains future work.
+**Status:** normative design goals. M1–M4 are accepted. M5 has a policy-gated execution candidate; see [Conductor API](CONDUCTOR_API.md) for implemented boundaries and limitations.
 
 ## Purpose
 

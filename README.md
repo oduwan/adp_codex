@@ -4,7 +4,7 @@
 
 **ADP Codex** is an architecture-first project for a repository-agnostic, Codex-assisted development orchestrator. Its intended workflow is to discover existing GitHub issues, assemble a dependency-aware task track, execute admitted tasks with independent review, and publish only meaningful product outcomes.
 
-> **Status: accepted M1 memory, M2 Progress Guard and M3 external policy, with an M4 read-only discovery/planner candidate.** Autonomous execution and scheduling remain unavailable. Memory writes require explicit authorization; discovery/planning grants no product-code, issue or infrastructure execution authority.
+> **Status: accepted M1–M4, with an M5 policy-gated Conductor candidate.** Execution requires explicit operator authority and supported runtime/ports; unattended scheduling remains unavailable. Memory writes require explicit authorization; discovery/planning grants no product-code, issue or infrastructure execution authority.
 
 ## Principles
 
@@ -44,16 +44,22 @@ and planning neither execute Git writes nor grant permissions from repository
 text or credentials. See [the Policy API](docs/POLICY_API.md) for trust ports,
 profile schema, M1/M2 compatibility and limits. Accepted through PR #9.
 
-## M4 read-only discovery/planner candidate
+## Accepted M4 read-only discovery/planner
 
 Issue #4 adds GET-only GitHub issue/PR discovery, native relationships,
 dependency-aware task proposals and refresh previews that retain prior evidence
 and explicitly mapped M1 progress. Unknown metadata cannot manufacture READY.
 See [the Discovery API](docs/DISCOVERY_API.md) for commands, independent readiness
-assessment, fixtures, schemas and limits. This candidate requires independent
-exact-revision review and separate integration; no Conductor or worker execution is included.
+assessment, fixtures, schemas and limits. Accepted through PR #10. M4 itself supplies no execution authority.
 
-## Planned commands
+## M5 Conductor candidate
+
+Issue #5 integrates finite authorized execution, genuine supported Codex delegation,
+independent exact-SHA review and product-only reporting. See [the Conductor API](docs/CONDUCTOR_API.md)
+for explicit v3 migration, trust ports, qualification and unsupported backend limits.
+This candidate still requires independent exact-HEAD integration review.
+
+## Command roadmap
 
 ```text
 adp init       inspect a target repository; propose initial configuration
@@ -67,7 +73,7 @@ adp handoff    transfer ownership to another machine
 adp audit      validate evidence, state, and acceptance coverage
 ```
 
-**This roadmap includes accepted M1 memory commands and planned execution/discovery interfaces.** The packaged Codex skill is intentionally read-only and limited to explaining and reviewing project/track readiness.
+**This roadmap includes accepted M1–M4 commands, candidate M5 execution and planned M6 audit.** The packaged Codex skill is intentionally read-only and limited to explaining and reviewing project/track readiness.
 
 ## Project layout
 

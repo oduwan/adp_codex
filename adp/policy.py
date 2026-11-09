@@ -8,13 +8,13 @@ from typing import Callable
 from .errors import ADPError
 from .guard_types import Attestation, Baseline, Decision as GuardDecision, DecisionKind, data
 from .policy_schema import (FORBIDDEN, GATED, MAX_SOURCES, METHODS, STATUSES, branch,
-    digest, fingerprint, fresh, ref, render, sha, strings, validate_rules,
+    digest, fingerprint, fresh, product_path, ref, render, sha, strings, validate_rules,
     validate_snapshot, validate_task)
 from .policy_types import (Authorization, BranchPlan, Check, CommitPlan, Decision,
     DeploymentPlan, Effect, Inspection, MergePlan, Operation, OutcomeCount, Plan, PolicyAuthority,
     Protection, Provenance, PullRequestPlan, Qualifications, ReleasePlan, RepositoryAdapter,
     Request, Review, Rules, Safety, SafetyAdapter, SourceClaim, SourceKind, Task,
-    PushPlan, ValidationPlan)
+    EditPlan, PushPlan, ReportPlan, StagePlan, ValidationPlan)
 from .schema import integer, key, require, string
 
 RANK = {SourceKind.OPERATOR: 0, SourceKind.GOVERNANCE: 1,
@@ -218,6 +218,14 @@ class PolicyProvider:
                 and request.operation in set(Operation), "Unsupported policy operation")
         for text in (request.summary, request.version, request.environment):
             require(isinstance(text, str) and len(text) <= 256 and all(ord(c) >= 32 for c in text), "Invalid bounded operation input")
+        require(type(request.paths) is tuple, "Expected bounded stage paths")
+        strings(request.paths, 32, 240)
+        for path in request.paths:
+            product_path(path)
+        require(isinstance(request.report_target, str) and len(request.report_target) <= 512
+                and all(ord(c) >= 32 for c in request.report_target), "Invalid report target")
+        require(isinstance(request.report_body, str) and len(request.report_body) <= 2048
+                and all(ord(c) >= 32 or c == "\n" for c in request.report_body), "Invalid bounded report")
         inspection = self.inspect_repository()
         snapshot, op = inspection.snapshot, request.operation
         reasons = list(inspection.conflicts)
@@ -240,12 +248,12 @@ class PolicyProvider:
                 reasons.append("External permission remains unknown at the controlling authority")
         if (task.repository_id, task.revision, task.source_ref) != (snapshot.repository_id, snapshot.revision, snapshot.source_ref):
             denied.append("Task repository/ref/revision differs from the inspected checkout")
-        if not snapshot.worktree_clean:
+        if not snapshot.worktree_clean and op not in (Operation.STAGE, Operation.EDIT, Operation.INSPECT):
             reasons.append("Unstaged or untracked product changes require a new clean inspection")
         local = {r.name: r.revision for r in snapshot.local_refs}
         remote = {r.name: r.revision for r in snapshot.remote_refs}
         branch_template = self._value(inspection, "branch_template", reasons,
-                                      required=op in {Operation.BRANCH, Operation.COMMIT, Operation.PR, Operation.PUSH, Operation.MERGE})
+                                      required=op in {Operation.BRANCH, Operation.COMMIT, Operation.STAGE, Operation.EDIT, Operation.INSPECT, Operation.PR, Operation.PUSH, Operation.MERGE})
         task_ref = "refs/heads/" + render(branch_template, slug=task.branch_slug) if branch_template else None
         if task_ref:
             ref(task_ref)
@@ -257,6 +265,22 @@ class PolicyProvider:
             if target in local and local[target] != task.revision:
                 denied.append("Existing branch points elsewhere; no branch overwrite is permitted")
             payload = BranchPlan(task_ref[11:], task.revision, target in local)
+        elif op in (Operation.STAGE, Operation.EDIT, Operation.INSPECT):
+            if task_ref and snapshot.source_ref != task_ref:
+                denied.append("Stage source is not the externally admitted task branch")
+            if not request.paths or snapshot.worktree_digest is None:
+                reasons.append("Stage needs explicit paths and a verified working-tree fingerprint")
+            else:
+                if op in (Operation.EDIT, Operation.INSPECT):
+                    fingerprint(request.summary)
+                    payload = EditPlan(request.paths, snapshot.worktree_digest, request.summary)
+                else:
+                    payload = StagePlan(request.paths, snapshot.index_digest, snapshot.worktree_digest)
+        elif op == Operation.REPORT:
+            if not request.report_target or not request.report_body.strip():
+                reasons.append("Reporting requires an explicit target and product summary")
+            else:
+                payload = ReportPlan(request.report_target, request.report_body)
         elif op == Operation.COMMIT:
             if task_ref and snapshot.source_ref != task_ref:
                 denied.append("Commit source is not the externally admitted task branch")

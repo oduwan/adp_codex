@@ -152,3 +152,12 @@ assignment result or external action is invented. An older M1 binary refuses v2,
 so all writers must be upgraded before opting in. No downgrade/history rewrite is
 provided. See [the Guard API](GUARD_API.md) for fields, transitions, trust boundaries,
 size caps, upgrade command and complete synthetic qualification.
+
+## M5 explicit state version 3
+
+The candidate v3 wrapper adds a bounded closed `execution` object while retaining
+v2 fields and unchanged M1 task/M2 guard schemas. Explicit owner-authorized
+`execution-upgrade` is required; read-only commands never migrate. Old binaries
+refuse v3. The accepted transaction/CAS/ownership protocol transports this
+extension. See [Conductor migration and journal](CONDUCTOR_API.md) for schemas,
+capacities, recovery semantics, runtime observations and handoff restrictions.
