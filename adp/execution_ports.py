@@ -24,20 +24,39 @@ from .schema import decode, encode, fields, integer, require
 from .storage import atomic, locked
 
 
+class UnconfirmedValidation(ADPError):
+    def __init__(self, reference, artifact_path):
+        super().__init__("Validation stop is unconfirmed; remaining inventory NOTRUN")
+        self.reference, self.artifact_path = reference, artifact_path
+        self.results = ()
+
+
 @contextmanager
 def supervised_validation(argv, seconds):
-    with tempfile.TemporaryDirectory(prefix="adp-validation-supervisor-") as directory:
+    temporary = tempfile.TemporaryDirectory(prefix="adp-validation-supervisor-")
+    try:
+        directory = temporary.name
         path = Path(directory) / "stop.json"
         subject = digest(argv)
         command = (sys.executable, str(Path(__file__).with_name("execution_supervisor.py")),
             "--receipt", str(path), "--request-digest", subject, "--seconds", str(seconds), "--", *argv)
         yield command, path, subject
+    except UnconfirmedValidation:
+        temporary._finalizer.detach()  # Private forensic evidence, never product output.
+        raise
+    finally:
+        if temporary._finalizer.alive:
+            temporary.cleanup()
 
 
 def validation_stopped(path, subject, pid):
-    observed = load_json(path, 2048) if path.exists() else {}
-    require(observed.get("stopped") is True and observed.get("request_digest") == subject
-            and observed.get("pid") == pid, "Validation descendants have no confirmed stop receipt")
+    try:
+        observed = load_json(path, 2048) if path.exists() else {}
+    except (ADPError, OSError):
+        observed = {}
+    if not (type(observed) is dict and observed.get("stopped") is True
+            and observed.get("request_digest") == subject and observed.get("pid") == pid):
+        raise UnconfirmedValidation("validation:" + subject, str(path.parent))
     return observed
 
 
@@ -197,7 +216,7 @@ class SubprocessValidation:
         require(set(required) == {c.name for c in self.commands}, "Validation matrix must match every required project check")
         results = []
         deadline = time.monotonic() + seconds
-        for command in self.commands:
+        for index, command in enumerate(self.commands):
             require(command.argv and command.denominator > 0 and 0 < command.seconds <= 300, "Invalid explicit validation budget")
             if time.monotonic() >= deadline:
                 counts = tuple(OutcomeCount(name, command.denominator if name == Outcome.NOTRUN else 0) for name in Outcome)
@@ -252,6 +271,15 @@ class SubprocessValidation:
                 quarantined = payload["quarantined"]
                 passed = payload["counts"]["PASS"]
                 outcome = Outcome.PASS if code == 0 and passed == command.denominator and quarantined == 0 else Outcome.FAIL
+            except UnconfirmedValidation as exc:
+                counts = tuple(OutcomeCount(name, command.denominator if name == Outcome.UNKNOWN else 0) for name in Outcome)
+                results.append(ValidationResult(command.name, revision, Outcome.UNKNOWN, command.denominator, 0, exc.reference, counts, 0))
+                for later in self.commands[index + 1:]:
+                    counts = tuple(OutcomeCount(name, later.denominator if name == Outcome.NOTRUN else 0) for name in Outcome)
+                    results.append(ValidationResult(later.name, revision, Outcome.NOTRUN, later.denominator, 0,
+                        "validation:unconfirmed-prior-stop", counts, 0))
+                exc.results = tuple(results)
+                raise
             except subprocess.TimeoutExpired:
                 outcome = Outcome.TIMEOUT
             except OSError:

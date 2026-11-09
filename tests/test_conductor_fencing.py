@@ -118,3 +118,23 @@ class FencingTests(ExecutionFixture):
         self.assertEqual(again['status'],'STOPPED',again)
         self.assertNotEqual(self.conductor._task(self.admissions[0])['stage'],'COMPLETE')
         self.assertEqual(self.runtime.dispatch_count,2)
+
+    def test_unconfirmed_validation_is_durable_execution_hazard(self):
+        from adp.conductor import Conductor
+        from adp.execution_ports import UnconfirmedValidation
+        project=self.projects['one']
+        class LostValidation:
+            commands=project.validation.commands
+            def run(self,*args,**kwargs):
+                raise UnconfirmedValidation('validation:synthetic-lost-stop','fixture:private-artifact')
+        self.projects['one']=replace(project,validation=LostValidation())
+        first=self.conductor.run(self.admissions[:1],maximum_parallel=1,authorized=True)
+        self.assertEqual(first['status'],'UNKNOWN',first)
+        self.assertEqual(first['background_work'],'UNKNOWN')
+        self.assertTrue(any(r.startswith('validation:') for r in first['unconfirmed_contexts']))
+        before=self.runtime.dispatch_count
+        restarted=Conductor(self.memory,self.guard,self.readiness,self.runtime,self.authority,self.projects,clock=lambda:self.now)
+        again=restarted.resume(self.admissions[:1],maximum_parallel=1,authorized=True)
+        self.assertEqual(again['status'],'UNKNOWN',again)
+        self.assertEqual(self.runtime.dispatch_count,before)
+        with self.assertRaises(ADPError):restarted.handoff(authorized=True)

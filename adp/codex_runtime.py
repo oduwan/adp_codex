@@ -103,7 +103,8 @@ class CodexExecRuntime:
                 stderr=subprocess.DEVNULL, timeout=5).strip() == b"SUBREAPER_OK"
             reason = "" if supported else "UNSUPPORTED_RUNTIME: required CLI/sandbox/process-observation capabilities missing"
         except (OSError, subprocess.SubprocessError, UnicodeError):
-            pass
+            supported = False
+            reason = "UNSUPPORTED_RUNTIME: Codex/supervisor capability probe failed"
         self._capabilities = Capabilities("codex-exec", self.host, version, supported, supported, supported, supported, 4 if supported else 0, reason)
         return self._capabilities
 

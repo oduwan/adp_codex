@@ -40,7 +40,7 @@ def validation_result(raw):
 
 
 def job_schema(job):
-    fields(job, "request_id role generation revision source_ref host context status permit result receipt checks seconds deadline samples payload_bytes elapsed used_samples used_bytes started request_digest outside_digest admin_digest result_digest")
+    fields(job, "request_id role generation revision source_ref host context status permit result receipt checks validation_stop seconds deadline samples payload_bytes elapsed used_samples used_bytes started request_digest outside_digest admin_digest result_digest")
     fingerprint(job["request_id"])
     require(job["role"] in set(Role), "Invalid worker role")
     integer(job["generation"], 1)
@@ -55,6 +55,7 @@ def job_schema(job):
     if job["result"] is not None:
         worker_result(typed(WorkerResult, job["result"]))
     require(type(job["checks"]) is list and len(job["checks"]) <= 32, "Invalid durable validation receipts")
+    require(job["validation_stop"] in ("NOT_STARTED", "RUNNING", "CONFIRMED", "UNKNOWN"), "Invalid validation liveness state")
     for check in job["checks"]:
         validation_result(check)
     string(job["receipt"], 512)
@@ -134,6 +135,7 @@ def execution_schema(value, repository_id):
                         and j["result"]["approved"] and j["context"] == task["review"]["context"]
                         and "worker:" + j["request_id"] == task["review"]["reviewer"]
                         and j["receipt"] == task["review"]["receipt"] and j["revision"] == task["review"]["revision"]
+                        and j["validation_stop"] == "CONFIRMED" and j["checks"] == task["review"]["checks"]
                         for j in task["jobs"].values()), "Review must reference an actual completed independent Reviewer job")
     require(len(all_contexts) == len(set(all_contexts)), "Context reuse across tasks/roles is forbidden")
     require(type(value["actions"]) is dict and len(value["actions"]) <= MAX_ACTIONS, "External action capacity exhausted")

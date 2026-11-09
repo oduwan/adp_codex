@@ -58,6 +58,7 @@ class Conductor:
         self.journal = ExecutionJournal(self.memory)
         self.clock = clock or (lambda: int(time.time()))
         self._launched = set()
+        self._validation_unknown = set()
 
     def _grant(self, purpose, subject, *, context=None, principal=None):
         require(self.authority is not None, "Explicit execution authority service is required")
@@ -231,13 +232,19 @@ class Conductor:
                 "background_work": "UNKNOWN" if unconfirmed else False, "unconfirmed_contexts": unconfirmed}
 
     def _quiesce(self, admissions):
-        unconfirmed, requests = [], set(self._launched)
+        unconfirmed, requests = set(self._validation_unknown), set(self._launched)
         for admission in admissions:
             try:
                 jobs = self._task(admission)["jobs"].values()
             except Exception:
                 continue  # Launched handles below do not depend on readable memory.
             for job in jobs:
+                if job["validation_stop"] == "CONFIRMED":
+                    reference = "validation:" + job["request_id"]
+                    unconfirmed.discard(reference)
+                    self._validation_unknown.discard(reference)
+                if job["validation_stop"] in ("RUNNING", "UNKNOWN"):
+                    unconfirmed.add("validation:" + job["request_id"])
                 if job["role"] == Role.COORDINATION or job["status"] in ("COMPLETE", "CANCELLED"):
                     continue
                 requests.add(job["request_id"])
@@ -247,12 +254,12 @@ class Conductor:
                 if observed_runtime.status == RuntimeStatus.RUNNING:
                     observed_runtime = self.runtime.cancel(request_id)
             except Exception:
-                unconfirmed.append(request_id)
+                unconfirmed.add(request_id)
                 continue
             if observed_runtime.stopped is not True and observed_runtime.status not in (RuntimeStatus.COMPLETED, RuntimeStatus.CANCELLED, RuntimeStatus.TIMEOUT,
                                                RuntimeStatus.NOT_STARTED, RuntimeStatus.UNSUPPORTED_RUNTIME):
-                unconfirmed.append(request_id)
-        return unconfirmed
+                unconfirmed.add(request_id)
+        return sorted(unconfirmed)
 
     def resume(self, admissions, **kwargs):
         # Recovery is explicit and uses M1's existing validation/CAS protocol.
@@ -321,7 +328,7 @@ class Conductor:
             self._prompt(admission, role, task["revision"], forensic), seconds, deadline, samples, payload_bytes)
         job = {"request_id": request_id, "role": role, "generation": generation, "revision": task["revision"],
             "source_ref": task["source_ref"], "host": self.runtime.capabilities().host, "context": None, "status": "PREPARED",
-            "permit": data(permit) if permit else None, "result": None, "receipt": "runtime:pending", "checks": [],
+            "permit": data(permit) if permit else None, "result": None, "receipt": "runtime:pending", "checks": [], "validation_stop": "NOT_STARTED",
             "seconds": seconds, "deadline": deadline, "samples": samples, "payload_bytes": payload_bytes,
             "elapsed": 0, "used_samples": 0, "used_bytes": 0, "started": self.clock(), "request_digest": digest(request),
             "outside_digest": source_seal(project.root, admission.allowed_paths if role == Role.DEVELOPER else ()),
@@ -640,14 +647,28 @@ class Conductor:
             current_permit = Permit(item["active"]["id"], self.guard._decision(self._requirement(admission), state, memory_task, item))
         from .execution_types import ValidationResult
         if job["checks"]:
+            require(job["validation_stop"] == "CONFIRMED", "Validation liveness is unconfirmed; no result reuse")
             checks = tuple(typed(ValidationResult, c) for c in job["checks"])
         else:
             provider, plan, authorization = self._authorize_policy(admission, current_permit, Request(Operation.VALIDATE))
             self._grant("execution/validate", digest({"plan": digest(plan), "commands": [data(c) for c in project.validation.commands]}))
             remaining = item["active"]["deadline"] - self.guard._now() if item["active"] else job["deadline"] - self.guard._now()
             require(remaining > 0, "Review exhausted its M2 containment budget before validation")
-            checks = project.validation.run(project.root, job["revision"], plan.required_checks, seconds=remaining)
-            self.journal.change(lambda execution, state, tasks: execution["tasks"][key(admission.task_id)]["jobs"][assignment_id].update(checks=[data(c) for c in checks]))
+            require(job["validation_stop"] == "NOT_STARTED", "Interrupted validation delivery is UNKNOWN; no blind retry")
+            self.journal.change(lambda execution, state, tasks: execution["tasks"][key(admission.task_id)]["jobs"][assignment_id].update(validation_stop="RUNNING"))
+            reference = "validation:" + job["request_id"]
+            self._validation_unknown.add(reference)
+            try:
+                checks = project.validation.run(project.root, job["revision"], plan.required_checks, seconds=remaining)
+                self.journal.change(lambda execution, state, tasks: execution["tasks"][key(admission.task_id)]["jobs"][assignment_id].update(
+                    checks=[data(c) for c in checks], validation_stop="CONFIRMED"))
+                self._validation_unknown.discard(reference)
+            except BaseException as exc:
+                measured = getattr(exc, "results", ())
+                self.journal.change(lambda execution, state, tasks: execution["tasks"][key(admission.task_id)]["jobs"][assignment_id].update(
+                    checks=[data(c) for c in measured], validation_stop="UNKNOWN"))
+                self._hazard(admission, job, "containment", reference)
+                raise
         require(not value(project.root, "status", "--porcelain", "--untracked-files=all"), "Review/validation changed the product worktree")
         approved = result.approved and result.outcome == Outcome.PASS and all(c.outcome == Outcome.PASS for c in checks)
         principal = "worker:" + job["request_id"]
@@ -773,6 +794,7 @@ class Conductor:
         require(observed["local_owner"], "Only the owning Conductor may hand off")
         for task in observed["state"]["execution"]["tasks"].values():
             for assignment_id, job in task["jobs"].items():
+                require(job["validation_stop"] not in ("RUNNING", "UNKNOWN"), "Unconfirmed validation descendants refuse handoff")
                 if job["status"] in ("PREPARED", "RUNNING", "UNKNOWN"):
                     stopped = self.runtime.cancel(job["request_id"])
                     require(stopped.status in (RuntimeStatus.CANCELLED, RuntimeStatus.COMPLETED, RuntimeStatus.NOT_STARTED), "Cancellation is unconfirmed; handoff refused")

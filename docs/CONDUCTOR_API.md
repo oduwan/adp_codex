@@ -144,6 +144,12 @@ Production use must explicitly supply an independently qualified sandbox prefix
 or validation port enforcing read-only filesystem and denied network. Without
 one, it fails `UNSUPPORTED_VALIDATION_RUNTIME`. An argv prefix is trusted operator
 configuration; ADP cannot certify an arbitrary extension or its isolation.
+Validation is durably RUNNING before launching commands. Missing supervisor stop
+evidence is an execution-liveness hazard, not an ordinary failed check: later
+inventory stays NOTRUN, guard containment stops, and run/resume report UNKNOWN
+with unconfirmed validation references. Handoff and blind validation retry are
+refused. A crash between launch and confirmed receipt requires explicit operator
+reconciliation; neither a failed check nor an expired supervisor proves a stop.
 
 ## Durability and migration
 

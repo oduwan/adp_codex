@@ -124,3 +124,14 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(len(launched),1)
         self.assertFalse(_group_alive(launched[0]))
         self.assertEqual(self.runtime.observe(self.request('timeout',5).id).status,RuntimeStatus.UNKNOWN)
+
+    def test_failed_supervisor_probe_never_advertises_supported_runtime(self):
+        import subprocess
+        from unittest.mock import patch
+        replies=[b'synthetic-cli',b'--json --output-schema --ephemeral --ignore-user-config --sandbox',
+                 subprocess.CalledProcessError(78,['supervisor','--probe'])]
+        with patch('adp.codex_runtime.subprocess.check_output',side_effect=replies):
+            capabilities=self.runtime.capabilities()
+        self.assertFalse(capabilities.independent_contexts)
+        self.assertFalse(capabilities.cancel)
+        self.assertEqual(self.runtime.dispatch(self.request()).status,RuntimeStatus.UNSUPPORTED_RUNTIME)

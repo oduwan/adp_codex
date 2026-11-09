@@ -81,3 +81,22 @@ class ValidationTests(unittest.TestCase):
         result=SubprocessValidation((command,),trusted_disposable=True).run(self.root,self.sha,('unit',),seconds=5)
         self.assertEqual(result[0].outcome,Outcome.PASS)
         self.assertFalse(Path('/proc',marker.read_text()).exists())
+
+    def test_supervisor_loss_preserves_liveness_unknown_and_stops_inventory(self):
+        import os,signal
+        from adp.execution_ports import UnconfirmedValidation
+        marker=self.root/'orphan.pid'
+        later=self.root/'later-ran'
+        source="import subprocess,sys,os,signal;from pathlib import Path;p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);Path("+repr(str(marker))+").write_text(str(p.pid));os.kill(os.getppid(),signal.SIGKILL)"
+        commands=(CheckCommand('lost',(sys.executable,'-c',source),3,2),
+            CheckCommand('later',(sys.executable,'-c','from pathlib import Path;Path('+repr(str(later))+').touch()'),3,1))
+        try:
+            with self.assertRaises(UnconfirmedValidation) as caught:
+                SubprocessValidation(commands,trusted_disposable=True).run(self.root,self.sha,('lost','later'),seconds=5)
+            self.assertEqual([r.outcome for r in caught.exception.results],[Outcome.UNKNOWN,Outcome.NOTRUN])
+            self.assertEqual([r.denominator for r in caught.exception.results],[2,1])
+            self.assertFalse(later.exists())
+        finally:
+            if marker.exists():
+                try:os.kill(int(marker.read_text()),signal.SIGKILL)
+                except ProcessLookupError:pass
