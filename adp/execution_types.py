@@ -77,6 +77,7 @@ class RuntimeObservation:
     request_digest: str | None = None
     samples: int = 0
     payload_bytes: int = 0
+    stopped: bool | None = None
 
 
 class WorkerRuntime(Protocol):

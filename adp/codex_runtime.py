@@ -4,9 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import selectors
 import shutil
 import signal
+import sys
 import subprocess
 import threading
 import tempfile
@@ -79,9 +81,14 @@ class CodexExecRuntime:
         self._live = {}
         self._mutex = threading.RLock()
         machine = Path("/etc/machine-id")
-        identity = machine.read_bytes() if machine.exists() else os.uname().nodename.encode()
-        self.host = hashlib.sha256(identity + str(os.getuid()).encode()).hexdigest()
+        identity = machine.read_bytes() if machine.exists() else platform.node().encode()
+        try:
+            namespace = os.readlink('/proc/self/ns/pid').encode()
+        except OSError:
+            namespace = b'unsupported'
+        self.host = hashlib.sha256(identity + str(getattr(os, 'getuid', lambda: 'unsupported')()).encode() + namespace).hexdigest()
         self._capabilities = None
+        self.supervisor = Path(__file__).with_name("execution_supervisor.py")
 
     def capabilities(self):
         if self._capabilities is not None:
@@ -92,6 +99,8 @@ class CodexExecRuntime:
             help_text = subprocess.check_output([self.executable, "exec", "--help"], stderr=subprocess.DEVNULL, timeout=10).decode()
             supported = (os.name == "posix" and Path("/proc/self/stat").exists()
                 and all(flag in help_text for flag in ("--json", "--output-schema", "--ephemeral", "--ignore-user-config", "--sandbox")))
+            supported = supported and subprocess.check_output([sys.executable, str(self.supervisor), "--probe"],
+                stderr=subprocess.DEVNULL, timeout=5).strip() == b"SUBREAPER_OK"
             reason = "" if supported else "UNSUPPORTED_RUNTIME: required CLI/sandbox/process-observation capabilities missing"
         except (OSError, subprocess.SubprocessError, UnicodeError):
             pass
@@ -116,7 +125,18 @@ class CodexExecRuntime:
         result = typed(WorkerResult, record["result"]) if record["result"] is not None else None
         return RuntimeObservation(request_id, self.host, RuntimeStatus(record["status"]), record["context"], result,
                                   "runtime:" + request_id + ":" + digest(record), record["elapsed"], record["request_digest"],
-                                  record.get("samples", 0), record.get("payload_bytes", 0))
+                                  record.get("samples", 0), record.get("payload_bytes", 0), record.get("stopped"))
+
+    def _stop_receipt(self, request_id, record):
+        path = self.directory / (request_id + ".stop.json")
+        if not path.exists():
+            return None
+        observed = load_json(path, 2048)
+        from .schema import fields
+        fields(observed, "request_digest pid status stopped cli_exit")
+        require(observed["request_digest"] == record["request_digest"] and observed["pid"] == record["pid"]
+                and type(observed["stopped"]) is bool, "Invalid supervisor stop binding")
+        return observed
 
     def observe(self, request_id):
         record = self._read(request_id)
@@ -127,6 +147,10 @@ class CodexExecRuntime:
                 record = {**record, "status": RuntimeStatus.UNKNOWN}
         if record is not None and record["status"] == "STARTING":
             record = {**record, "status": RuntimeStatus.UNKNOWN}
+        if record is not None and record["pid"] is not None:
+            stop = self._stop_receipt(request_id, record)
+            if stop and stop["stopped"]:
+                record = {**record, "stopped": True}
         return self._observation(request_id, record)
 
     def dispatch(self, request: WorkerRequest):
@@ -149,7 +173,7 @@ class CodexExecRuntime:
                 existing = self._read(request.id)
                 require(existing["request_digest"] == digest(request), "Request ID reused with different input")
                 return self.observe(request.id)
-            require(len(list(self.directory.glob("*.json"))) < 128, "Runtime receipt capacity exhausted")
+            require(len(list(self.directory.glob("*.json"))) < 256, "Runtime receipt capacity exhausted")
             schema_path = self.directory / "worker-schema.json"
             if not schema_path.exists():
                 atomic(schema_path, encode(output_schema(WorkerResult)))
@@ -161,12 +185,16 @@ class CodexExecRuntime:
                 "-c", 'approval_policy="never"', "-c", "sandbox_workspace_write.network_access=false",
                 "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true", "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
                 "--output-schema", str(schema_path), "-C", str(workspace), "-"]
+            wrapper = [sys.executable, str(self.supervisor), "--receipt", str(self.directory / (request.id + ".stop.json")),
+                "--request-digest", digest(request), "--seconds", str(request.seconds)]
+            if request.deadline is not None:
+                wrapper += ["--deadline", str(request.deadline)]
             try:
                 # A regular bounded input file cannot block on an unread pipe.
                 with tempfile.TemporaryFile(dir=self.directory) as source:
                     source.write(request.prompt.encode())
                     source.seek(0)
-                    process = subprocess.Popen(command, stdin=source, stdout=subprocess.PIPE,
+                    process = subprocess.Popen([*wrapper, "--", *command], stdin=source, stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT, start_new_session=True)
             except OSError:
                 record["status"] = RuntimeStatus.UNSUPPORTED_RUNTIME
@@ -180,10 +208,10 @@ class CodexExecRuntime:
             except BaseException:
                 # A failed receipt write cannot leave an unobserved live child.
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    os.kill(process.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
-                process.wait(timeout=5)
+                process.wait(timeout=8)
                 process.stdout.close()
                 with self._mutex:
                     self._live.pop(request.id, None)
@@ -241,9 +269,11 @@ class CodexExecRuntime:
                 stopped = True
             except subprocess.TimeoutExpired:
                 self.cancel(request_id)
-        if _group_alive(process.pid):
+        stop = self._stop_receipt(request_id, record)
+        if stop is None or not stop["stopped"]:
             self.cancel(request_id)
-        stopped = process.poll() is not None and not _group_alive(process.pid)
+            stop = self._stop_receipt(request_id, record)
+        stopped = process.poll() is not None and stop is not None and stop["stopped"]
         result = None
         status = RuntimeStatus.TIMEOUT if timed_out and stopped else RuntimeStatus.UNKNOWN
         if stopped and process.returncode == 0 and complete and not runtime_error and record["context"]:
@@ -253,10 +283,14 @@ class CodexExecRuntime:
                 status = RuntimeStatus.COMPLETED
             except (ADPError, AttributeError, UnicodeError):
                 pass
-        if stopped and process.returncode != 0 and record["context"] is None:
+        if stopped and stop["status"] == "TIMEOUT":
+            status = RuntimeStatus.TIMEOUT
+        elif stopped and stop["status"] == "UNSUPPORTED_RUNTIME":
+            status = RuntimeStatus.UNSUPPORTED_RUNTIME
+        elif stopped and (runtime_error and not complete or process.returncode != 0 and record["context"] is None):
             status = RuntimeStatus.UNSUPPORTED_RUNTIME
         record.update(status=status, result=data(result) if result else None,
-                      elapsed=min(301, int(self.clock() - started)), samples=output.count(b"\n"), payload_bytes=len(output))
+                      elapsed=min(301, int(self.clock() - started)), samples=output.count(b"\n"), payload_bytes=len(output), stopped=stopped)
         process.stdout.close()
         self._save(request_id, record)
         with self._mutex:
@@ -269,26 +303,36 @@ class CodexExecRuntime:
             return self.observe(request_id)
         with self._mutex:
             live = self._live.get(request_id)
-        if record["status"] != RuntimeStatus.RUNNING:
+        stop = self._stop_receipt(request_id, record) if record["pid"] is not None else None
+        if record["status"] != RuntimeStatus.RUNNING and not (stop and stop["stopped"]):
             return self.observe(request_id)
-        if _start_time(record["pid"]) != record["start_time"] and not live:
-            return self._observation(request_id, {**record, "status": RuntimeStatus.UNKNOWN})
-        for sig in (signal.SIGTERM, signal.SIGKILL):
+        if stop is None or not stop["stopped"]:
+            if _start_time(record["pid"]) != record["start_time"]:
+                return self._observation(request_id, {**record, "status": RuntimeStatus.UNKNOWN})
             try:
-                os.killpg(record["pid"], sig)
+                # The supervisor handles this signal by killing/reaping its
+                # entire adopted descendant forest. Never SIGKILL the reaper
+                # and then mistake a missing process group for proof of stop.
+                os.kill(record["pid"], signal.SIGTERM)
             except ProcessLookupError:
                 pass
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                stop = self._stop_receipt(request_id, record)
+                if stop and stop["stopped"]:
+                    break
+                time.sleep(0.02)
+        if stop and stop["stopped"]:
             if live:
                 try:
                     live[0].wait(timeout=2)
                 except subprocess.TimeoutExpired:
-                    continue
-            if not _group_alive(record["pid"]):
-                break
-        deadline = time.monotonic() + 2
-        while _group_alive(record["pid"]) and time.monotonic() < deadline:
-            time.sleep(0.02)
-        if not _group_alive(record["pid"]):
-            record["status"] = RuntimeStatus.CANCELLED
+                    return self._observation(request_id, {**record, "status": RuntimeStatus.UNKNOWN})
+                live[0].stdout.close()
+            record.update(status=RuntimeStatus.CANCELLED, stopped=True)
             self._save(request_id, record)
+            with self._mutex:
+                self._live.pop(request_id, None)
+        else:
+            record = {**record, "status": RuntimeStatus.UNKNOWN}
         return self._observation(request_id, record)

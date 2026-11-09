@@ -6,7 +6,10 @@ import json
 import os
 import selectors
 import subprocess
+import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from .config import load_json, remote_identity, safe_path
@@ -19,6 +22,23 @@ from .policy_adapters import working_tree_digest
 from .policy_types import Effect, Operation, OutcomeCount
 from .schema import decode, encode, fields, integer, require
 from .storage import atomic, locked
+
+
+@contextmanager
+def supervised_validation(argv, seconds):
+    with tempfile.TemporaryDirectory(prefix="adp-validation-supervisor-") as directory:
+        path = Path(directory) / "stop.json"
+        subject = digest(argv)
+        command = (sys.executable, str(Path(__file__).with_name("execution_supervisor.py")),
+            "--receipt", str(path), "--request-digest", subject, "--seconds", str(seconds), "--", *argv)
+        yield command, path, subject
+
+
+def validation_stopped(path, subject, pid):
+    observed = load_json(path, 2048) if path.exists() else {}
+    require(observed.get("stopped") is True and observed.get("request_digest") == subject
+            and observed.get("pid") == pid, "Validation descendants have no confirmed stop receipt")
+    return observed
 
 
 def index_digest(root):
@@ -188,7 +208,7 @@ class SubprocessValidation:
             try:
                 # No forge/ADP credentials or arbitrary parent variables in test code.
                 environment = {name: os.environ[name] for name in ("PATH", "LANG", "LC_ALL", "TMPDIR") if name in os.environ}
-                with subprocess.Popen((*self.sandbox_prefix, *command.argv), cwd=root, stdin=subprocess.DEVNULL, env=environment,
+                with supervised_validation((*self.sandbox_prefix, *command.argv), command.seconds) as (argv, stop_path, subject), subprocess.Popen(argv, cwd=root, stdin=subprocess.DEVNULL, env=environment,
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True) as process:
                     raw = bytearray()
                     end = min(deadline, time.monotonic() + command.seconds)
@@ -205,10 +225,18 @@ class SubprocessValidation:
                                 raw.extend(block)
                                 require(len(raw) <= 65536, "Validation receipt exceeds bounds")
                         code = process.wait(timeout=max(0.01, end - time.monotonic()))
+                        stop = validation_stopped(stop_path, subject, process.pid)
+                        if stop["status"] == "TIMEOUT":
+                            raise subprocess.TimeoutExpired(command.argv, command.seconds)
                     except BaseException:
                         import signal
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait()
+                        try:
+                            if process.poll() is None:
+                                os.kill(process.pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                        process.wait(timeout=8)
+                        validation_stopped(stop_path, subject, process.pid)
                         raise
                 payload = decode(bytes(raw))
                 fields(payload, "denominator counts quarantined")

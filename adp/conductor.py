@@ -88,6 +88,7 @@ class Conductor:
         project = self.projects[admission.workspace_key]
         require(project.root.is_dir() and project.root.resolve() != self.memory.path.resolve()
                 and not self.memory.path.resolve().is_relative_to(project.root.resolve()), "Worker workspace overlaps canonical memory")
+        require(not Path(__file__).resolve().is_relative_to(project.root.resolve()), "Install the trusted Conductor outside product workspaces")
         return project
 
     def _validate_admission(self, admission):
@@ -248,7 +249,7 @@ class Conductor:
             except Exception:
                 unconfirmed.append(request_id)
                 continue
-            if observed_runtime.status not in (RuntimeStatus.COMPLETED, RuntimeStatus.CANCELLED, RuntimeStatus.TIMEOUT,
+            if observed_runtime.stopped is not True and observed_runtime.status not in (RuntimeStatus.COMPLETED, RuntimeStatus.CANCELLED, RuntimeStatus.TIMEOUT,
                                                RuntimeStatus.NOT_STARTED, RuntimeStatus.UNSUPPORTED_RUNTIME):
                 unconfirmed.append(request_id)
         return unconfirmed

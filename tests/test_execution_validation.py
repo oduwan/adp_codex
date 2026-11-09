@@ -73,3 +73,11 @@ class ValidationTests(unittest.TestCase):
         process.assert_not_called()
         self.assertEqual(result[0].outcome,Outcome.NOTRUN)
         self.assertEqual(result[0].denominator,2)
+
+    def test_detached_validation_child_is_reaped_before_pass(self):
+        marker=self.root/'detached.pid'
+        source="import subprocess,sys,json;from pathlib import Path;p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],start_new_session=True);Path("+repr(str(marker))+").write_text(str(p.pid));print("+repr(json.dumps(self.receipt(Outcome.PASS)))+")"
+        command=CheckCommand('unit',(sys.executable,'-c',source),3,2)
+        result=SubprocessValidation((command,),trusted_disposable=True).run(self.root,self.sha,('unit',),seconds=5)
+        self.assertEqual(result[0].outcome,Outcome.PASS)
+        self.assertFalse(Path('/proc',marker.read_text()).exists())

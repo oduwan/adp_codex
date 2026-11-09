@@ -30,6 +30,7 @@ class RuntimeTests(unittest.TestCase):
             "if prompt=='startup-error': sys.exit(3)\n"
             "print(json.dumps({'type':'thread.started','thread_id':'independent:'+str(os.getpid())}),flush=True)\n"
             "if prompt=='timeout':\n subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']);time.sleep(60)\n"
+            "if prompt in ('detached','detached-complete'):\n child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n root=sys.argv[sys.argv.index('-C')+1]\n open(os.path.join(root,'child.pid'),'w').write(str(child.pid))\n if prompt=='detached':time.sleep(60)\n"
             "result={'outcome':'PASS','approved':False,'criteria':[],'summary':'Synthetic contract observation','forensic':None}\n"
             "print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps(result)}}),flush=True)\n"
             "print(json.dumps({'type':'turn.completed'}),flush=True)\n")
@@ -89,6 +90,24 @@ class RuntimeTests(unittest.TestCase):
         schema = output_schema(WorkerResult)
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(set(schema["required"]), set(schema["properties"]))
+
+    def test_detached_descendant_is_reaped_before_timeout_claim(self):
+        request=self.request('detached',1)
+        self.runtime.dispatch(request)
+        result=self.runtime.wait(request.id)
+        self.assertEqual(result.status,RuntimeStatus.TIMEOUT)
+        self.assertIs(result.stopped,True)
+        child=int((self.root/'child.pid').read_text())
+        self.assertFalse(Path('/proc',str(child)).exists())
+
+    def test_detached_descendant_is_reaped_before_completed_result(self):
+        request=self.request('detached-complete',5)
+        self.runtime.dispatch(request)
+        result=self.runtime.wait(request.id)
+        self.assertEqual(result.status,RuntimeStatus.COMPLETED)
+        self.assertIs(result.stopped,True)
+        child=int((self.root/'child.pid').read_text())
+        self.assertFalse(Path('/proc',str(child)).exists())
 
     def test_failed_running_receipt_write_kills_launched_process(self):
         from unittest.mock import patch

@@ -87,10 +87,15 @@ protocol or shared conversation implements delegation.
 The CLI, authentication installation, OS sandbox and explicit operator extensions
 are trusted. Capability flags alone do not prove an authenticated model execution;
 a launch failure is UNSUPPORTED_RUNTIME. Supported operation currently requires
-Linux/POSIX, `/proc`, process groups and local durable runtime receipts. Receipts
+Linux/POSIX, `/proc`, child-subreaper support and local durable runtime receipts. Receipts
 live outside worker roots. Worker prompts are at most 32 KiB, output at most 1 MiB,
 and execution at most 300 seconds, further limited by the actual M2 deadline and
-forensic plan. Process-group termination is observed before reporting cancellation.
+forensic plan. A bounded per-request Linux child-subreaper supervises the unchanged
+documented CLI invocation. It kills and reaps all descendants, including detached
+`setsid`/double-fork children, before recording a confirmed stop. A missing bound
+supervisor stop receipt remains UNKNOWN; a vanished process group is no proof.
+Runtime host identity includes the PID namespace. Install trusted ADP code outside
+product workspaces so workers cannot replace their own supervisor implementation.
 A lost launch identity, unavailable host or missing terminal receipt remains
 UNKNOWN and is never silently redispatched. Unknown cancellation refuses handoff.
 
@@ -132,7 +137,8 @@ historical evidence cannot conceal a changed current PR HEAD.
 
 `SubprocessValidation` accepts registered argv and strict JSON outcome receipts;
 commands never come from issue text. It strips inherited forge/ADP credentials,
-limits IO/time, and continues the original matrix. Host subprocesses are **only**
+limits IO/time, supervises/reaps detached validation descendants too, and continues
+the original matrix. Host subprocesses are **only**
 allowed with explicit `trusted_disposable=True` for owned synthetic projects.
 Production use must explicitly supply an independently qualified sandbox prefix
 or validation port enforcing read-only filesystem and denied network. Without
