@@ -224,9 +224,11 @@ fork/network, resource, cache and independent-matrix methods passed.
 
 Candidate [CI42668252955](https://github.com/oduwan/adp_codex/actions/runs/42668252955)
 passed all210 accepted methods and clean installation6/6 on Python3.11/3.12.
-Its M7 runner then errored on a unittest fixture-lifecycle placeholder rather than
-preserving the frozen method accounting. Original M7 method outcomes from that
-ephemeral private CI log are UNKNOWN, not PASS. The correction records actual
+Its Python3.11 M7 inventory observed5PASS/11SKIP/1ERROR of17 (private evidence
+SHA256 `59d2819052b9668c5af04bd60f655665aae92099a4cff8b98d8d47d3882f12d5`);
+the unsupported-runtime method errored. Python3.12's M7 runner errored on a
+unittest fixture-lifecycle placeholder before a summary, so its original17 method
+outcomes from that ephemeral private log remain UNKNOWN. The correction records actual
 class/module fixture ERROR/SKIP separately, leaves unlaunched original methods
 NOTRUN and forces aggregateFAIL. It rejects an ordinary test spoofing a lifecycle
 ID. Three pure accounting tests are separately frozen in
@@ -240,6 +242,14 @@ Independent narrow harness review approved3/3 pure tests, including the spoofed
 ordinary-ID rejection; private log SHA256
 `d91de3bdbf69ebfee651d6d4582d26d685ee24c8e412ee8b83aaef7f5947b6a1`.
 These are scoped observations, not final acceptance of the whole issue.
+
+The one authorized retained accounting discriminator on clean
+`b1825d7b17b3126cfea1b10e5000dd300163a654` completed1/1PASS in58.898s with
+unchanged budgets and assertions. Private log SHA256
+`2da5c9c9217663ffe10ac1ecd14bbdb0823b68040021f2da86aab7a7c97b0dd6`.
+Its disposable source/image and actual per-launch stop receipts are retained
+outside Git. It narrows the accounting uncertainty without replacing the
+earlier full17 result or claiming a final whole-suite PASS.
 
 The qualification-only `ADP_M7_SANDBOX_EVIDENCE` option retains owned private
 test fixtures/images/receipts outside source for the one bounded accounting
