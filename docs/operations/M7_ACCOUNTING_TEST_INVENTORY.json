@@ -1,0 +1,5 @@
+[
+  "test_m7_accounting.FixtureAccountingTests.test_class_setup_error_keeps_all_original_methods_notrun",
+  "test_m7_accounting.FixtureAccountingTests.test_class_setup_skip_is_not_a_qualification_pass",
+  "test_m7_accounting.FixtureAccountingTests.test_teardown_error_preserves_observed_pass_but_fails_qualification"
+]

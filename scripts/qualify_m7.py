@@ -9,11 +9,51 @@ import subprocess
 import sys
 import unittest
 
-from qualification_support import HonestResult, accounting, private_directory, private_file, sha256, test_ids, write_evidence
+from qualification_support import HonestResult, STATUSES, accounting, private_directory, private_file, sha256, test_ids, write_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 BASE = "16c7a4e103c6a824f361f96e2eb237fbbf4faf48"
+
+
+def fixture_event(test, status, error_type):
+    if not isinstance(test, unittest.suite._ErrorHolder):
+        return None
+    identifier = test.id()
+    phase, separator, scope = identifier.partition(" (")
+    if separator and scope.endswith(")") and phase in ("setUpClass", "tearDownClass", "setUpModule", "tearDownModule"):
+        return {"phase": phase, "scope": scope[:-1][:512], "status": status, "error_type": error_type}
+    return None
+
+
+class M7Result(HonestResult):
+    """Fixture lifecycle errors are evidence, never invented method IDs."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fixture_events = []
+
+    def addError(self, test, error):
+        event = fixture_event(test, "ERROR", error[0].__name__)
+        if event is None:
+            return super().addError(test, error)
+        unittest.TextTestResult.addError(self, test, error)
+        self.fixture_events.append(event)
+
+    def addSkip(self, test, reason):
+        event = fixture_event(test, "SKIP", "SkipTest")
+        if event is None:
+            return super().addSkip(test, reason)
+        unittest.TextTestResult.addSkip(self, test, reason)
+        self.fixture_events.append(event)
+
+
+def summarize(inventory, result):
+    summary = accounting(inventory, result.observations)
+    summary["fixtures"] = result.fixture_events
+    summary["fixture_counts"] = {status: sum(row["status"] == status for row in result.fixture_events) for status in STATUSES}
+    if result.fixture_events:
+        summary["status"] = "FAIL"
+    return summary
 
 
 def main():
@@ -52,15 +92,15 @@ def main():
         raise ValueError("Frozen M7 test denominator changed")
     directory = private_directory(args.evidence_dir, ROOT)
     with private_file(directory / "unittest.log", "w") as output:
-        result = unittest.TextTestRunner(stream=output, verbosity=2, failfast=False, resultclass=HonestResult).run(suite)
-    summary = accounting(actual, result.observations)
+        result = unittest.TextTestRunner(stream=output, verbosity=2, failfast=False, resultclass=M7Result).run(suite)
+    summary = summarize(actual, result)
     summary.update(source=source, python=platform.python_version(), accepted_denominator=210,
         inventories={name: {"sha256": sha256(ROOT / name),
             **{key: value for key, value in accounting(cases, {case: result.observations[case] for case in cases if case in result.observations}).items() if key != "tests"}}
             for name, cases in inventories.items()}, log_sha256=sha256(directory / "unittest.log"),
         public_release="NOT_AUTHORIZED")
     digest = write_evidence(directory / "suite.json", summary)
-    print(json.dumps({k: summary[k] for k in ("source", "python", "status", "original_denominator", "counts", "accepted_denominator")}, sort_keys=True))
+    print(json.dumps({k: summary[k] for k in ("source", "python", "status", "original_denominator", "counts", "fixture_counts", "fixtures", "accepted_denominator")}, sort_keys=True))
     print("evidence_sha256=" + digest)
     for case, status in summary["tests"].items():
         print(json.dumps({"test": case, "status": status}, sort_keys=True))

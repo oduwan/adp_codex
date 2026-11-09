@@ -1,10 +1,12 @@
 """Real OS boundary tests; unavailable hosts are SKIP, never qualified PASS."""
 import fcntl
 import json
+import os
 from pathlib import Path
 import signal
 import tempfile
 import unittest
+from subprocess import SubprocessError
 from unittest.mock import patch
 
 from adp.errors import ADPError
@@ -26,17 +28,40 @@ def command(name, source, denominator=1, seconds=2):
 class ValidationSandboxTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.image_temp = tempfile.TemporaryDirectory(prefix='adp-m7b-image-')
-        cls.image = runtime_image(Path(cls.image_temp.name) / 'image')
-        cls.policy = policy(cls.image)
+        cls.image_temp, cls.setup_failure = None, None
+        cls.retained = os.environ.get('ADP_M7_SANDBOX_EVIDENCE')
+        stage = 'binary'
+        binary = Path(os.environ.get('ADP_TEST_BWRAP_PATH', '/usr/bin/bwrap'))
+        try:
+            if not binary.is_file():
+                raise FileNotFoundError('Explicit bubblewrap binary absent')
+            destination = None
+            if cls.retained:
+                from adp.validation_sandbox import _private
+                destination = _private(Path(cls.retained))
+                if destination.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
+                    raise ValueError('Keep private fixtures outside source')
+            stage = 'runtime-image'
+            cls.image_temp = tempfile.TemporaryDirectory(prefix='adp-m7b-image-', dir=destination)
+            if cls.retained:cls.image_temp._finalizer.detach()
+            cls.image = runtime_image(Path(cls.image_temp.name) / 'image')
+            stage = 'policy'
+            cls.policy = policy(cls.image, binary=binary)
+        except (OSError, ADPError, ValueError, SubprocessError) as exc:
+            cls.setup_failure = 'UNSUPPORTED_VALIDATION_RUNTIME: ' + stage + ': ' + type(exc).__name__
+            print(json.dumps({'sandbox_setup': 'UNSUPPORTED_VALIDATION_RUNTIME', 'stage': stage,
+                              'binary_present': binary.is_file(), 'error_type': type(exc).__name__}, sort_keys=True))
+            raise unittest.SkipTest(cls.setup_failure)
 
     @classmethod
     def tearDownClass(cls):
-        cls.image_temp.cleanup()
+        if cls.image_temp is not None and not cls.retained:cls.image_temp.cleanup()
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='adp-m7b-project-')
-        self.addCleanup(self.temp.cleanup)
+        if self.setup_failure:self.skipTest(self.setup_failure)
+        self.temp = tempfile.TemporaryDirectory(prefix='adp-m7b-project-', dir=self.retained)
+        if self.retained:self.temp._finalizer.detach()
+        else:self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
         self.root = self.base / 'source'
         self.sha = project(self.root)
@@ -129,6 +154,7 @@ class ValidationSandboxTests(unittest.TestCase):
 
     def test_host_credentials_temp_and_controller_paths_are_absent(self):
         self.supported()
+        (self.base / 'host-temp').write_text('owned outside positive-control fixture')
         source = 'from pathlib import Path\n'
         for path in (self.private / 'synthetic-credential', Path(__file__).resolve(), self.base / 'host-temp'):
             source += 'assert not Path(' + repr(str(path)) + ').exists()\n'

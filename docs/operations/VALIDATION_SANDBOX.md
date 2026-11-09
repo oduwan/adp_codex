@@ -210,3 +210,41 @@ Draft PR after final source is committed. No future PASS or approval is claimed
 here. Private temporary evidence is host-lifetime material; retain it privately
 for later audit. Unsupported CI/host scenarios remain SKIP/NOTRUN/UNSUPPORTED,
 never substituted with mocks or hidden inside a green count.
+
+## Retained qualification status before final review
+
+Clean candidate `c770f790dbf4b372153dd6ce4da61f322400d89c` completed its native
+Python3.11.10 inventory: **16PASS/1SKIP of17**, aggregateFAIL, in257.123s.
+Evidence SHA256 `59b714330913e4491d6099cb64b7bbb311b6f16cd4828459ad0c573b58d6b896`.
+The accounting method's capability admission stopped at probe-network/ADPError,
+before any of its product checks. That failed fixture's transient receipt was
+cleaned by unittest, so the exact stop mismatch is UNKNOWN; no cause or PASS is
+invented. The other actual OS/limit, alias, modern-mutator, lost-stop/interruption,
+fork/network, resource, cache and independent-matrix methods passed.
+
+Candidate [CI42668252955](https://github.com/oduwan/adp_codex/actions/runs/42668252955)
+passed all210 accepted methods and clean installation6/6 on Python3.11/3.12.
+Its M7 runner then errored on a unittest fixture-lifecycle placeholder rather than
+preserving the frozen method accounting. Original M7 method outcomes from that
+ephemeral private CI log are UNKNOWN, not PASS. The correction records actual
+class/module fixture ERROR/SKIP separately, leaves unlaunched original methods
+NOTRUN and forces aggregateFAIL. It rejects an ordinary test spoofing a lifecycle
+ID. Three pure accounting tests are separately frozen in
+`M7_ACCOUNTING_TEST_INVENTORY.json`; the original17 IDs remain unchanged.
+
+Independent corrected-defect retest observed3/3PASS: typed unknown-stop
+propagation, durable prelaunch marker/restarted-port refusal, and actual
+fchmodat2+exit-zero terminal refusal with unchanged outside source. Private audit
+SHA256 `51d587358a86699222f040bfc721cda92c3725757b14b3c0d2b8d4218b8a0d64`.
+Independent narrow harness review approved3/3 pure tests, including the spoofed
+ordinary-ID rejection; private log SHA256
+`d91de3bdbf69ebfee651d6d4582d26d685ee24c8e412ee8b83aaef7f5947b6a1`.
+These are scoped observations, not final acceptance of the whole issue.
+
+The qualification-only `ADP_M7_SANDBOX_EVIDENCE` option retains owned private
+test fixtures/images/receipts outside source for the one bounded accounting
+discriminator. The production port does not read this option. Runtime setup
+failure emits only safe stage/binary-presence/error-type metadata; absent OS
+capability never becomes a passing synthetic fixture. Final clean-source CI,
+the bounded discriminator and independent exact-HEAD verdict/blocker are attached
+to the Draft PR after this report commit; no future qualification is claimed here.

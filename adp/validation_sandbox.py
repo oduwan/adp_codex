@@ -357,7 +357,9 @@ class BubblewrapValidation:
                     raw, stop, reference = self._execute(root, (p.executable, '-I', '-B', '-c', source), left)
                     require(stop['stopped'] is True and stop['status'] == 'EXITED'
                             and (stop['cli_exit'] in (-signal.SIGSYS, 128 + signal.SIGSYS) if killed
-                                 else stop['cli_exit'] == 0 and raw.strip() == b'ADP_SANDBOX_READY'), 'Required OS enforcement probe failed')
+                                 else stop['cli_exit'] == 0 and raw.strip() == b'ADP_SANDBOX_READY'),
+                            'Required OS enforcement probe failed: status=' + str(stop.get('status'))
+                            + '; exit=' + str(stop.get('cli_exit')))
                     rows.append((name, stop['cli_exit'], hashlib.sha256(raw).hexdigest(), reference))
                 evidence = 'sandbox:' + digest({'policy': self.policy_digest(), 'rows': rows, 'version': version, 'kernel': platform.release()})
             return ValidationCapability(True, 'bubblewrap-seccomp-single-process', version, platform.release(), self.policy_digest(), evidence)
@@ -365,7 +367,8 @@ class BubblewrapValidation:
             raise  # Uncertain liveness is not an unsupported platform or safe retry.
         except (ADPError, OSError, ValueError, subprocess.SubprocessError) as exc:
             return ValidationCapability(False, 'bubblewrap-seccomp-single-process', version, platform.release(), self.policy_digest(), evidence,
-                                        'UNSUPPORTED_VALIDATION_RUNTIME: ' + stage + ': ' + type(exc).__name__)
+                                        'UNSUPPORTED_VALIDATION_RUNTIME: ' + stage + ': ' + type(exc).__name__
+                                        + (': ' + str(exc) if isinstance(exc, ADPError) else ''))
 
     def _result(self, command, revision, outcome, counts=None, quarantined=0, receipt=None):
         counts = counts or {name: command.denominator if name == outcome else 0 for name in Outcome}
