@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from adp.validation_launcher import seccomp_program
-from sandbox_fixtures import runtime_image
+from sandbox_fixtures import policy, runtime_image
 
 
 def decision(number, *arguments):
@@ -63,3 +63,32 @@ class ValidationProfileTests(unittest.TestCase):
                 image = runtime_image(base / 'image')
             self.assertTrue((image / 'runtime/lib/python3.12/runtime.py').is_file())
             self.assertFalse((image / 'runtime/lib/python3.12/config-3.12-platform').exists())
+
+    def test_runtime_fixture_preserves_relative_libpython_loader_closure(self):
+        with tempfile.TemporaryDirectory(prefix='adp-m7b-loader-unit-') as temporary:
+            base = Path(temporary)
+            stdlib = base / 'python3.12'
+            stdlib.mkdir()
+            executable = base / 'python'
+            executable.write_bytes(b'owned non-executed ELF fixture')
+            library = base / 'prefix/lib/libpython3.12.so.1.0'
+            library.parent.mkdir(parents=True)
+            library.write_bytes(b'owned non-executed library fixture')
+            output = 'libpython3.12.so.1.0 => ' + str(library) + ' (0x00000000)'
+            with patch('sandbox_fixtures.sys.executable', str(executable)), \
+                 patch('sandbox_fixtures.sysconfig.get_path', return_value=str(stdlib)), \
+                 patch('sandbox_fixtures.subprocess.run', return_value=SimpleNamespace(stdout=output)):
+                image = runtime_image(base / 'image')
+            self.assertEqual((image / 'runtime/lib/libpython3.12.so.1.0').read_bytes(), library.read_bytes())
+
+    def test_negative_backend_fixture_uses_owned_regular_file(self):
+        with tempfile.TemporaryDirectory(prefix='adp-m7b-backend-unit-') as temporary:
+            base = Path(temporary)
+            image = base / 'image'
+            image.mkdir()
+            binary = base / 'real-false'
+            binary.write_bytes(b'owned non-executed backend fixture')
+            alias = base / 'alias-false'
+            alias.symlink_to(binary)
+            selected = policy(image, binary=alias)
+            self.assertEqual(selected.binary, binary)

@@ -1,0 +1,6 @@
+[
+  "test_validation_sandbox_lifecycle.ValidationLifecycleTests.test_confirmed_terminal_stop_wins_over_read_deadline",
+  "test_validation_sandbox_lifecycle.ValidationLifecycleTests.test_normal_deadline_and_unknown_stop_keep_honest_outcomes",
+  "test_validation_sandbox_profile.ValidationProfileTests.test_negative_backend_fixture_uses_owned_regular_file",
+  "test_validation_sandbox_profile.ValidationProfileTests.test_runtime_fixture_preserves_relative_libpython_loader_closure"
+]
