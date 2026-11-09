@@ -34,5 +34,5 @@ jobs:
         run: python scripts/qualify_installation.py --source-ref "$(git rev-parse HEAD)" --evidence-dir "$RUNNER_TEMP/adp-install"
       - name: Test all accepted M1 through M5 and M6 qualification
         run: python scripts/qualify_m6.py --evidence-dir "$RUNNER_TEMP/adp-suite"
-      - name: Test M7 operational adapters
-        run: python scripts/qualify_m7.py --inventory docs/operations/NETWORK_CAS_TEST_INVENTORY.json --evidence-dir "$RUNNER_TEMP/adp-m7-suite"
+      - name: Test additive M7 workstreams
+        run: python scripts/qualify_m7.py --inventory docs/operations/*_TEST_INVENTORY.json --evidence-dir "$RUNNER_TEMP/adp-m7-suite"

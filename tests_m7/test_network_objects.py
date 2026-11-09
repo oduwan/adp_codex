@@ -43,12 +43,22 @@ class ObjectQualification(unittest.TestCase):
                              git_bytes(self.remote, "cat-file", item.kind, item.oid))
         self.assertEqual(self.server.refs(), before)
         self.assertEqual(gv(self.source, "rev-parse", "HEAD"), self.head)
+        # Accepted M5 commit-tree preserves a message with no final LF. Transport
+        # must preserve those actual bytes, never manufacture another commit.
+        message = b"change: exact accepted M5 message\n\nWork opaque-task"
+        m5 = git_bytes(self.source, "commit-tree", gv(self.source, "rev-parse", "HEAD^{tree}"),
+                       "-p", self.head, "-F", "-", raw=message).decode().strip()
+        local = git_bytes(self.source, "cat-file", "commit", m5)
+        self.assertTrue(local.endswith(message)); self.assertFalse(local.endswith(b"\n"))
+        self.client.upload(closure(self.source, m5, self.client.known_commit))
+        self.assertEqual(git_bytes(self.remote, "cat-file", "commit", m5), local)
+        self.assertEqual(self.server.refs(), before)
 
     def test_unrepresentable_commit_headers_dates_and_encoding_refuse(self):
         raw = git_bytes(self.source, "cat-file", "commit", self.head)
         cases = [raw.replace(b" +0000", b" +0200"), raw.replace(b"\n\n", b"\nencoding ISO-8859-1\n\n", 1),
                  raw.replace(b"\n\n", b"\ngpgsig fake\n\n", 1), raw.replace(b"\n\n", b"\nextra header\n\n", 1),
-                 raw[:-1], raw.replace(b"Parented", b"\xffarented")]
+                 raw + b"\0", raw.replace(b"Parented", b"\xffarented")]
         for case in cases:
             with self.subTest(case=case[:16]), self.assertRaises(ADPError): commit_payload(case)
         self.assertFalse(self.server.mutations)

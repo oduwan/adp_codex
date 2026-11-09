@@ -71,7 +71,7 @@ def commit_payload(raw: bytes) -> dict:
         author = _actor(lines[position][7:])
         committer = _actor(lines[position + 1][10:])
         text = message.decode("utf-8", "strict")
-        require(message.endswith(b"\n") and all(c >= 32 or c in (9, 10) for c in message),
+        require(message and all(c >= 32 or c in (9, 10) for c in message),
                 "UNSUPPORTED_ATOMIC_REF: noncanonical commit message")
         def actor_bytes(actor):
             seconds = int(datetime.strptime(actor["date"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
