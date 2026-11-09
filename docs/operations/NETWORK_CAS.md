@@ -142,11 +142,25 @@ is UNKNOWN. Missing rules/protection/permissions, active branch constraints,
 nonempty legacy protection inventory for creation and inaccessible metadata
 refuse. GitHub Enterprise/SSH, SHA256 and other provider protocols are unsupported.
 
+## Outcome taxonomy
+
+| Outcome | Meaning / operator boundary |
+| --- | --- |
+| `PRESENT` | Authenticated exact intended ref SHA, current local binding, no unconfirmed transport |
+| `ABSENT` | Only an unattempted PREPARED intent with no claim and exact expected old state |
+| `UNKNOWN` / conflict | Attempted old/absent/different value, lost acknowledgement without exact proof, inaccessible/malformed metadata, or uncertain stop; no automatic replay |
+| `UNSUPPORTED_ATOMIC_REF` | Unsupported provider/protocol/objects/protection/credential/runtime; fail closed, local backend remains available |
+| Qualification `FAIL/ERROR/TIMEOUT/SKIP/NOTRUN/UNKNOWN/UNSUPPORTED` | Observed non-PASS, kept in the original denominator; no execution or integration authority |
+
+A known exact SHA alone never clears an uncertain transport marker. Operator
+reconciliation must establish process stop and intent effects externally before
+any separately authorized recovery; this implementation offers no reset shortcut.
+
 ## Qualification status and retained corrections
 
 The original frozen new-method inventory is
 [NETWORK_CAS_TEST_INVENTORY.json](NETWORK_CAS_TEST_INVENTORY.json):33 methods.
-Independent review adds11 security methods in the separate
+Independent review adds12 security methods in the separate
 [NETWORK_CAS_SECURITY_TEST_INVENTORY.json](NETWORK_CAS_SECURITY_TEST_INVENTORY.json).
 The original33 and accepted210 denominators remain unchanged. Existing tests/fixtures,
 frozen M6 scenario maps, state schemas and guard thresholds remain unchanged.
@@ -201,6 +215,16 @@ The fake authenticated server now enforces that restriction and actual Git
 fast-forward ancestry. Focused scope-race/broad-scope cases2/2 PASS, object10/10
 PASS and expanded HTTP11/11 PASS; the latter log SHA256 is
 `526773cbae3cdd1179e10f8863a6fd5644e0bed9855990f6c42827368bfa383c`.
+A further independent real-child probe observed1FAIL: a symlink-corrupt private
+network hazard raised before worker cancellation. Original repro SHA256
+`ec16f618d3aa10437fd0dd2dd9fc8b552ef4fbb6e462ede95924d2e9cb48fd27`.
+Conductor now retains a stable UNKNOWN Git context on observation failure and
+continues cancellation of every tracked worker. The added actual-child regression
+requires a confirmed stop while the hazard remains UNKNOWN. Focused proof1/1
+PASS (Python3.11.10), log SHA256
+`eb4ea86fb8b7e0599a8f7be7b63ed0f0510e2180c9fdf368eb5e47bc057d696f`.
+The prior additional security campaign passed8/8 atb58dea72a8d106ad53044245e5f54033d15bdf5a,
+log SHA256 `5f405ea5bc142b89fd3dfccb8a6460b692244bb73cbce1d2f0b7df87adeba645`.
 All new security cases and fresh independent assessment remain required at the
 final committed revision. No timeout, guard threshold or assertion was relaxed.
 
@@ -232,7 +256,7 @@ PASS results. A mapped test is a procedure, not a claim that a pending run passe
 |15|S.private_claim_corruption_refuses_before_any_object_upload; S.symlinked_private_claim_never_follows_an_outside_file; G.submitted_old_absent_changed_or_missing_claim_never_retries|Corrupt/symlink/missing claim grants no replay|
 |16|S.reused_repository_path_is_denied_by_selected_id_before_object_write; H.repository_binding_and_mutation_node_cannot_escape_credential_scope; H.real_supervisor_response_and_secrets_never_enter_argv_environment_or_receipt|Zero wrong-repository objects, no staging refs/force/deletion/helper or token disclosure|
 |17|H.routes_force_delete_and_credential_urls_refuse_before_token_access; H.child_uses_only_verified_fixed_https_origin_and_private_authorization; H.exact_cas_and_canonical_encoded_branch_routes_are_accepted|Fixed verified origin and constrained request grammar|
-|18|H.real_whole_request_deadline_reaps_detached_child; H.unsupported_capability_and_unconfirmed_receipt_never_create_success; O.interrupted_transport_is_write_ahead_fenced_across_restart; O.failed_stop_boundary_persistence_never_launches_transport|Actual descendant stop or durable UNKNOWN, no retry/handoff|
+|18|H.real_whole_request_deadline_reaps_detached_child; H.unsupported_capability_and_unconfirmed_receipt_never_create_success; O.interrupted_transport_is_write_ahead_fenced_across_restart; O.failed_stop_boundary_persistence_never_launches_transport; S.unreadable_network_hazard_preserves_unknown_and_cancels_real_worker|Actual descendant stop or durable UNKNOWN, no retry/handoff|
 |19|G.conductor_runs_and_reobserves_real_journal_without_helpers|Actual accepted M1–M5 Conductor, journal, policy and guard; controlled HTTP/local forge|
 |20|Unchanged accepted210 inventory plus both M7 inventories, CI Python3.11/3.12|Every original method accounted; non-PASS never promoted|
 

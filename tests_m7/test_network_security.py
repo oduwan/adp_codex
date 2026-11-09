@@ -123,3 +123,33 @@ class NetworkSecurityQualification(unittest.TestCase):
             GitHubGitExecutionPort(replace(f.cfg, identity='different-opaque-repository'), f.service, f.conductor.journal)
         self.assertEqual(f.server.calls, before)
         self.assertFalse(f.server.mutations)
+
+    def test_unreadable_network_hazard_preserves_unknown_and_cancels_real_worker(self):
+        import subprocess
+        import sys
+        from types import SimpleNamespace
+        from adp.execution_types import RuntimeStatus
+        f = self.fixture()
+        outside = f.base / 'unrelated-hazard'; outside.write_bytes(b'outside remains unchanged')
+        f.service._hazard_path().symlink_to(outside)
+        with self.assertRaises(ADPError): f.port.unconfirmed_contexts()
+        process = subprocess.Popen((sys.executable, '-I', '-B', '-c', 'import time; time.sleep(30)'),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={})
+        calls = []
+        def cancel(request_id):
+            calls.append(request_id)
+            process.terminate(); process.wait(timeout=3)
+            return SimpleNamespace(status=RuntimeStatus.CANCELLED, stopped=True)
+        f.conductor.runtime = SimpleNamespace(observe=lambda _: SimpleNamespace(status=RuntimeStatus.RUNNING), cancel=cancel)
+        f.conductor._launched = {'owned-disposable-worker'}
+        try:
+            unknown = f.conductor._quiesce(())
+            self.assertEqual(calls, ['owned-disposable-worker'])
+            self.assertIsNotNone(process.poll())
+            self.assertEqual(len(unknown), 1)
+            self.assertTrue(unknown[0].startswith('git:'))
+            self.assertEqual(unknown, f.conductor._quiesce(()))
+            self.assertEqual(outside.read_bytes(), b'outside remains unchanged')
+        finally:
+            if process.poll() is None:
+                process.terminate(); process.wait(timeout=3)

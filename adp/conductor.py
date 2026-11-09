@@ -235,9 +235,14 @@ class Conductor:
 
     def _quiesce(self, admissions):
         unconfirmed, requests = set(self._validation_unknown), set(self._launched)
-        for project in self.projects.values():
-            if hasattr(project.git_port, "unconfirmed_contexts"):
-                unconfirmed.update(project.git_port.unconfirmed_contexts())
+        for identity, project in self.projects.items():
+            try:
+                if hasattr(project.git_port, "unconfirmed_contexts"):
+                    unconfirmed.update(project.git_port.unconfirmed_contexts())
+            except Exception:
+                # Unreadable private effect state is UNKNOWN. It must not
+                # prevent cancellation of independently tracked worker handles.
+                unconfirmed.add("git:" + digest({"project": identity}))
         for admission in admissions:
             try:
                 jobs = self._task(admission)["jobs"].values()
