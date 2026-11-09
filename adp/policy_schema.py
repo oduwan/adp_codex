@@ -18,7 +18,7 @@ MAX_AGE = 3600
 METHODS = {"merge", "squash", "ff_only"}
 STATUSES = {"PASS", "FAIL", "ERROR", "TIMEOUT", "SKIP", "NOTRUN", "UNKNOWN"}
 FORBIDDEN = {Operation.FORCE_PUSH, Operation.REBASE, Operation.REWRITE}
-GATED = {Operation.MERGE, Operation.RELEASE, Operation.DEPLOY}
+GATED = {Operation.MERGE, Operation.RELEASE, Operation.DEPLOY, Operation.REPORT}
 
 
 def digest(value: object) -> str:
@@ -54,6 +54,15 @@ def branch(value: object) -> None:
             and not value.endswith(("/", "."))
             and all(part and not part.startswith(".") and not part.endswith(".lock") for part in value.split("/")),
             "Unsafe branch/tag name")
+
+
+def product_path(value: object) -> None:
+    from pathlib import PurePosixPath
+    string(value, 240)
+    path = PurePosixPath(value)
+    require(not path.is_absolute() and str(path) == value and not value.startswith("-")
+            and all(p not in (".", "..", ".git") for p in path.parts)
+            and "\\" not in value and ":" not in value, "Unsafe product path")
 
 
 def template(value: str, tokens: set[str], *, multiline: bool = False) -> None:
@@ -148,6 +157,8 @@ def validate_snapshot(value) -> None:
     ref(value.source_ref)
     sha(value.revision)
     fingerprint(value.index_digest)
+    if value.worktree_digest is not None:
+        fingerprint(value.worktree_digest)
     require(type(value.worktree_clean) is bool and type(value.remote_refs_known) is bool, "Invalid repository status")
     strings(value.diagnostics, 16, 512)
     require(isinstance(value.push_relation, str) and value.push_relation in {"CREATE", "SAME", "FAST_FORWARD", "DIVERGED", "UNKNOWN"}, "Invalid push ancestry observation")

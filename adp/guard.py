@@ -60,7 +60,7 @@ class ProgressGuard:
 
     @staticmethod
     def _requirements(state: dict) -> dict:
-        if state["schema_version"] != 2:
+        if state["schema_version"] not in (2, 3):
             raise AuthorityError("Explicit guard-upgrade is required; read-only inspection never migrates M1")
         return state["progress_guard"]["requirements"]
 

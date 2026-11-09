@@ -27,5 +27,5 @@ jobs:
         run: adp --help
       - name: Validate plugin and docs scaffold
         run: python scripts/validate_scaffold.py
-      - name: Test scaffold and M1 through M4 contracts
+      - name: Test scaffold and M1 through M5 contracts
         run: python -m unittest discover -s tests -p 'test_*.py' -v

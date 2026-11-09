@@ -78,10 +78,13 @@ def result_schema(result: object) -> None:
 def bundle(state: dict, tasks: dict[str, dict], repository_id: str) -> None:
     require(type(tasks) is dict, "Invalid task collection")
     version = state.get("schema_version") if type(state) is dict else None
-    require(type(version) is int and version in (1, 2), "Unsupported schema version")
+    require(type(version) is int and version in (1, 2, 3), "Unsupported schema version")
     fields(state, "schema_version repository_id revision generation owner task_keys assignment_sequence"
-           + (" progress_guard" if version == 2 else ""))
-    if version == 2:
+           + (" progress_guard" if version in (2, 3) else "") + (" execution" if version == 3 else ""))
+    if version == 3:
+        from .execution_schema import execution_schema
+        execution_schema(state["execution"], repository_id)
+    if version in (2, 3):
         from .guard_schema import guard_schema
         guard_schema(state["progress_guard"], repository_id)
         require(set(state["progress_guard"]["task_epochs"]) == set(tasks), "Guard task incarnation registry mismatch")
@@ -137,4 +140,14 @@ def bundle(state: dict, tasks: dict[str, dict], repository_id: str) -> None:
                         and job["source_revision"] == source, "Stale pending assignment")
         encode(task)
     require(len(jobs) <= MAX_ASSIGNMENTS, "Global assignment bound exceeded")
+    if state["schema_version"] == 3:
+        for task_key, execution_task in state["execution"]["tasks"].items():
+            require(task_key in tasks and execution_task["task_id"] == tasks[task_key]["id"],
+                    "Execution references an absent or aliased M1 task")
+            for aid, execution_job in execution_task["jobs"].items():
+                assignment = tasks[task_key]["assignments"].get(aid)
+                require(assignment is not None and assignment["worker"] == "worker:" + execution_job["request_id"]
+                        and assignment["generation"] == execution_job["generation"]
+                        and assignment["source_revision"] == execution_job["revision"],
+                        "Execution job differs from its actual M1 assignment")
     encode(state)

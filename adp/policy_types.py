@@ -17,12 +17,16 @@ class Effect(StrEnum):
 class Operation(StrEnum):
     BRANCH = "BRANCH"
     COMMIT = "COMMIT"
+    STAGE = "STAGE"
+    EDIT = "EDIT"
+    INSPECT = "INSPECT"
     VALIDATE = "VALIDATE"
     PR = "PR"
     PUSH = "PUSH"
     MERGE = "MERGE"
     RELEASE = "RELEASE"
     DEPLOY = "DEPLOY"
+    REPORT = "REPORT"
     FORCE_PUSH = "FORCE_PUSH"
     REBASE = "REBASE"
     REWRITE = "REWRITE"
@@ -91,6 +95,7 @@ class RepositorySnapshot:
     remote_refs_known: bool = True
     diagnostics: tuple[str, ...] = ()
     push_relation: str = "UNKNOWN"
+    worktree_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +147,9 @@ class Request:
     summary: str = ""
     version: str = ""
     environment: str = ""
+    paths: tuple[str, ...] = ()
+    report_target: str = ""
+    report_body: str = ""
 
 
 @dataclass(frozen=True)
@@ -206,6 +214,26 @@ class CommitPlan:
 
 
 @dataclass(frozen=True)
+class StagePlan:
+    paths: tuple[str, ...]
+    index_digest: str
+    worktree_digest: str
+
+
+@dataclass(frozen=True)
+class EditPlan:
+    paths: tuple[str, ...]
+    worktree_digest: str
+    request_id: str
+
+
+@dataclass(frozen=True)
+class ReportPlan:
+    target: str
+    body: str
+
+
+@dataclass(frozen=True)
 class ValidationPlan:
     checks: tuple[str, ...]
 
@@ -248,7 +276,7 @@ class DeploymentPlan:
     revision: str
 
 
-Payload = BranchPlan | CommitPlan | ValidationPlan | PullRequestPlan | PushPlan | MergePlan | ReleasePlan | DeploymentPlan
+Payload = BranchPlan | CommitPlan | StagePlan | EditPlan | ReportPlan | ValidationPlan | PullRequestPlan | PushPlan | MergePlan | ReleasePlan | DeploymentPlan
 
 
 @dataclass(frozen=True)

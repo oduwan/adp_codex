@@ -5,7 +5,7 @@ description: Analyze repository issues, dependencies, external Git policies, and
 
 # ADP Codex — planning skill (scaffold)
 
-This is a **design-only, read-only skill**. It does not ship the autonomous engine, a CLI, an issue adapter, or a configured Conductor. Never claim otherwise.
+This is a **design-only, read-only skill**. This skill does not ship a configured Conductor or grant execution authority. The separate Python package supplies accepted M1–M4 and an M5 execution candidate; M6 release qualification is not implemented.
 
 ## Read-only workflow
 
@@ -18,7 +18,7 @@ This is a **design-only, read-only skill**. It does not ship the autonomous engi
 
 ## Hard boundaries
 
-- Do not run a purported `adp` CLI yet: it is not implemented in this scaffold.
+- This read-only skill does not authorize CLI execution. Use the separately documented package only under explicit operator authorization and qualified runtime/policy ports.
 - No GitHub mutations, changes to branches, creation of issues/PRs, merge, deployment, or agent execution unless the user explicitly gives a separate task and valid project authorization.
 - Never classify a failed test as corrupted without evidence; never treat quarantine, SKIP, ERROR, or NOTRUN as PASS.
 - Never bypass independent exact-revision review, resource/authority gates, or the Progress Guard.

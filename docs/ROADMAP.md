@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-**Status:** M0 scaffold and M1–M3 are accepted. M4 has a read-only implementation candidate; M5–M6 remain planned milestones. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
+**Status:** M0 scaffold and M1–M4 are accepted. M5 has an execution candidate; M6 remains planned. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
 
 ## Milestones
 
@@ -38,7 +38,8 @@ Implement read-only `discover`, `plan` and refresh: issue and PR ingestion, nati
 
 **Gate:** pagination, permissions, stale-HEAD, dependency-cycle and prompt-injection fixtures; zero discovery writes.
 
-The [M4 API candidate](DISCOVERY_API.md) supplies GET-only GitHub discovery,
+Accepted through PR #10 at `ca44b1f319c1facb4154fd8015072ba3c5d0407d`.
+The [M4 API](DISCOVERY_API.md) supplies GET-only GitHub discovery,
 deterministic dependency proposals and evidence-preserving refresh previews.
 
 ### M5 — Conductor execution and product reporting ([#5](https://github.com/oduwan/adp_codex/issues/5))
@@ -46,6 +47,10 @@ deterministic dependency proposals and evidence-preserving refresh previews.
 Wire policy-gated `run`, `status`, `resume`, `handoff`, bounded parallel subagents, independent exact-revision review and idempotent one-summary-per-product-iteration publication.
 
 **Gate:** synthetic multi-worker track, restart, reviewer rejection and recovered publication without duplicates.
+
+The [M5 API candidate](CONDUCTOR_API.md) integrates accepted M1–M4 and a real
+capability-checked Codex adapter. Final exact-revision review and runtime proof
+remain explicit integration gates; no merge or deployment authority is supplied.
 
 ### M6 — Cross-repository portability and release qualification ([#6](https://github.com/oduwan/adp_codex/issues/6))
 

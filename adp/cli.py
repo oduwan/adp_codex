@@ -21,7 +21,7 @@ def parser() -> argparse.ArgumentParser:
     common.add_argument("--repository-id")
     common.add_argument("--memory-branch", dest="branch")
     common.add_argument("--storage", type=Path)
-    root = argparse.ArgumentParser(prog="adp", description="Portable coordination memory; no autonomous execution")
+    root = argparse.ArgumentParser(prog="adp", description="Portable memory, read-only planning and explicitly authorized finite execution")
     commands = root.add_subparsers(dest="command", required=True)
     init = commands.add_parser("init", parents=[common], help="Inspect or explicitly initialize memory")
     mode = init.add_mutually_exclusive_group(required=True)
@@ -29,7 +29,11 @@ def parser() -> argparse.ArgumentParser:
     mode.add_argument("--apply", action="store_true")
     init.add_argument("--authorize-memory-write", action="store_true")
     for command in ("doctor", "status", "recover", "handoff", "release", "cleanup-inbox"):
-        commands.add_parser(command, parents=[common])
+        subcommand = commands.add_parser(command, parents=[common])
+        if command in ("status", "handoff"):
+            subcommand.add_argument("--controller", type=Path)
+            if command == "handoff":
+                subcommand.add_argument("--authorize-execution", action="store_true")
     upgrade = commands.add_parser("guard-upgrade", parents=[common], help="Explicitly migrate owned memory to guard schema v2")
     upgrade.add_argument("--authorize-memory-write", action="store_true")
     claim = commands.add_parser("claim", parents=[common])
@@ -58,6 +62,8 @@ def parser() -> argparse.ArgumentParser:
     retire.add_argument("--confirm-disposition", action="store_true")
     from .discovery_cli import add_commands
     add_commands(commands, common)
+    from .execution_cli import add_commands as add_execution_commands
+    add_execution_commands(commands, common)
     return root
 
 
@@ -78,6 +84,11 @@ def check_product_worktrees(config: Config) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
+        if args.command in ("run", "resume") or args.command in ("status", "handoff") and args.controller is not None:
+            from .execution_cli import run
+            report, code = run(args)
+            emit(report)
+            return code
         if args.command in ("discover", "plan", "refresh"):
             from .discovery_cli import run
             report, code = run(args)
@@ -110,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
                 author(config.root)
                 check_product_worktrees(config)
             report = memory.inspect()
+            if report.get("state", {}).get("schema_version") == 3:
+                report["runtime_liveness"] = "UNKNOWN; checkpoint only, use explicit --controller for observed runtime status"
             report["product_actions"] = "DENIED; M1 only coordinates memory"
             if command == "doctor":
                 report["authentication"] = "Remote read checked; push permission UNKNOWN"
@@ -120,6 +133,9 @@ def main(argv: list[str] | None = None) -> int:
             result = memory.initialize(authorized=args.authorize_memory_write)
         elif command == "guard-upgrade":
             result = memory.upgrade_guard(authorized=args.authorize_memory_write)
+        elif command == "execution-upgrade":
+            from .execution_memory import ExecutionJournal
+            result = ExecutionJournal(memory).upgrade(authorized=args.authorize_memory_write)
         elif command == "claim":
             result = memory.claim(args.owner, takeover=args.takeover,
                                   confirmed_stopped_owner=args.confirm_stopped_owner)

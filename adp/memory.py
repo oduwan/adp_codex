@@ -198,7 +198,7 @@ class Memory:
     def _checkpoint(self, head: str, state: dict, tasks: dict[str, dict]) -> dict:
         state["revision"] += 1
         state["task_keys"] = sorted(tasks)
-        if state["schema_version"] == 2:
+        if state["schema_version"] in (2, 3):
             epochs = state["progress_guard"]["task_epochs"]
             state["progress_guard"]["task_epochs"] = {
                 task_key: epochs.get(task_key, state["revision"]) for task_key in tasks}
@@ -257,6 +257,10 @@ class Memory:
     def handoff(self) -> dict:
         with locked(self.control):
             head, state, tasks = self._start()
+            if state["schema_version"] == 3:
+                require(all(j["status"] in ("COMPLETE", "CANCELLED") for t in state["execution"]["tasks"].values()
+                            for j in t["jobs"].values()) and all(a["status"] == "OBSERVED" for a in state["execution"]["actions"].values()),
+                        "Observe/cancel execution and reconcile external effects before handoff")
             if self._inbox():
                 raise Conflict("Process local inbox results before voluntary handoff")
             self._invalidate(tasks)
@@ -468,7 +472,7 @@ class Memory:
             raise AuthorityError("Guard migration requires explicit memory-write authorization")
         with locked(self.control):
             head, state, tasks = self._start()
-            if state["schema_version"] == 2:
+            if state["schema_version"] in (2, 3):
                 return self.inspect()
             require(state["schema_version"] == 1, "Unsupported migration source")
             state["schema_version"] = 2

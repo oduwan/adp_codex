@@ -233,3 +233,14 @@ transport/credential helpers, trusted adapters, verifier and clock are inside
 the deployment trust boundary inherited from M1. No live GitHub adapter,
 automatic prose interpreter, issue discovery, Conductor, shell runner or
 production qualification is included in M3.
+
+## M5 additive execution operations
+
+The M5 candidate adds explicit `EDIT`, `INSPECT`, `STAGE` and `REPORT` permissions.
+No accepted profile implicitly allows them: omission is UNKNOWN. `EDIT`/`INSPECT`
+bind exact request IDs, source paths and working-tree fingerprints; INSPECT
+permits read-only forensic inspection of a dirty source. STAGE binds explicit
+files plus index/worktree fingerprints. REPORT requires independent exact-SHA
+approval, complete checks and unresolved acceptance cleared, as well as exact
+operator authorization. Decisions remain separate from execution. See the
+[Conductor API](CONDUCTOR_API.md) for runtime and effect gates.
