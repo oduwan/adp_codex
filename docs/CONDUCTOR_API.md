@@ -221,3 +221,20 @@ Recognizable credential/private-key shapes in fresh or cached worker results
 Raw responses stay in private runtime evidence; contamination blocks the work.
 This is a bounded detector, not universal secret detection or a substitute for
 trusted output classification. M1–M5 schemas and guard thresholds are unchanged.
+
+## Explicit M7 GitHub CAS port
+
+Issue #14 adds the typed `GitEffectPort` boundary and an opt-in
+`GitHubGitExecutionPort`; the existing local-bare port retains its behavior.
+See [network CAS](operations/NETWORK_CAS.md) for the narrow supported object
+forms, authenticated HTTP policy adapter, explicit canonical target binding,
+resource bounds and offline qualification. Actual GitHub writes remain NOTRUN
+pending separately authorized M8; credentials never replace M3 authority.
+
+A network action prepares a private one-use dispatch capability at the actual
+canonical PREPARED transition, then checkpoints SUBMITTED before execution.
+Reconstructed SUBMITTED actions cannot acquire another capability. Every HTTP
+launch also has private write-ahead stop fencing. Unconfirmed transport liveness
+is retained across restart, included in Conductor unconfirmed contexts and blocks
+later HTTP and handoff, even if the target ref happens to equal the intended SHA.
+No canonical schema, guard threshold, forced update or automatic retry is added.

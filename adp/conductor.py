@@ -17,7 +17,7 @@ from .execution_containment import source_seal, admin_seal
 from .execution_privacy import credential_shaped
 from .execution_policy import M4ReadinessService, ReservedSafety, policy_task
 from .execution_schema import worker_result
-from .execution_types import Admission, ExternalObservation, Role, RuntimeStatus, WorkerRequest, WorkerResult
+from .execution_types import Admission, ExternalObservation, GitEffectPort, Role, RuntimeStatus, WorkerRequest, WorkerResult
 from .git import git, value
 from .guard_types import (Action, ActionKind, Attestation, DecisionKind, Observation, Outcome,
     Permit, Progress, ProgressKind, data)
@@ -32,7 +32,7 @@ class Project:
     root: Path
     policy_factory: object
     policy_authorizer: object
-    git_port: object
+    git_port: GitEffectPort
     forge: object
     validation: object
 
@@ -235,6 +235,14 @@ class Conductor:
 
     def _quiesce(self, admissions):
         unconfirmed, requests = set(self._validation_unknown), set(self._launched)
+        for identity, project in self.projects.items():
+            try:
+                if hasattr(project.git_port, "unconfirmed_contexts"):
+                    unconfirmed.update(project.git_port.unconfirmed_contexts())
+            except Exception:
+                # Unreadable private effect state is UNKNOWN. It must not
+                # prevent cancellation of independently tracked worker handles.
+                unconfirmed.add("git:" + digest({"project": identity}))
         for admission in admissions:
             try:
                 jobs = self._task(admission)["jobs"].values()
@@ -535,6 +543,8 @@ class Conductor:
         if existing:
             require(all(existing[k] == action[k] for k in ("task_key", "operation", "revision", "source_ref", "target", "expected_target", "payload")), "Reserved external effect changed")
         self.journal.change(lambda execution, state, tasks: execution["actions"].update({action_id: action}))
+        dispatch = (project.git_port.prepare_dispatch(action_id, action)
+                    if hasattr(project.git_port, "prepare_dispatch") else None)
         self.journal.change(lambda execution, state, tasks: execution["actions"][action_id].update(status="SUBMITTED"))
         # Every checkpoint changes M3's safety binding. Authorize again after
         # the durable reservation, immediately before the actual effect.
@@ -549,7 +559,10 @@ class Conductor:
                     observation = project.forge.submit(action_id, request.operation, payload,
                         authorization=effect_authorization, plan_digest=digest(plan))
                 else:
-                    observation = project.git_port.submit(action, provider, plan, authorization)
+                    if dispatch is not None:
+                        observation = project.git_port.submit(action, provider, plan, authorization, dispatch=dispatch)
+                    else:
+                        observation = project.git_port.submit(action, provider, plan, authorization)
             except OSError:
                 observation = self._observe_action(project, action_id, action)
         require(observation.status == "PRESENT", "External effect is not confirmed; preserve reservation")
@@ -821,6 +834,8 @@ class Conductor:
 
     def _handoff(self):
         self._privacy_preflight()
+        require(not any(project.git_port.unconfirmed_contexts() for project in self.projects.values()
+                        if hasattr(project.git_port, "unconfirmed_contexts")), "Unconfirmed network transport stop refuses handoff")
         observed = self.journal.inspect()
         require(observed["local_owner"], "Only the owning Conductor may hand off")
         for task in observed["state"]["execution"]["tasks"].values():
@@ -841,7 +856,11 @@ class Conductor:
             project = self.projects[task["workspace_key"]]
             require(not value(project.root, "status", "--porcelain", "--untracked-files=all"), "Uncommitted product changes are not portable; handoff refused")
             remote = project.git_port.config.remote
-            refs = value(project.root, "ls-remote", "--refs", remote, task["source_ref"]).splitlines()
-            require(len(refs) == 1 and refs[0].split()[0] == task["revision"], "Unpublished product source is not portable; handoff refused")
+            if hasattr(project.git_port, "remote_revision"):
+                published = project.git_port.remote_revision(task["source_ref"])
+            else:
+                refs = value(project.root, "ls-remote", "--refs", remote, task["source_ref"]).splitlines()
+                published = refs[0].split()[0] if len(refs) == 1 else None
+            require(published == task["revision"], "Unpublished product source is not portable; handoff refused")
         require(self.memory.inspect()["inbox_count"] == 0, "Process immutable inbox results before handoff")
         return self.memory.handoff()

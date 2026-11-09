@@ -150,6 +150,12 @@ class ExternalObservation:
     body_digest: str | None = None
 
 
+class GitEffectPort(Protocol):
+    """Explicit effect adapter; policy decisions and durable intent stay separate."""
+    def observe(self, action: dict) -> ExternalObservation: ...
+    def submit(self, action: dict, provider, plan: Plan, authorization: Authorization) -> ExternalObservation: ...
+
+
 class ForgeBackend(Protocol):
     """No implicit network authority. Unknown delivery must never be retried.
 
