@@ -6,6 +6,7 @@ import subprocess
 from datetime import datetime, timezone
 
 from adp.network_http import Response, NetworkTransportError, UPDATE_REFS_MUTATION
+from adp.schema import require
 
 
 def git_bytes(root, *args, raw=None):
@@ -43,6 +44,13 @@ class ObjectServer:
         self.after_upload = None
         self.lose_ack = False
         self.page_size = 100
+        self.scope_ids = (target.database_id,)
+        self.route_database_id, self.route_root = target.database_id, root
+        self.before_object = None
+
+    def bind_repository(self, node_id, database_id):
+        require((node_id, database_id) == (self.target.node_id, self.target.database_id)
+                and self.scope_ids == (database_id,), "Fixture transport credential is not explicitly confined to the canonical repository ID")
 
     def refs(self):
         return dict(line.split(" ", 1) for line in gv(self.root, "for-each-ref", "--format=%(refname) %(objectname)").splitlines())
@@ -67,6 +75,12 @@ class ObjectServer:
                 assert update["afterOid"] != "0" * 40
                 if self.before_cas:
                     self.before_cas()
+                if update["beforeOid"] != "0" * 40:
+                    try:
+                        if gv(self.root, "merge-base", update["beforeOid"], update["afterOid"]) != update["beforeOid"]:
+                            return self.response({"errors": [{"type": "NON_FAST_FORWARD"}]})
+                    except subprocess.CalledProcessError:
+                        return self.response({"errors": [{"type": "UNAVAILABLE_OBJECT"}]})
                 # Actual Git compares the old SHA atomically, not a Python check.
                 try:
                     gv(self.root, "update-ref", update["name"], update["afterOid"], update["beforeOid"])
@@ -109,6 +123,12 @@ class ObjectServer:
             except subprocess.CalledProcessError:
                 return self.response({"message": "not available"}, 404)
             return self.response({"sha": sha})
+        if self.before_object:
+            callback, self.before_object = self.before_object, None
+            callback()
+        if self.route_database_id not in self.scope_ids:
+            return self.response({"message": "Selected installation token cannot write replacement repository"}, 403)
+        require(self.route_root == self.root, "Fixture route identity changed without an authorized store binding")
         if kind == "blobs":
             assert body["encoding"] == "base64"
             sha = git_bytes(self.root, "hash-object", "-w", "--stdin", raw=base64.b64decode(body["content"], validate=True)).decode().strip()

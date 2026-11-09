@@ -98,6 +98,8 @@ class GitHubCAS:
     """Authenticated observations and immutable upload; rights remain external."""
     def __init__(self, target: GitHubTarget, transport: HTTPTransport):
         require(type(target) is GitHubTarget, "Select a typed pinned GitHub target")
+        require(callable(getattr(transport, "bind_repository", None)), "A repository-ID-confined authenticated transport is required")
+        transport.bind_repository(target.node_id, target.database_id)
         self.target, self.transport = target, transport
         self._budget = contextvars.ContextVar("adp-network-budget", default=None)
         self.control = None

@@ -114,14 +114,16 @@ class ObjectQualification(unittest.TestCase):
         self.server.wrong_identity = True
         with self.assertRaises(ADPError): self.client.refs()
         self.server.wrong_identity = False
-        original = self.server.request
+        alias_target = replace(self.target, database_id=1)
+        alias_server = ObjectServer(self.remote, alias_target)
+        original = alias_server.request
         def boolean_database(*args, **kwargs):
             reply = original(*args, **kwargs)
             value = json.loads(reply.body)
             value["data"]["node"]["databaseId"] = True
-            return self.server.response(value)
-        aliased = GitHubCAS(replace(self.target, database_id=1), self.server)
-        with patch.object(self.server, "request", side_effect=boolean_database), self.assertRaises(ADPError):
+            return alias_server.response(value)
+        aliased = GitHubCAS(alias_target, alias_server)
+        with patch.object(alias_server, "request", side_effect=boolean_database), self.assertRaises(ADPError):
             aliased.refs()
 
     def test_interrupted_transport_is_write_ahead_fenced_across_restart(self):

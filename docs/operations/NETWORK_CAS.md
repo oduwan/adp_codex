@@ -75,9 +75,22 @@ The following required scenario inventory is fixed before execution:
 `adp.network_git.GitHubTarget`, `GitHubCAS`, `GitHubPolicyAdapter` and
 `GitHubGitExecutionPort` are explicit operator selections; no controller or
 environment variable enables them automatically. Construct the service with the
-trusted `GitHubHTTPTransport(token_provider)`, bind a real M5 `ExecutionJournal`
-to the port, and select that same service for the policy adapter. The token
-provider is trusted, nonblocking operator code outside product/worker roots.
+trusted `GitHubHTTPTransport(scoped_token, authority=issuer_verifier)`, bind a
+real M5 `ExecutionJournal` to the port, and select that same service for the
+policy adapter. `ScopedInstallationToken` requires an independently authenticated
+GitHub App installation issuance request **and** response, explicitly restricted
+to exactly the selected immutable database ID, pinned node ID, contents-write and
+metadata-read permissions, and a lifetime of at most one hour. The external
+`TokenScopeAuthority` must verify the actual issuance records against the private
+scope subject; there is no permissive default, PAT fallback, membership-only
+proof, broad installation credential, token rotation or automatic refresh.
+The authority and private issuance records belong outside product/worker roots.
+A caller-supplied verifier that blindly approves claims is outside this trusted
+boundary, just as an untrusted M3 authority cannot establish operator permission.
+Actual App provisioning/token issuance is not implemented or authorized here.
+The official [installation-token contract](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+defines explicit repository-ID selection; current installation membership alone
+cannot prove that the token was issued with that immutable restriction.
 The exact canonical GitHub node/database IDs, full repository name, memory ID,
 remote endpoint fingerprint and branch are pinned independently of credentials.
 
@@ -111,8 +124,11 @@ preflight precedes uploads. Bounds: SHA1, at most16 missing commits/two parents,
 512 objects, 32 levels, 1MiB per object and 8MiB total. Submodules, extra headers,
 noncanonical dates/messages/order and unrepresentable path bytes are unsupported.
 
-An operation has a fixed45s/128-call ceiling; each request has at most5s plus
-bounded stop cleanup and a1MiB response cap. The trusted HTTP child uses TLS
+An operation has a fixed45s dispatch budget and128-call maximum; no further
+request launches after the dispatch budget expires. Each request has at most5s
+plus bounded stop cleanup and a1MiB response cap. Supervisor probing, bounded
+stop/reaping and local journal bookkeeping can extend total wall time beyond45s;
+45s is not an unconditional end-to-end wall-clock guarantee. The trusted HTTP child uses TLS
 verification, private stdin credentials and a minimal environment. The accepted
 Linux subreaper bounds blocking DNS, TLS and partial responses, then proves stop.
 No token is in command arguments, worker environment/prompts, stop receipts,
@@ -128,29 +144,104 @@ refuse. GitHub Enterprise/SSH, SHA256 and other provider protocols are unsupport
 
 ## Qualification status and retained corrections
 
-The frozen new-method inventory is [NETWORK_CAS_TEST_INVENTORY.json](NETWORK_CAS_TEST_INVENTORY.json):
-33 methods, in addition to all210 accepted M1–M6 methods. Existing tests/fixtures,
+The original frozen new-method inventory is
+[NETWORK_CAS_TEST_INVENTORY.json](NETWORK_CAS_TEST_INVENTORY.json):33 methods.
+Independent review adds11 security methods in the separate
+[NETWORK_CAS_SECURITY_TEST_INVENTORY.json](NETWORK_CAS_SECURITY_TEST_INVENTORY.json).
+The original33 and accepted210 denominators remain unchanged. Existing tests/fixtures,
 frozen M6 scenario maps, state schemas and guard thresholds remain unchanged.
 CI runs the accepted suite and separate honest M7 runner on Python3.11/3.12.
 
-Initial offline transport8/8 and object10/10 focused methods PASS. These use real
-disposable Git objects and actual Linux process stop supervision, but synthetic
-authenticated provider responses. No actual target GitHub write occurred.
-Full33-method integration campaign and both-Python regressions are **NOTRUN at
-this implementation checkpoint**, pending the clean committed CI candidate.
-Independent final exact-HEAD review is also pending; Draft PR metadata will carry
-the final source/CI/verdict attestations without embedding future approvals here.
+Initial focused object10/10 and HTTP8/8 methods PASS. These use real disposable
+Git objects and actual Linux process stop supervision with synthetic provider
+responses. Initial committed campaigns on both Python versions passed all210
+accepted methods and installation6/6, but the new33 campaign observed32PASS/1FAIL.
+CI run42664168585 (candidate a794d53904d985fa8e4ceca1b22e36c1fadd39d4), job logs:
+3.11 SHA256 `8ea13297f48d248df381ad59b779552c9e675ae293103cddd48fe6ad8b166a74`;
+3.12 `cfb792cf1306163d105362fad9dfe087a2d3db28fa5d3e52bf66e816bde11c56`.
+Run42664704267 retained the same failure after selecting the supported UTC fixture.
+Independent isolation found that accepted M5 `commit-tree` supplies a legitimate
+message without a final LF. The object encoder now preserves those exact bytes;
+it does not rewrite the reviewed commit. Unsupported headers/dates and NULs still
+refuse. Independent one-case FAIL log SHA256
+`e8a4ea527935df4aadb64eabf8861d666a69550172466c342987deb5130689e4`.
+Run42666556368 at8f5ab1e2a4e7777d5d58a004d3d180c65804ec16 passed both
+Python jobs, including accepted210 and then-new33. This historical green run is
+**not final qualification**: subsequent independent security review found the
+repository-path race below. Final clean committed CI and exact-HEAD review are
+recorded in Draft PR metadata; this report does not pre-approve future commits.
 
-Independent early review found unsafe recovered dispatch, Git helper scope and
+Earlier development integration observations were4PASS/7FAIL of11, then
+10PASS/1FAIL of11. The former included concurrent development edits and cannot
+serve as exact-revision evidence (log SHA256
+`3dfd83d932eca3c5f5e93dca19080aef713a55bb9fb526fb68d9060e32259746`).
+Six failures exposed fixture product refs accidentally sharing coordination
+memory; separate disposable stores correct the fixture without excluding refs
+from assertions. The remaining failures exposed the UTC/message compatibility
+cases above. These observations remain failures, not retrospectively relabeled.
+
+Independent early review found unsafe recovered dispatch, Git-helper scope and
 post-error-only transport stop persistence. Fresh dispatch capabilities, local
 coordination restriction and write-ahead transport fencing correct these paths.
 Original stop-durability repro observed2/2 FAIL (private SHA256
 `b0caba7db4fa9bad1f833427ecc034b3dfa19c7bff3df0bf2516c062a569e1cf`).
 Independent corrected proof: original2/2 plus added prelaunch-persistence case1/1
 PASS, SHA256 `43912e4ff565d7b58b9d589ec045283ecd5d5d6bed55c5bff182893bf2fdb625`.
-First integration observations include ordinary FAIL and remain retained, not
-counted as PASS. Fixture isolation and fresh-capability assertions are being
-qualified; no timeout/threshold/assertion is weakened to hide them.
+
+Independent review at8f5ab1e reproduced a repository rename/old-path reuse race:
+seven immutable objects reached a different repository ID before later CAS
+identity checks refused. No ref moved, but object disclosure was a blocking
+failure. Private distinct-ID repro SHA256
+`cf1886e281b04b2da95cd92de65059156573c3be0b25dc1cde359ff852cfc33e`;
+CHANGES_REQUIRED review SHA256
+`b3d7f6d16ca1f21afd89bacf68a19b175033c634343c1fe0e8c4f93834ec52db`.
+The correction requires a verified single-ID installation issuance, so the
+provider denies an old path routed to another repository before object creation.
+The fake authenticated server now enforces that restriction and actual Git
+fast-forward ancestry. Focused scope-race/broad-scope cases2/2 PASS, object10/10
+PASS and expanded HTTP11/11 PASS; the latter log SHA256 is
+`526773cbae3cdd1179e10f8863a6fd5644e0bed9855990f6c42827368bfa383c`.
+All new security cases and fresh independent assessment remain required at the
+final committed revision. No timeout, guard threshold or assertion was relaxed.
+
+## Scenario-to-evidence map
+
+Method names below identify exact methods in the frozen inventories. Prefixes
+`G`, `H`, `O`, `S` mean `test_network_git.NetworkExecutionQualification`,
+`test_network_http.NetworkHTTPTests`, `test_network_objects.ObjectQualification`,
+and `test_network_security.NetworkSecurityQualification`; prepend `test_` to each
+method suffix. Each method is independently accounted; subcases are not extra
+PASS results. A mapped test is a procedure, not a claim that a pending run passed.
+
+| Scenario | Concrete procedure / test method suffix | Required observation |
+| --- | --- | --- |
+|1|O.actual_objects_preserve_oids_without_any_refs|Real empty Git store, binary/executable/nested closure, messages with/without LF, exact OIDs and unchanged refs|
+|2|O.unrepresentable_commit_headers_dates_and_encoding_refuse; O.unsafe_tree_forms_refuse|Unsupported raw forms refused before publication|
+|3|O.closure_preflight_bounds_before_any_mutation; O.entire_closure_is_checked_before_upload; H.redirect_and_oversize_response_do_not_retry_or_return_data|Closure/response bounds; no partial preflight upload|
+|4|G.existing_and_verified_absent_refs_preserve_exact_oid; G.verified_absence_creation_has_zero_old_comparison|Actual exact Git ref update; all unrelated refs preserved|
+|5|G.atomic_race_rejects_even_when_fast_forward_would_succeed|Concurrent ancestor insertion at CAS; exact-old refusal|
+|6|S.diverged_target_refuses_fresh_policy_and_server_force_false|Actual sibling divergence; M3 and fake provider refuse|
+|7|G.binding_and_authorization_negatives_cannot_mutate; G.mutated_revision_has_a_fresh_dispatch_and_cannot_mutate; G.mutated_source_has_a_fresh_dispatch_and_cannot_mutate; G.mutated_expected_old_has_a_fresh_dispatch_and_cannot_mutate; S.changed_remote_endpoint_or_memory_identity_refuses_before_http; O.ref_inventory_requires_complete_identity_and_pagination|Fresh capabilities per mutation; wrong identity, endpoint and source refused|
+|8|G.absent_ref_legacy_protection_is_not_inferred_from_404; G.rules_permissions_upload_failures_and_uncertainty_refuse; H.broad_pat_unverified_and_incomplete_issuance_scopes_are_refused|Known permissions/protection and narrow authenticated issuance required|
+|9|O.http_error_and_malformed_replies_remain_unknown; G.rules_permissions_upload_failures_and_uncertainty_refuse|401/403/409/422/429, incomplete/malformed reply never success|
+|10|O.upload_mismatches_and_failures_preserve_all_refs; G.rules_permissions_upload_failures_and_uncertainty_refuse|Object failure or changed OID cannot publish|
+|11|G.lost_acknowledgement_reobserves_once_and_restart_never_resubmits|One actual ref mutation, exact authenticated reobservation|
+|12|G.submitted_old_absent_changed_or_missing_claim_never_retries|Restarted SUBMITTED remains uncertain; no fresh capability|
+|13|G.mutated_generation_has_a_fresh_dispatch_and_cannot_mutate; S.actual_owner_credential_loss_during_upload_prevents_cas; accepted tests listed below|Actual owner loss and stale generation stop publication; mandatory guard preserved|
+|14|G.source_drift_during_upload_prevents_cas; S.verified_policy_revocation_during_upload_prevents_cas; S.actual_owner_credential_loss_during_upload_prevents_cas|Post-upload reauthorization refuses drift before CAS|
+|15|S.private_claim_corruption_refuses_before_any_object_upload; S.symlinked_private_claim_never_follows_an_outside_file; G.submitted_old_absent_changed_or_missing_claim_never_retries|Corrupt/symlink/missing claim grants no replay|
+|16|S.reused_repository_path_is_denied_by_selected_id_before_object_write; H.repository_binding_and_mutation_node_cannot_escape_credential_scope; H.real_supervisor_response_and_secrets_never_enter_argv_environment_or_receipt|Zero wrong-repository objects, no staging refs/force/deletion/helper or token disclosure|
+|17|H.routes_force_delete_and_credential_urls_refuse_before_token_access; H.child_uses_only_verified_fixed_https_origin_and_private_authorization; H.exact_cas_and_canonical_encoded_branch_routes_are_accepted|Fixed verified origin and constrained request grammar|
+|18|H.real_whole_request_deadline_reaps_detached_child; H.unsupported_capability_and_unconfirmed_receipt_never_create_success; O.interrupted_transport_is_write_ahead_fenced_across_restart; O.failed_stop_boundary_persistence_never_launches_transport|Actual descendant stop or durable UNKNOWN, no retry/handoff|
+|19|G.conductor_runs_and_reobserves_real_journal_without_helpers|Actual accepted M1–M5 Conductor, journal, policy and guard; controlled HTTP/local forge|
+|20|Unchanged accepted210 inventory plus both M7 inventories, CI Python3.11/3.12|Every original method accounted; non-PASS never promoted|
+
+Scenario13 also retains accepted `test_guard` coverage in the frozen inventory,
+specifically method suffixes
+`test_reservation_prevents_alternate_worker_or_duplicate_terminal_result`,
+`test_generation_drift_requires_explicit_unknown_abandonment`, and
+`test_two_bounded_proofs_then_terminal_operator_boundary`, plus all accepted
+execution admission/guard regressions. These are not claimed as extra new tests.
 
 Real GitHub write qualification: **NOTRUN**, reserved for separately authorized
 M8. Offline provider-contract qualification cannot establish live GitHub behavior,
