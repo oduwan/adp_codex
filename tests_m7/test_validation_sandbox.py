@@ -127,6 +127,17 @@ class ValidationSandboxTests(unittest.TestCase):
                 self.run_port(port)
             self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
 
+    def test_modern_mutators_and_read_descriptor_writes_are_terminal(self):
+        self.supported()
+        attacks = ['import ctypes;ctypes.CDLL(None).syscall(' + str(number) + ",-100,b'/work/tracked',0,0,0,0)" for number in (452, 463, 466, 469, 9999)]
+        attacks += ["import os;fd=os.open('/work/tracked',os.O_RDONLY)\ntry:os.write(fd,b'unsafe')\nexcept OSError:pass"]
+        for index, source in enumerate(attacks):
+            source += '\nprint(' + repr(receipt()) + ')'
+            port = self.make_port((command('modern', source), self.commands[0]), name='modern-' + str(index))
+            with self.subTest(index=index), self.assertRaises(UnsafeValidation) as caught:
+                self.run_port(port)
+            self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
+
     def test_symlinks_hardlinks_traversal_and_git_filters_refuse(self):
         (self.root / 'escape').symlink_to(self.private / 'synthetic-credential')
         with self.assertRaisesRegex(ADPError, 'Outside source symlink'):

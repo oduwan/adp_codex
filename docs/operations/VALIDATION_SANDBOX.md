@@ -146,8 +146,16 @@ Its failing regression is preserved before the correction; this candidate must
 not be accepted until every probe has durable launch fencing and lost-stop
 propagation is corrected and independently re-reviewed.
 
-The focused inventory is `tests_m7/test_validation_sandbox.py` (15 methods: the
-original14 plus the independently reproduced lost-probe-stop regression),
+Independent review also demonstrated a modern fchmodat2 attempt returning an OS
+read-only error, caught by a command that then emitted a false PASS under the
+first denylist. Source bytes remained unchanged, but terminal-attempt accounting
+was defective. Private reproduction SHA256
+`cd0168b60766fc64c97cb16a8685ceef31b76874556c797637b8e7225f8dacdd`.
+The preserved modern-mutator regression requires a default-deny syscall domain;
+no unsupported or future mutation syscall may evade the terminal boundary.
+
+The focused inventory is `tests_m7/test_validation_sandbox.py` (16 methods: the
+original14 plus independently reproduced lost-stop and modern-mutator regressions),
 separate from all210 byte-preserved accepted M1–M6 tests. Required observations:
 
 | Boundary | Actual procedure | Required result |
