@@ -306,3 +306,85 @@ The prior aa22744 CI3.12 run passed210/210 and installation6/6; M7 recorded
 That run exposed only one3.12 job despite the two-version matrix;3.11 inventory
 is UNKNOWN, not inferred from earlier CI. Subsequent complete qualification and
 review attestations belong to the exact final Draft PR revision.
+
+## Final finite reassessment and retained campaign evidence
+
+The clean `8aa900c1384b763104afd5c0d6c6b0363bd21787` native campaigns are
+preserved in full, not replaced by later targeted proofs:
+
+| Runtime | Original denominator | Observed outcomes | Aggregate | Suite SHA256 |
+| --- | --- | --- | --- | --- |
+| Python3.11.10 | 23 =17 sandbox+3 accounting+3 security | 22PASS/1SKIP | FAIL | `87b506cf011660b59420c3eba45ba85ebdc078b765cffa65d8c5669931ec06b9` |
+| Python3.12.16 | Same23 | 21PASS/1FAIL/1ERROR | FAIL | `b9c20603c0576090e3c8663c09aca2c11ffcba965de72feb3ce528594532040d` |
+
+The3.11 accounting admission timed out at probe-fork; retained receipts show
+EXITED159, so no fork-denial failure is inferred. Exact timing cause remains
+unclassified. The3.12 benign two-project check timed out under its original2s
+budget. Neither observation authorizes increasing a limit or rerunning a full
+campaign to erase the failure.
+
+Independent review bound all three new mapping payloads to stopped=true,
+EXITED159, zero stdout and unchanged tracked bytes at that revision (review
+SHA256 `bebc32a01f4eb990e640ac86e7537ef2e5fe92a3410e66b1b92c10f94a42ee3e`).
+Actual native images, standalone source fixtures and all89/97 per-launch stop
+records remain private. Their integrity index SHA256 is
+`2e42fa689098383b6d1a0dbe4cc50335bfe7cc033fc1f925914a58e999ede332`.
+Representative observed digests, not portable authorization tokens:
+
+| Runtime | Image digest | Policy digest |
+| --- | --- | --- |
+| 3.11 | `74c5c17357e61990acc13b9ed0265b501e7a1b7f27f5bcced52b5802d3ffe431` | `b5788bba3267f9ea749439cc41185e4a10c67b560bf88c4b8e62f262a654b162` |
+| 3.12 | `e367ea5eaffe8fce3879f9a9078a3362053f4a3665465f8a740485098c644d59` | `05ab90812880a2dc16fb3c7194ec760576c70eedadf2df6836653b8bce1d42e9` |
+
+The3.12 setsid case exposed a fourth candidate source defect: a confirmed SIGSYS
+receipt was followed by another check because a parent read-deadline exception
+took ordinary TIMEOUT precedence. Independent retained-receipt proof SHA256
+`5e8b09489eb41e0218b6de32a201914843858fe0d684a04343cd9702294f0032`.
+This is a source safety defect, not merely an unavailable host. The correction
+prioritizes confirmed SIGSYS/unexpected/cancelled stops over observation deadlines;
+remaining checks become NOTRUN. Genuine confirmed timeouts remain TIMEOUT and
+missing stops remain UnconfirmedValidation with durable fencing. Original time
+limits and assertions are unchanged. Nested subtest structure now prevents a
+failed assertRaises from producing a collateral missing-exception AttributeError.
+The failing deterministic stop regression is retained (log SHA256
+`44e48ddccb2cdaa9f8358b727ce6c5e64c293f95c202d9ac366c46f4484d0856`).
+
+One bounded owned ELF discriminator proved a fixture loader-closure defect:
+the original executable with literal `$ORIGIN/../lib` RUNPATH exited0, but the
+relocated image executable exited127 because its unique libpython SONAME was
+copied only at the original absolute prefix. Before proof SHA256
+`c7152508c6118c874a8d17933ce31b2c4244cb187d0d0200df100eb18f16077a`.
+Copying that trusted library into the dedicated `/runtime/lib` closure made the
+same retained executable exit0 with a minimal environment; after proof SHA256
+`aaccb0d3b5e86d54ed6b87deed6570509e67d560027ba08b279b2b34991bfeaf`.
+No namespace, product, network or model was involved in that loader proof.
+
+One owned false-backend alias discriminator showed constructor refusal for a
+symlink and success for an identical regular copy, before any probe/product
+execution (proof SHA256
+`9258a2b14be1cb905c560c9165416ec800ea846ff6e6a7f98f5df6e3aff2514c`).
+The negative fixture now uses an owned regular copy, and only the trusted test
+policy helper normalizes its explicit binary path. Production symlink refusal
+is preserved. These proved fixture defects do not establish the exact cause of
+the previous CI errors; their historical cause remains UNKNOWN.
+
+[CI42673351397](https://github.com/oduwan/adp_codex/actions/runs/42673351397)
+tested merge revision `17a943a09fb0016659aa863dd7098a37bc82e49b` for8aa900c.
+Both Python3.11.18/3.12.16 passed all210 accepted methods and installation6/6;
+both M7 inventories observed10PASS/12SKIP/1ERROR of23, aggregateFAIL. The negative
+false-backend case errored;12 actual-OS methods skipped. The raw private CI test
+tracebacks were ephemeral, so no kernel/loader-specific cause is invented.
+CI suite evidence hashes are respectively
+`1b1f2a7b618894ccc1dba06ad3c2596145d87df83c2ecd7fdc674392da45ea49`
+and `aebfd0fa0a285ef20a8069c1493b6966de872bb522f44b0101f100bf969ce7db`.
+
+Four separately frozen recovery/fixture methods bring the additive inventory to
+27, preserving all original23 IDs and accepted210 bytes. Final verification is
+bounded to corrected deterministic lifecycle/fixture checks on each native
+Python version, one normal-push both-version full CI campaign and independent
+exact-final-HEAD review. No additional full native WSL campaign is scheduled to
+erase the known failures. Qualification cannot PASS while required actual OS
+coverage is unavailable/incomplete; persistent non-PASS stops at
+BLOCKED_RUNTIME_QUALIFICATION pending a stable qualified Linux host and pinned
+runtime closure. Safe CI admission metadata exposes only stage/type/version,
+policy digest and observed stop status/exit, never raw transcripts or credentials.

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import tempfile
 import unittest
 from subprocess import SubprocessError
@@ -78,6 +79,16 @@ class ValidationSandboxTests(unittest.TestCase):
     def supported(self, *, fresh=False):
         capability = self.port.capabilities(fresh=fresh)
         if not capability.supported:
+            import re
+            parts = capability.reason.split(': ', 3)
+            stage = parts[1] if len(parts) > 1 and parts[1] in ('policy', 'runtime-version', 'probe-benign', 'probe-write', 'probe-network', 'probe-fork') else 'UNKNOWN'
+            kind = parts[2] if len(parts) > 2 and re.fullmatch('[A-Za-z]+', parts[2]) else 'UNKNOWN'
+            stop = re.search(r'status=(EXITED|TIMEOUT|CANCELLED|UNKNOWN); exit=(-?[0-9]+)', capability.reason)
+            print(json.dumps({'sandbox_capability': 'UNSUPPORTED_VALIDATION_RUNTIME', 'stage': stage,
+                              'error_type': kind, 'backend_version': capability.version,
+                              'kernel': capability.kernel, 'policy_digest': capability.policy_digest,
+                              'stop_status': stop[1] if stop else 'UNKNOWN',
+                              'stop_exit': int(stop[2]) if stop else None}, sort_keys=True))
             self.skipTest(capability.reason)
         self.assertTrue(capability.evidence.startswith('sandbox:'))
 
@@ -105,7 +116,11 @@ class ValidationSandboxTests(unittest.TestCase):
             alias.unlink()
 
     def test_unsupported_runtime_never_runs_the_product_command(self):
-        bad = policy(self.image, binary=Path('/usr/bin/false'))
+        source = Path('/usr/bin/false')
+        print(json.dumps({'negative_backend_source_symlink': source.is_symlink(), 'owned_regular_copy': True}))
+        binary = self.base / 'false'
+        shutil.copy2(source.resolve(strict=True), binary)
+        bad = policy(self.image, binary=binary)
         port = self.make_port(self.commands, policy=bad)
         with self.assertRaises(UnsupportedValidation):
             self.run_port(port)
@@ -145,9 +160,10 @@ class ValidationSandboxTests(unittest.TestCase):
         for index, path in enumerate(('/work/tracked', '/work/untracked', '/work/.git/config', '/runtime/bin/python', str(self.private / 'synthetic-credential'))):
             source = "from pathlib import Path\ntry:Path(" + repr(path) + ").write_text('unsafe')\nexcept OSError:pass\nprint(" + repr(receipt()) + ')'
             port = self.make_port((command('attack', source), self.commands[0]), name='write-' + str(index))
-            with self.subTest(path=path), self.assertRaises(UnsafeValidation) as caught:
-                self.run_port(port)
-            self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
+            with self.subTest(path=path):
+                with self.assertRaises(UnsafeValidation) as caught:
+                    self.run_port(port)
+                self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
         self.assertEqual(git(self.root, 'show-ref'), before)
         self.assertEqual((self.root / 'tracked').read_text(), 'original')
         self.assertFalse((self.root / 'untracked').exists())
@@ -172,9 +188,10 @@ class ValidationSandboxTests(unittest.TestCase):
                    'import os;os.fork()', 'import os;os.fork();os.fork()', 'import os;os.setsid()')
         for index, source in enumerate(attacks):
             port = self.make_port((command('attack', source), self.commands[0]), name='process-' + str(index))
-            with self.subTest(source=source), self.assertRaises(UnsafeValidation) as caught:
-                self.run_port(port)
-            self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
+            with self.subTest(source=source):
+                with self.assertRaises(UnsafeValidation) as caught:
+                    self.run_port(port)
+                self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
 
     def test_modern_mutators_and_read_descriptor_writes_are_terminal(self):
         self.supported()
@@ -183,9 +200,10 @@ class ValidationSandboxTests(unittest.TestCase):
         for index, source in enumerate(attacks):
             source += '\nprint(' + repr(receipt()) + ')'
             port = self.make_port((command('modern', source), self.commands[0]), name='modern-' + str(index))
-            with self.subTest(index=index), self.assertRaises(UnsafeValidation) as caught:
-                self.run_port(port)
-            self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
+            with self.subTest(index=index):
+                with self.assertRaises(UnsafeValidation) as caught:
+                    self.run_port(port)
+                self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
 
     def test_shared_file_mappings_and_removal_cannot_emit_pass(self):
         self.supported()
@@ -198,9 +216,10 @@ class ValidationSandboxTests(unittest.TestCase):
         for index, payload in enumerate(payloads):
             source = 'try:\n ' + payload + '\nexcept BaseException:pass\nprint(' + repr(receipt()) + ')'
             port = self.make_port((command('mapping', source), self.commands[0]), name='mapping-' + str(index))
-            with self.subTest(index=index), self.assertRaises(UnsafeValidation) as caught:
-                self.run_port(port)
-            self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
+            with self.subTest(index=index):
+                with self.assertRaises(UnsafeValidation) as caught:
+                    self.run_port(port)
+                self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
         self.assertEqual((self.root / 'tracked').read_bytes(), before)
 
     def test_symlinks_hardlinks_traversal_and_git_filters_refuse(self):

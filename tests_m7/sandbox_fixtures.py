@@ -38,12 +38,19 @@ def runtime_image(root: Path) -> Path:
         target = root / str(path).lstrip('/')
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
+        # Relocated CPython builds may use $ORIGIN/../lib. Preserve that
+        # dedicated-runtime closure without inheriting host LD_LIBRARY_PATH.
+        if path.name.startswith('libpython') and '.so' in path.name:
+            runtime_library = root / 'runtime/lib' / path.name
+            runtime_library.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, runtime_library)
     return root
 
 
 def policy(image: Path, *, binary: Path | None = None) -> SandboxPolicy:
     # Test selection only. Production never reads this environment variable.
     binary = binary or Path(os.environ.get('ADP_TEST_BWRAP_PATH', '/usr/bin/bwrap'))
+    binary = binary.resolve(strict=True)  # Trusted fixture input, not production policy normalization.
     return SandboxPolicy(image, image_digest(image), binary, file_digest(binary), '/runtime/bin/python')
 
 

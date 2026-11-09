@@ -61,6 +61,14 @@ class UnsafeValidation(ADPError):
         self.results, self.reference = tuple(results), reference
 
 
+def _reject_terminal_stop(stop, reference):
+    # A parent observation deadline cannot erase a confirmed containment stop.
+    if stop.get('cli_exit') in (-signal.SIGSYS, 128 + signal.SIGSYS) or stop.get('status') not in ('EXITED', 'TIMEOUT'):
+        exception = UnsafeValidation((), 'sandbox:terminal-supervisor-stop')
+        exception.validation_evidence = reference
+        raise exception
+
+
 @dataclass(frozen=True)
 class SandboxPolicy:
     image: Path
@@ -285,13 +293,14 @@ class BubblewrapValidation:
                             raise UnconfirmedValidation('sandbox:supervisor-stop-unknown', str(stop_path.parent))
                     stop = validation_stopped(stop_path, subject, process.pid)
                     exc.validation_evidence = self._record(active, argv, raw, errors, stop)
+                    _reject_terminal_stop(stop, exc.validation_evidence)
                     raise
                 stop = validation_stopped(stop_path, subject, process.pid)
                 reference = self._record(active, argv, raw, errors, stop)
+                # Trusted negative probes expect a normal SIGSYS receipt;
+                # product run below always treats that receipt as terminal.
                 if stop.get('status') not in ('EXITED', 'TIMEOUT'):
-                    exception = UnsafeValidation((), 'sandbox:unexpected-supervisor-stop')
-                    exception.validation_evidence = reference
-                    raise exception
+                    _reject_terminal_stop(stop, reference)
                 return bytes(raw), stop, reference
             finally:
                 process.stdout.close()
@@ -413,13 +422,10 @@ class BubblewrapValidation:
                     reference = None
                     try:
                         raw, stop, reference = self._execute(root, command.argv, min(left, command.seconds))
+                        _reject_terminal_stop(stop, reference)
                         if stop['status'] == 'TIMEOUT':
                             results.append(self._result(command, revision, Outcome.TIMEOUT, receipt=reference))
                             continue
-                        if stop['cli_exit'] in (-signal.SIGSYS, 128 + signal.SIGSYS):
-                            exception = UnsafeValidation((), 'sandbox:OS-policy-refusal')
-                            exception.validation_evidence = reference
-                            raise exception
                         payload = decode(raw)
                         fields(payload, 'denominator counts quarantined')
                         require(type(payload['denominator']) is int and payload['denominator'] == command.denominator,
