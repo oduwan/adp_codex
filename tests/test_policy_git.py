@@ -103,6 +103,15 @@ class SyntheticRepositories(unittest.TestCase):
 
 
 class GitPolicyTests(SyntheticRepositories):
+    def test_explicit_missing_profile_or_contract_is_not_silently_ignored(self):
+        for profiles, contracts in ((("project-policy.json", "missing-profile.json"), ("accepted-contract.md",)),
+                                    (("project-policy.json",), ("accepted-contract.md", "missing-contract.md"))):
+            adapter = GitPolicyAdapter(self.configs["A"], profiles=profiles, contracts=contracts)
+            before = snapshot(self.base)
+            with self.subTest(profiles=profiles, contracts=contracts), self.assertRaisesRegex(ADPError, "Missing explicitly selected"):
+                adapter.inspect()
+            self.assertEqual(before, snapshot(self.base))
+
     def test_distinct_branch_commit_pr_and_merge_policies(self):
         for variant in ("A", "B"):
             provider, task = self.build(variant)

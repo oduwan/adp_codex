@@ -10,11 +10,38 @@ from adp.schema import key
 from adp.policy_adapters import MockRepositoryAdapter
 from adp.policy_schema import parse_profile
 from adp.policy_types import (Authorization, Check, Document, Effect, Operation, OutcomeCount,
-    Permission, Qualifications, Request, Review, Rules, SourceClaim, SourceKind)
+    Permission, Qualifications, Ref, Request, Review, Rules, SourceClaim, SourceKind)
 from test_policy import PolicyFixture
 
 
 class AdversarialPolicyTests(PolicyFixture):
+    def test_pr_and_merge_require_published_exact_head_and_existing_base(self):
+        for operation in (Operation.PR, Operation.MERGE):
+            for missing in ("stale-head", "missing-head", "missing-base"):
+                refs = tuple(Ref(item.name, "7" * 40) if item.name == self.task.source_ref
+                             and missing == "stale-head" else item for item in self.snapshot.remote_refs
+                             if not (missing == "missing-head" and item.name == self.task.source_ref)
+                             and not (missing == "missing-base" and item.name == "refs/heads/trunk"))
+                self.adapter.snapshot = replace(self.snapshot, remote_refs=refs)
+                provider = self.make_provider()
+                plan = provider.plan(self.task, Request(operation, summary="Fix cache"))
+                with self.subTest(operation=operation, metadata=missing):
+                    self.assertEqual(self.authorize(plan, self.qualified(plan), provider).effect, Effect.UNKNOWN)
+
+    def test_release_respects_authenticated_tag_push_prohibition(self):
+        task = replace(self.task, source_ref="refs/heads/trunk")
+        def on_base(refs):
+            return tuple(Ref(item.name, task.revision) if item.name == task.source_ref else item for item in refs)
+        self.adapter.snapshot = replace(self.snapshot, source_ref=task.source_ref,
+            local_refs=on_base(self.snapshot.local_refs), remote_refs=on_base(self.snapshot.remote_refs))
+        provider = self.make_provider()
+        tag = next(p for p in provider.protections if p.ref == "refs/tags/release-1.2")
+        denied = replace(tag, push_allowed=False, evidence=None)
+        denied = replace(denied, evidence=self.authority.sign(provider.protection_subject(denied), "protection"))
+        provider.protections = tuple(denied if p.ref == tag.ref else p for p in provider.protections)
+        plan = provider.plan(task, Request(Operation.RELEASE, version="1.2"))
+        self.assertEqual(self.authorize(plan, self.qualified(plan), provider).effect, Effect.DENY)
+
     def test_issue_and_comment_text_remain_untrusted_even_with_a_claimed_role(self):
         issue = Document("issue:opaque", SourceKind.UNTRUSTED, "6" * 64)
         self.adapter.snapshot = replace(self.snapshot, documents=self.snapshot.documents + (issue,))

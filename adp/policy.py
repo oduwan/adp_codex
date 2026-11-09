@@ -277,6 +277,10 @@ class PolicyProvider:
             target = base_ref
             if snapshot.source_ref != task_ref or task_ref == base_ref:
                 denied.append("PR/merge source is not the destination's admitted task branch")
+            if remote.get(task_ref) != task.revision:
+                reasons.append("Published PR/merge head is absent or differs from the exact admitted SHA")
+            if base_ref not in remote:
+                reasons.append("PR/merge base remote revision is unknown or absent")
             if op == Operation.PR:
                 title_rule = self._value(inspection, "pr_title_template", reasons)
                 draft = self._value(inspection, "pr_draft", reasons)
@@ -286,9 +290,7 @@ class PolicyProvider:
                     gated = gated or not draft
             else:
                 method = self._value(inspection, "merge_method", reasons)
-                if base_ref not in remote:
-                    reasons.append("Merge base remote revision is unknown or absent")
-                elif method:
+                if base_ref in remote and method:
                     payload = MergePlan(task_ref, base_ref, task.revision, remote[base_ref], method)
         elif op == Operation.PUSH and task_ref:
             target = task_ref
@@ -348,8 +350,8 @@ class PolicyProvider:
                         "Verified target constraints and method-specific mergeability"))
                     required_checks = tuple(sorted(set(required_checks) | set(protection.checks)))
                     reviews = max(reviews, protection.reviews)
-                    if op == Operation.PUSH and not protection.push_allowed:
-                        denied.append("Protection prohibits direct push")
+                    if op in (Operation.PUSH, Operation.RELEASE) and not protection.push_allowed:
+                        denied.append("Protection prohibits direct branch/tag push")
                     if op == Operation.MERGE and (not protection.merge_allowed or isinstance(payload, MergePlan)
                             and payload.method not in protection.merge_methods):
                         denied.append("Protection prohibits this merge operation/method")

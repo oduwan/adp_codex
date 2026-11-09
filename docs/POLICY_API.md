@@ -56,7 +56,9 @@ Two calls against unchanged inputs produce equal plans.
   to `AGENTS.md` and `CONTRIBUTING.md`; profiles/contracts require explicit paths.
   `injected` documents support pre-fetched, provenance-labeled observations.
   Committed symlinks, executable policy files, unsafe paths and duplicate sources
-  are refused. Unstaged or untracked product files prevent qualified plans.
+  are refused. Explicitly selected profiles/contracts must exist in HEAD;
+  missing files raise `ADPError`. Optional governance paths are observed when
+  present. Unstaged or untracked product files prevent qualified plans.
   Staged changes are allowed and hashed for a commit plan.
 - `SafetyAdapter.observe(task) -> Safety`: trusted current ownership/guard port.
   `M2SafetyAdapter(guard)` reads synchronized M1 ownership and actual typed M2
@@ -177,10 +179,10 @@ than dropped. Unsupported protection metadata produces `UNKNOWN`.
 | `BRANCH` | External template, explicit slug, exact start SHA; no overwrite of a differing branch |
 | `COMMIT` | External subject/body/limit, admitted task branch, exact staged-index hash |
 | `VALIDATE` | Required check identifiers; no command invocation |
-| `PR` | External head/base/title/draft mode; authenticated base protections |
+| `PR` | External head/base/title/draft mode; published head at exact task SHA, existing base, authenticated base protections |
 | `PUSH` | Explicit remote/ref/SHA and expected remote SHA; ordinary fast-forward/create only |
-| `MERGE` | Exact source and base SHA, explicit method, method-specific verified mergeability |
-| `RELEASE` | External version/tag template, policy base branch; no existing tag rewrite |
+| `MERGE` | Published head at exact task SHA, existing exact base SHA, explicit method, method-specific verified mergeability |
+| `RELEASE` | External version/tag template, policy base branch; authenticated tag push restrictions, no existing tag rewrite |
 | `DEPLOY` | Explicit external environment and base branch; data-only plan |
 
 Each operation, including validation, requires a separate exact-plan operator

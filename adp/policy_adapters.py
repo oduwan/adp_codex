@@ -86,6 +86,7 @@ class GitPolicyAdapter:
                 pass  # No fetch: inaccessible ancestry remains UNKNOWN.
         selected = dict(self.paths)
         documents = list(self.injected)
+        found = set()
         # Read Git objects rather than following uncommitted paths/symlinks.
         for entry in filter(None, git(root, "ls-tree", "-rz", head).split(b"\0")):
             metadata, path_raw = entry.split(b"\t", 1)
@@ -97,8 +98,12 @@ class GitPolicyAdapter:
             require(int(value(root, "cat-file", "-s", sha)) <= 65536, "Oversized policy source")
             raw = git(root, "cat-file", "blob", sha, limit=65536)
             source_kind = selected[path]
+            found.add(path)
             profile = parse_profile(raw) if source_kind == SourceKind.PROFILE else None
             documents.append(Document(path, source_kind, hashlib.sha256(raw).hexdigest(), profile))
+        missing = [path for path, kind in self.paths if kind in (SourceKind.PROFILE, SourceKind.CONTRACT)
+                   and path not in found]
+        require(not missing, "Missing explicitly selected profile/contract sources: " + ", ".join(missing))
         result = RepositorySnapshot(cfg.identity, cfg.remote, fingerprint, source_ref, head,
             index, not unstaged and not untracked, tuple(sorted(local_refs, key=lambda r: r.name)),
             tuple(sorted(remote_refs, key=lambda r: r.name)), tuple(sorted(documents, key=lambda d: d.reference)),
