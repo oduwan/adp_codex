@@ -9,4 +9,7 @@ This project uses a human-readable changelog. Release versions will be tagged on
 - Documented portable memory, external Git policy, issue discovery and mandatory Progress Guard contracts.
 - Scaffold validation and CI.
 
-**No autonomous runtime, issue adapter or executable `adp` CLI is included yet.**
+- Accepted M1 portable memory CLI/API, M2 executable Progress Guard and M3 external policy provider through PRs #7–#9.
+- M4 candidate: read-only GitHub discovery, deterministic dependency planning and evidence-preserving refresh previews.
+
+**No autonomous runtime, Conductor or product mutation executor is included.**

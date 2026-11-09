@@ -1,6 +1,6 @@
 # External project policy and Git workflow provider
 
-**Status:** binding boundary contract with an M3 implementation candidate. See [the executable Policy API](POLICY_API.md) for typed results, supported sources, schema, trust ports and limits. No Git execution is included.
+**Status:** binding boundary contract with the accepted M3 implementation (PR #9). See [the executable Policy API](POLICY_API.md) for typed results, supported sources, schema, trust ports and limits. No Git execution is included.
 
 ## Non-negotiable separation
 

@@ -4,7 +4,7 @@
 
 **ADP Codex** is an architecture-first project for a repository-agnostic, Codex-assisted development orchestrator. Its intended workflow is to discover existing GitHub issues, assemble a dependency-aware task track, execute admitted tasks with independent review, and publish only meaningful product outcomes.
 
-> **Status: accepted M1 portable memory and M2 Progress Guard, with an M3 external policy provider candidate.** Autonomous execution, issue discovery and scheduling remain unavailable. Memory writes require explicit authorization; no product-code, issue or infrastructure execution authority is granted.
+> **Status: accepted M1 memory, M2 Progress Guard and M3 external policy, with an M4 read-only discovery/planner candidate.** Autonomous execution and scheduling remain unavailable. Memory writes require explicit authorization; discovery/planning grants no product-code, issue or infrastructure execution authority.
 
 ## Principles
 
@@ -36,14 +36,22 @@ recovery and finite diagnostic censuses. It requires an explicit memory upgrade;
 read-only M1 behavior is preserved. See [the Guard API and migration guide](docs/GUARD_API.md).
 No worker execution or unattended operation is enabled.
 
-## M3 external policy provider candidate
+## Accepted M3 external policy provider
 
 Issue #3 adds an importable typed provider for project-owned Git conventions,
 policy provenance and exact-plan authorization decisions. Read-only inspection
 and planning neither execute Git writes nor grant permissions from repository
 text or credentials. See [the Policy API](docs/POLICY_API.md) for trust ports,
-profile schema, M1/M2 compatibility and limits. This candidate requires independent
-exact-revision review and separate integration.
+profile schema, M1/M2 compatibility and limits. Accepted through PR #9.
+
+## M4 read-only discovery/planner candidate
+
+Issue #4 adds GET-only GitHub issue/PR discovery, native relationships,
+dependency-aware task proposals and refresh previews that retain prior evidence
+and explicitly mapped M1 progress. Unknown metadata cannot manufacture READY.
+See [the Discovery API](docs/DISCOVERY_API.md) for commands, independent readiness
+assessment, fixtures, schemas and limits. This candidate requires independent
+exact-revision review and separate integration; no Conductor or worker execution is included.
 
 ## Planned commands
 
