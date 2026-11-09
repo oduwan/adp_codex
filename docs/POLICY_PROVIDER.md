@@ -1,6 +1,6 @@
 # External project policy and Git workflow provider
 
-**Status:** interface proposal. No provider is implemented yet.
+**Status:** binding boundary contract with an M3 implementation candidate. See [the executable Policy API](POLICY_API.md) for typed results, supported sources, schema, trust ports and limits. No Git execution is included.
 
 ## Non-negotiable separation
 
@@ -29,7 +29,11 @@ class GitWorkflowProvider(Protocol):
     def authorize_merge(self, candidate: QualifiedRevision) -> AuthorizationDecision: ...
 ```
 
-These are illustrative interfaces, not importable Python definitions. An executable adapter will return structured decisions including `allowed`, provenance, exact target ref, optional required approval and denial reason. No provider may silently execute its own commands in the policy-read phase.
+These are illustrative design interfaces. The importable candidate uses
+`adp.policy_types.GitWorkflowProvider` and `adp.policy.PolicyProvider`, documented
+in [the Policy API](POLICY_API.md). It returns `ALLOW`, `DENY` or `UNKNOWN`,
+provenance, exact repository/ref/SHA, required checks/reviews and missing operator
+decisions. No provider may silently execute its own commands in the policy-read phase.
 
 ## Mutating operations
 

@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-**Status:** M0 scaffold and M1 portable memory are accepted. M2 has an implementation candidate; M3–M6 remain planned milestones. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
+**Status:** M0 scaffold, M1 portable memory and M2 Progress Guard are accepted. M3 has an implementation candidate; M4–M6 remain planned milestones. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
 
 ## Milestones
 
@@ -16,17 +16,20 @@ Implement configurable single-writer working memory, `init`, `doctor`, claiming 
 
 **Gate:** synthetic two-clone conflict, safe takeover, malformed-schema and portable handoff tests. Accepted through [PR #7](https://github.com/oduwan/adp_codex/pull/7), merged at `2064fdf83c540e761ef55f3bc394fe625cd20df4`.
 
-### M2 — Executable Progress Guard ([#2](https://github.com/oduwan/adp_codex/issues/2))
+### M2 — Executable Progress Guard (accepted, [#2](https://github.com/oduwan/adp_codex/issues/2))
 
 Implement persistent anti-loop counters, progress evidence, independent forensic reassessment, bounded exits, exact-revision approval guards and non-fail-fast diagnostic campaign semantics.
 
-**Gate:** synthetic diagnostic-spiral and false-PASS adversarial tests.
+**Gate:** synthetic diagnostic-spiral and false-PASS adversarial tests. Accepted through [PR #8](https://github.com/oduwan/adp_codex/pull/8), merged at `7412af056967e161db54f6111a5b02ab8a8dcf88`.
 
 ### M3 — External project policy provider ([#3](https://github.com/oduwan/adp_codex/issues/3))
 
 Extract branch, commit, validation, PR, merge and release rules from project-owned policies. ADP provides coordination, not a competing Git workflow.
 
 **Gate:** two incompatible synthetic policy profiles; unknown authority is denied, never invented.
+
+The Issue #3 candidate provides [typed policy decisions](POLICY_API.md) and
+read-only Git/mock adapters. Execution and live forge discovery remain separate.
 
 ### M4 — GitHub issue discovery and planning ([#4](https://github.com/oduwan/adp_codex/issues/4))
 

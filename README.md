@@ -4,7 +4,7 @@
 
 **ADP Codex** is an architecture-first project for a repository-agnostic, Codex-assisted development orchestrator. Its intended workflow is to discover existing GitHub issues, assemble a dependency-aware task track, execute admitted tasks with independent review, and publish only meaningful product outcomes.
 
-> **Status: accepted M1 portable memory, with an M2 Progress Guard candidate.** Autonomous execution, issue discovery and scheduling remain unavailable. Memory writes require explicit authorization; no product-code, issue or infrastructure execution authority is granted.
+> **Status: accepted M1 portable memory and M2 Progress Guard, with an M3 external policy provider candidate.** Autonomous execution, issue discovery and scheduling remain unavailable. Memory writes require explicit authorization; no product-code, issue or infrastructure execution authority is granted.
 
 ## Principles
 
@@ -21,21 +21,29 @@ Issue #1 ships a Python 3.11+ package for explicitly authorized portable
 memory, `init`, `doctor`, `status`, ownership and handoff. See the
 [CLI and API guide](docs/MEMORY_CLI.md) and [v1 state contract](docs/STATE_CONTRACT.md).
 M1 does not execute product code, discover issues or decide Git policy. It was
-reviewed and merged in PR #7; accepted `main` remains non-autonomous. The guard
-candidate below requires its own exact-revision review and separate integration.
+reviewed and merged in PR #7; accepted `main` remains non-autonomous.
 
 ```bash
 python3 -m pip install .
 adp --help
 ```
 
-## M2 Progress Guard candidate
+## Accepted M2 Progress Guard
 
-M1 portable memory is accepted. Issue #2 adds a standalone executable guard
-candidate with durable counters, externally verified forensic evidence, bounded
+Issue #2, accepted through PR #8, adds a standalone executable guard
+with durable counters, externally verified forensic evidence, bounded
 recovery and finite diagnostic censuses. It requires an explicit memory upgrade;
 read-only M1 behavior is preserved. See [the Guard API and migration guide](docs/GUARD_API.md).
 No worker execution or unattended operation is enabled.
+
+## M3 external policy provider candidate
+
+Issue #3 adds an importable typed provider for project-owned Git conventions,
+policy provenance and exact-plan authorization decisions. Read-only inspection
+and planning neither execute Git writes nor grant permissions from repository
+text or credentials. See [the Policy API](docs/POLICY_API.md) for trust ports,
+profile schema, M1/M2 compatibility and limits. This candidate requires independent
+exact-revision review and separate integration.
 
 ## Planned commands
 

@@ -1,6 +1,6 @@
 # Progress Guard — mandatory anti-loop contract
 
-**Status:** binding contract with a scoped M2 implementation candidate described below. Safety and honesty invariants remain mandatory; autonomous execution is unavailable.
+**Status:** binding contract with the accepted M2 implementation described below (PR #8). Safety and honesty invariants remain mandatory; autonomous execution is unavailable.
 
 ## Goal
 
@@ -55,7 +55,7 @@ A diagnostic census is **not** formal release acceptance. Preserve original cove
 
 Synthetic fixtures must prove all triggers, restart-persistent counters, genuine-progress resets, cosmetic-change non-resets, bounded forensic exit, protected full-survey continuation, safe escalation and non-pass accounting. No real product diagnosis is required to qualify the guard.
 
-## M2 executable implementation candidate
+## Accepted M2 executable implementation
 
 Issue #2 implements this contract in `adp.guard.ProgressGuard`, with typed inputs
 and decisions in `adp.guard_types`. It is a standalone offline boundary backed
