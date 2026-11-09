@@ -95,6 +95,11 @@ class GitExecutionPort:
                 "Local remote is not explicitly authorized")
         return path
 
+    def remote_revision(self, ref):
+        lines = value(self.root, "ls-remote", "--refs", self.config.remote, ref).splitlines()
+        require(len(lines) <= 1, "Ambiguous remote branch")
+        return lines[0].split()[0] if lines else None
+
     def observe(self, action):
         root, operation, payload = self.root, action["operation"], action["payload"]
         head = value(root, "rev-parse", "HEAD")

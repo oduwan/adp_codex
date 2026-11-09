@@ -69,6 +69,92 @@ The following required scenario inventory is fixed before execution:
 19. Actual M1–M5 Conductor journal/recovery integration with fake atomic Git server.
 20. Full210 accepted regressions plus new tests on both Python versions.
 
-Implementation and final qualification: **NOTRUN at this G0 commit**.
-Real GitHub write readiness: **NOTRUN**, reserved for separately authorized M8.
-Public release, merge, tag and deployment: **NOT_AUTHORIZED**.
+## Importable implementation
+
+`adp.execution_types.GitEffectPort` is the narrow effect protocol.
+`adp.network_git.GitHubTarget`, `GitHubCAS`, `GitHubPolicyAdapter` and
+`GitHubGitExecutionPort` are explicit operator selections; no controller or
+environment variable enables them automatically. Construct the service with the
+trusted `GitHubHTTPTransport(token_provider)`, bind a real M5 `ExecutionJournal`
+to the port, and select that same service for the policy adapter. The token
+provider is trusted, nonblocking operator code outside product/worker roots.
+The exact canonical GitHub node/database IDs, full repository name, memory ID,
+remote endpoint fingerprint and branch are pinned independently of credentials.
+
+Only network PUSH is added. Local stage/commit/branch retain accepted behavior;
+the original allowlisted local-bare PUSH implementation is unchanged. M3 actual
+policy/guard decisions remain mandatory, including external review/check gates.
+The network-aware policy seam and handoff ref observation never invoke a Git
+network helper. Coordination memory must have a **separate local file remote**:
+the existing M1 network transport is not requalified or silently replaced here.
+
+The actual PREPARED transition creates a private exclusive fsynced intent claim
+and an in-process one-use dispatch capability. Only that capability can submit
+the matching canonical SUBMITTED action. A recreated port cannot mint it from
+SUBMITTED, even if private claim state vanished. No schema/migration is added.
+Claims are never automatically deleted, rewritten or treated as retry authority.
+
+Every bound HTTP call also writes a durable in-flight marker **before launch**.
+Only a conclusively stopped transport clears it. Crash, cancellation or missing
+stop receipt retains UNKNOWN across restart, blocks later HTTP and handoff, and
+is surfaced as an unconfirmed Conductor context. An exact target SHA cannot
+conceal a potentially live transport. Operator stop verification/reconciliation
+is required; there is no automatic reset API.
+
+## Resource and credential boundary
+
+Only verified HTTPS to api.github.com:443 is supplied. Redirects, proxy environment,
+remote helpers, arbitrary methods/routes, multiple-ref CAS, zero afterOid, force,
+delete and tags are refused. Blob/tree/commit POSTs cannot update refs. Returned
+OIDs must match; any normalization difference stops publication. Full closure
+preflight precedes uploads. Bounds: SHA1, at most16 missing commits/two parents,
+512 objects, 32 levels, 1MiB per object and 8MiB total. Submodules, extra headers,
+noncanonical dates/messages/order and unrepresentable path bytes are unsupported.
+
+An operation has a fixed45s/128-call ceiling; each request has at most5s plus
+bounded stop cleanup and a1MiB response cap. The trusted HTTP child uses TLS
+verification, private stdin credentials and a minimal environment. The accepted
+Linux subreaper bounds blocking DNS, TLS and partial responses, then proves stop.
+No token is in command arguments, worker environment/prompts, stop receipts,
+portable memory or product comments. Raw API response/error text is not reported.
+
+M3 source/policy, M1 owner/generation, endpoint and fast-forward ancestry are
+rechecked after upload immediately before atomic CAS. Stale/racing expected-old
+values cannot be replaced by fast-forward-only REST semantics. Only exact
+authenticated reobservation yields PRESENT; attempted old/absent/different state
+is UNKNOWN. Missing rules/protection/permissions, active branch constraints,
+nonempty legacy protection inventory for creation and inaccessible metadata
+refuse. GitHub Enterprise/SSH, SHA256 and other provider protocols are unsupported.
+
+## Qualification status and retained corrections
+
+The frozen new-method inventory is [NETWORK_CAS_TEST_INVENTORY.json](NETWORK_CAS_TEST_INVENTORY.json):
+33 methods, in addition to all210 accepted M1–M6 methods. Existing tests/fixtures,
+frozen M6 scenario maps, state schemas and guard thresholds remain unchanged.
+CI runs the accepted suite and separate honest M7 runner on Python3.11/3.12.
+
+Initial offline transport8/8 and object10/10 focused methods PASS. These use real
+disposable Git objects and actual Linux process stop supervision, but synthetic
+authenticated provider responses. No actual target GitHub write occurred.
+Full33-method integration campaign and both-Python regressions are **NOTRUN at
+this implementation checkpoint**, pending the clean committed CI candidate.
+Independent final exact-HEAD review is also pending; Draft PR metadata will carry
+the final source/CI/verdict attestations without embedding future approvals here.
+
+Independent early review found unsafe recovered dispatch, Git helper scope and
+post-error-only transport stop persistence. Fresh dispatch capabilities, local
+coordination restriction and write-ahead transport fencing correct these paths.
+Original stop-durability repro observed2/2 FAIL (private SHA256
+`b0caba7db4fa9bad1f833427ecc034b3dfa19c7bff3df0bf2516c062a569e1cf`).
+Independent corrected proof: original2/2 plus added prelaunch-persistence case1/1
+PASS, SHA256 `43912e4ff565d7b58b9d589ec045283ecd5d5d6bed55c5bff182893bf2fdb625`.
+First integration observations include ordinary FAIL and remain retained, not
+counted as PASS. Fixture isolation and fresh-capability assertions are being
+qualified; no timeout/threshold/assertion is weakened to hide them.
+
+Real GitHub write qualification: **NOTRUN**, reserved for separately authorized
+M8. Offline provider-contract qualification cannot establish live GitHub behavior,
+App permission availability or production latency. Missing actual metadata or a
+provider-normalized object is a refusal, not an invented compatibility claim.
+Private evidence is host-lifetime and must be retained by the operator for later
+audit. Public release, merge, tag and deployment: **NOT_AUTHORIZED**.

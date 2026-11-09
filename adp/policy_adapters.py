@@ -74,6 +74,10 @@ class GitPolicyAdapter:
         self.injected = injected
         self.fingerprint_worktree = fingerprint_worktree
 
+    def _remote_refs(self, config):
+        return tuple(Ref(name, sha) for sha, name in (line.split() for line in
+            value(config.root, "ls-remote", "--refs", config.remote, "refs/heads/*", "refs/tags/*").splitlines()))
+
     def inspect(self) -> RepositorySnapshot:
         # Revalidate even a Config constructed directly instead of discovered.
         cfg = Config.discover(self.config.root, remote=self.config.remote,
@@ -90,8 +94,7 @@ class GitPolicyAdapter:
             "--format=%(refname) %(objectname)", "refs/heads/", "refs/tags/").splitlines())
         diagnostics = ()
         try:
-            remote_refs = tuple(Ref(name, sha) for sha, name in (line.split() for line in
-                value(root, "ls-remote", "--refs", cfg.remote, "refs/heads/*", "refs/tags/*").splitlines()))
+            remote_refs = self._remote_refs(cfg)
             known = True
         except GitError:
             remote_refs, known = (), False
