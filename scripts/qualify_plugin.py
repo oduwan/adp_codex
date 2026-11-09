@@ -113,8 +113,11 @@ def main():
         if len(own)!=1 or own[0].get('enabled') is not True:raise ValueError('Installed plugin is not observably enabled')
         observed=skills(catalog,environment,directory/'discovery.log')
         write_evidence(directory/'discovery.json',observed)
-        available=[s for row in observed['skills'].get('data',[]) for s in row.get('skills',[]) if str(s.get('path','')).endswith('/skills/adp-codex/SKILL.md')]
-        if len(available)!=1 or available[0].get('enabled') is not True:raise ValueError('Installed skill was not actually discovered/enabled')
+        available=[s for row in observed['skills'].get('data',[]) for s in row.get('skills',[])
+                   if isinstance(s.get('path'),str) and Path(s['path']).resolve()==skill.resolve()]
+        if (len(available)!=1 or available[0].get('enabled') is not True
+                or sha256(Path(available[0]['path']))!=sha256(plugin/'skills/adp-codex/SKILL.md')):
+            raise ValueError('Exact installed skill was not actually discovered/enabled')
         evidence.update(status='PASS',manifest_sha256=sha256(root/'plugin.json'),skill_sha256=sha256(skill),
             installed=True,enabled=True,discovered=True,model_usage='NOTRUN',gui_usage='UNSUPPORTED')
     except Exception as exc:
