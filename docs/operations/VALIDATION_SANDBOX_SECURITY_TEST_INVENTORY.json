@@ -1,0 +1,5 @@
+[
+  "test_validation_sandbox.ValidationSandboxTests.test_shared_file_mappings_and_removal_cannot_emit_pass",
+  "test_validation_sandbox_profile.ValidationProfileTests.test_runtime_fixture_excludes_static_compilation_archives",
+  "test_validation_sandbox_profile.ValidationProfileTests.test_shared_mappings_and_mutating_advice_are_killed"
+]

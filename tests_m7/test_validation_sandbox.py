@@ -187,6 +187,22 @@ class ValidationSandboxTests(unittest.TestCase):
                 self.run_port(port)
             self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
 
+    def test_shared_file_mappings_and_removal_cannot_emit_pass(self):
+        self.supported()
+        payloads = (
+            "import mmap; f=open('/work/tracked','rb'); mmap.mmap(f.fileno(),0,flags=mmap.MAP_SHARED,prot=mmap.PROT_READ|mmap.PROT_WRITE)",
+            "import ctypes; f=open('/work/tracked','rb'); c=ctypes.CDLL(None); c.mmap.restype=ctypes.c_void_p; p=c.mmap(None,4096,1,1,f.fileno(),0); c.mprotect(ctypes.c_void_p(p),4096,3)",
+            "import ctypes,mmap; v=mmap.mmap(-1,4096,flags=mmap.MAP_PRIVATE|mmap.MAP_ANONYMOUS); p=ctypes.addressof(ctypes.c_char.from_buffer(v)); ctypes.CDLL(None).madvise(ctypes.c_void_p(p),4096,9)",
+        )
+        before = (self.root / 'tracked').read_bytes()
+        for index, payload in enumerate(payloads):
+            source = 'try:\n ' + payload + '\nexcept BaseException:pass\nprint(' + repr(receipt()) + ')'
+            port = self.make_port((command('mapping', source), self.commands[0]), name='mapping-' + str(index))
+            with self.subTest(index=index), self.assertRaises(UnsafeValidation) as caught:
+                self.run_port(port)
+            self.assertEqual([r.outcome for r in caught.exception.results], [Outcome.UNKNOWN, Outcome.NOTRUN])
+        self.assertEqual((self.root / 'tracked').read_bytes(), before)
+
     def test_symlinks_hardlinks_traversal_and_git_filters_refuse(self):
         alias = self.base / 'source-alias'
         alias.symlink_to(self.root, target_is_directory=True)
