@@ -1,4 +1,4 @@
-name: Scaffold validation
+name: Portable qualification
 
 on:
   push:
@@ -27,5 +27,7 @@ jobs:
         run: adp --help
       - name: Validate plugin and docs scaffold
         run: python scripts/validate_scaffold.py
-      - name: Test scaffold and M1 through M5 contracts
-        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Fresh pinned archive and wheel installation
+        run: python scripts/qualify_installation.py --source-ref "$(git rev-parse HEAD)" --evidence-dir "$RUNNER_TEMP/adp-install"
+      - name: Test all accepted M1 through M5 and M6 qualification
+        run: python scripts/qualify_m6.py --evidence-dir "$RUNNER_TEMP/adp-suite"

@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-**Status:** M0 scaffold and M1–M4 are accepted. M5 has an execution candidate; M6 remains planned. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
+**Status:** M0 scaffold and M1–M5 are accepted. M6 qualification is under review; public release is NOT_AUTHORIZED. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
 
 ## Milestones
 
@@ -48,15 +48,21 @@ Wire policy-gated `run`, `status`, `resume`, `handoff`, bounded parallel subagen
 
 **Gate:** synthetic multi-worker track, restart, reviewer rejection and recovered publication without duplicates.
 
-The [M5 API candidate](CONDUCTOR_API.md) integrates accepted M1–M4 and a real
-capability-checked Codex adapter. Final exact-revision review and runtime proof
-remain explicit integration gates; no merge or deployment authority is supplied.
+Accepted through PR #11 at `1eb00b3e94151a16a621aab20e71943b3ea2c8a1`.
+The [M5 API](CONDUCTOR_API.md) integrates accepted M1–M4 and a real
+capability-checked Codex adapter. Independent exact-revision review and genuine runtime evidence qualified M5; no merge or deployment authority is supplied.
 
 ### M6 — Cross-repository portability and release qualification ([#6](https://github.com/oduwan/adp_codex/issues/6))
 
 Demonstrate clean installation on unrelated repositories, cross-clone handoff, external policy differences, execution authorization boundaries and honest acceptance accounting. Keep real product repos unchanged during tests.
 
-**Gate:** all intended tests, independent exact-revision security/code review, documented limits and explicit operator release authorization. Select license before advertising an open-source release.
+**Qualification gate:** the fixed Q01–Q12 matrix, full accepted regressions and new
+M6 tests on Python 3.11/3.12, installation and independent security/design plus
+exact-HEAD review. See [M6 report](qualification/M6_REPORT.md).
+
+**Separate publication gate:** NOT_AUTHORIZED. License/distribution terms and
+release/tag/listing approval require an explicit operator decision; technical
+qualification, CI and review cannot supply it.
 
 ## Development rules
 

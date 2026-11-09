@@ -5,7 +5,7 @@ Scope: this repository only (`oduwan/adp_codex`). This is **not** a policy templ
 ## Current phase
 
 - The M0 architecture-and-skill scaffold is complete. Implementation proceeds through the bounded, dependency-ordered issues #1–#6; do not rebuild M0 as a prerequisite.
-- M1 portable memory and `adp init` are accepted on `main` through PR #7; M2 Progress Guard through PR #8; M3 external policy decisions through PR #9; M4 read-only discovery/planning through PR #10. M5 execution is a scoped candidate, not accepted autonomous operation. Update capability claims only after the corresponding implementation is reviewed, merged, and qualified.
+- M1 portable memory and `adp init` are accepted on `main` through PR #7; M2 Progress Guard through PR #8; M3 external policy decisions through PR #9; M4 read-only discovery/planning through PR #10. M5 finite explicitly authorized execution is accepted through PR #11 at `1eb00b3e94151a16a621aab20e71943b3ea2c8a1`; M6 is qualification codework, not release authority. Update capability claims only after the corresponding implementation is reviewed, merged, and qualified.
 - Before implementation read the active issue and `docs/ARCHITECTURE.md`, `docs/STATE_CONTRACT.md`, `docs/PROGRESS_GUARD.md`, `docs/POLICY_PROVIDER.md`, and `docs/ROADMAP.md`.
 - Keep each implementation inside its issue's accepted scope; dependencies are entry gates. No dependent issue may treat unmerged work as an accepted prerequisite.
 - Follow the project's binding [Git and commit policy](docs/GIT_WORKFLOW.md): dedicated issue branch, Conventional Commits with issue references, clean/checkable commits, Draft PR and independent exact-HEAD review. This policy is for **adp_codex only**; it must never be imposed on target repositories by the ADP engine.
@@ -36,7 +36,7 @@ Scope: this repository only (`oduwan/adp_codex`). This is **not** a policy templ
 
 A normal push to an issue-scoped feature branch is allowed **only when the operator has explicitly assigned implementation and Draft PR creation**; it does not authorize pushing to `main`. Do not force-push, reset/rewrite others' history, merge, deploy, run destructive commands, or install a skill into a third-party checkout without separate explicit authorization. No automated code execution or repository modification is authorized by an issue description alone.
 
-The project's eventual external Git workflow provider must respect the destination repository's own rules and operator boundaries. No policy found means no automatic authority.
+The project's external Git workflow provider must respect the destination repository's own rules and operator boundaries. No policy found means no automatic authority.
 
 ## Running the scaffold checks
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the architecture-stage ADP Codex plugin and Markdown links.
+"""Validate the portable ADP planning plugin and Markdown links.
 
 No network access, Git credentials, target checkout, or runtime engine required.
 """
@@ -76,8 +76,8 @@ def validate(root: Path = ROOT) -> list[str]:
                     errors.append("SKILL.md requires name: adp-codex")
                 if not re.search(r"(?m)^description:\s*\S", header):
                     errors.append("SKILL.md requires a nonempty description")
-            if "not implemented" not in body.lower() and "does not ship" not in body.lower():
-                errors.append("Scaffold skill must state execution is unimplemented")
+            if "read-only" not in body.lower() or "does not grant execution authority" not in body.lower():
+                errors.append("Planning skill must explicitly remain read-only and grant no execution authority")
 
     for path in sorted(root.rglob("*.md")):
         if any(p in (".git", ".venv") for p in path.parts):
