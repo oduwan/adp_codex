@@ -1,11 +1,15 @@
 ---
 name: adp-codex
-description: Analyze repository issues, dependencies, external Git policies, and orchestration readiness for ADP Codex. Use when asked to plan ADP adoption, inspect a task track, review anti-loop guards, or initialize a future ADP workflow.
+description: Analyze repository issues, dependencies, external Git policies, and orchestration readiness for ADP Codex. Use when asked to plan ADP adoption, inspect a task track, review anti-loop guards, or understand explicitly authorized ADP setup. This skill grants no execution authority.
 ---
 
-# ADP Codex — planning skill (scaffold)
+# ADP Codex — read-only planning and setup guidance
 
-This is a **design-only, read-only skill**. This skill does not ship a configured Conductor or grant execution authority. The separate Python package supplies accepted M1–M4 and an M5 execution candidate; M6 release qualification is not implemented.
+This is a **read-only skill**. It does not grant execution authority or ship a
+configured Conductor. The separate Python package supplies accepted M1–M5 finite
+execution, requiring explicit operator authorization and qualified ports/runtime.
+Always-on scheduling and public release workflows are not implemented. M6
+qualification does not select a license or authorize publication.
 
 ## Read-only workflow
 
@@ -25,4 +29,4 @@ This is a **design-only, read-only skill**. This skill does not ship a configure
 - Keep internal harness/diagnostic details out of product status reports.
 - Do not presume that any active project's state can be taken over or migrated solely by invoking this skill.
 
-For the implementation roadmap, read [Roadmap](../../docs/ROADMAP.md). Explain clearly which capabilities are planned rather than available.
+For supported capabilities and qualification, read [Conductor API](../../docs/CONDUCTOR_API.md) and [M6 report](../../docs/qualification/M6_REPORT.md). For the implementation roadmap, read [Roadmap](../../docs/ROADMAP.md). Explain clearly which capabilities are planned rather than available.

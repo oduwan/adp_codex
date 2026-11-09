@@ -1,6 +1,6 @@
 # Progress Guard — mandatory anti-loop contract
 
-**Status:** binding contract with the accepted M2 implementation described below (PR #8). Safety and honesty invariants remain mandatory; autonomous execution is unavailable.
+**Status:** binding contract with the accepted M2 implementation described below (PR #8). Safety and honesty invariants remain mandatory; accepted M5 finite execution calls this boundary before work.
 
 ## Goal
 

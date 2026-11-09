@@ -1,7 +1,7 @@
 # Read-only GitHub discovery and dependency planning
 
-Issue #4 provides a Python 3.11+ implementation candidate for observation and
-planning. M1 memory, M2 Progress Guard and M3 policy decisions are accepted through
+Issue #4 provides the accepted Python 3.11+ implementation for observation and
+planning (PR #10). M1 memory, M2 Progress Guard and M3 policy decisions are accepted through
 PRs #7–#9. No worker, Conductor, mutation executor or execution authorization is
 added. The implementation uses the standard library only.
 
@@ -149,7 +149,7 @@ DONE. An API caller supplies an observational authenticated verifier and real
 project contract evidence; no special issue template is required. Policy references
 establish planning knowledge only. M3 remains the authority for every proposed
 Git operation, and M1/M2 ownership, guards and independent code approval remain
-mandatory at future execution admission.
+mandatory at accepted M5 execution admission.
 
 ## Refresh and accepted memory compatibility
 

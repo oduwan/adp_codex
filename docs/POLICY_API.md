@@ -236,7 +236,7 @@ production qualification is included in M3.
 
 ## M5 additive execution operations
 
-The M5 candidate adds explicit `EDIT`, `INSPECT`, `STAGE` and `REPORT` permissions.
+Accepted M5 adds explicit `EDIT`, `INSPECT`, `STAGE` and `REPORT` permissions.
 No accepted profile implicitly allows them: omission is UNKNOWN. `EDIT`/`INSPECT`
 bind exact request IDs, source paths and working-tree fingerprints; INSPECT
 permits read-only forensic inspection of a dirty source. STAGE binds explicit

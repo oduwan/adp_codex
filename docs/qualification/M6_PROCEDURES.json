@@ -1,0 +1,371 @@
+{
+  "schema_version": 1,
+  "plan_sha256": "70e1a4aa476ebb0ffe952a590181be29b4fdb57356dbc4000dfb26f1ce31cf9c",
+  "original_scenario_denominator": 42,
+  "accepted_test_denominator": 193,
+  "current_test_denominator": 210,
+  "scenarios": [
+    {
+      "id": "Q01.host-enabled-skill-discovery",
+      "tests": [],
+      "external": [
+        "PLUGIN_DISCOVERY"
+      ]
+    },
+    {
+      "id": "Q01.host-plugin-install",
+      "tests": [],
+      "external": [
+        "PLUGIN_INSTALL"
+      ]
+    },
+    {
+      "id": "Q01.portable-layout",
+      "tests": [
+        "test_scaffold.ScaffoldTests.test_portable_manifest_and_skill",
+        "test_scaffold.ScaffoldTests.test_repo_scaffold_is_valid"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q01.wheel-311",
+      "tests": [],
+      "external": [
+        "INSTALL_311"
+      ]
+    },
+    {
+      "id": "Q01.wheel-312",
+      "tests": [],
+      "external": [
+        "INSTALL_312"
+      ]
+    },
+    {
+      "id": "Q02.cross-repository-replay",
+      "tests": [
+        "test_policy_adversarial.AdversarialPolicyTests.test_cross_repository_progress_review_check_and_operation_domains_are_distinct"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q02.distinct-repositories-and-plans",
+      "tests": [
+        "test_m6_portability.CrossRepositoryQualification.test_two_unrelated_concurrent_lanes_respect_different_review_policies",
+        "test_policy_git.GitPolicyTests.test_distinct_branch_commit_pr_and_merge_policies"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q02.independent-review-counts",
+      "tests": [
+        "test_m6_portability.CrossRepositoryQualification.test_two_unrelated_concurrent_lanes_respect_different_review_policies",
+        "test_policy_adversarial.AdversarialPolicyTests.test_edited_plans_denominators_duplicate_reviewers_and_typed_payloads_refuse"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q02.missing-contradictory-policy",
+      "tests": [
+        "test_policy.PolicyDecisionTests.test_missing_unverified_and_conflicting_policy_fail_closed"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q03.mixed-native-inferred-graph",
+      "tests": [
+        "test_discovery_github.GitHubDiscoveryTests.test_native_blocking_and_subissue_semantics_are_separate",
+        "test_discovery_planner.PlannerTests.test_duplicate_and_superseded_prose_never_creates_a_second_ready_task",
+        "test_discovery_planner.PlannerTests.test_text_dependencies_remain_tentative_until_confirmed_or_dismissed",
+        "test_m6_discovery.DiscoveryQualificationTests.test_mixed_graph_pagination_partial_metadata_and_stale_pr_are_honest"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q03.pagination-incomplete-inventory",
+      "tests": [
+        "test_discovery_github.GitHubDiscoveryTests.test_pagination_and_pr_filter_keep_all_opaque_issues",
+        "test_discovery_github.GitHubDiscoveryTests.test_partial_pagination_and_duplicate_pages_are_not_complete",
+        "test_discovery_readonly.ReadOnlyCommands.test_discover_plan_and_both_refresh_commands_preserve_every_byte_and_ref"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q03.permission-rate-limit-404",
+      "tests": [
+        "test_discovery_github.GitHubDiscoveryTests.test_permission_failure_marks_unknown_without_retry_or_empty_inventory",
+        "test_discovery_github.GitHubDiscoveryTests.test_primary_rate_reset_and_success_exhaustion_stop_followup_requests",
+        "test_discovery_github.GitHubDiscoveryTests.test_rate_limit_preserves_partial_inventory_and_retry_delay",
+        "test_discovery_github.GitHubDiscoveryTests.test_unavailable_native_links_are_unknown_not_independence"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q03.refresh-source-and-pr-drift",
+      "tests": [
+        "test_discovery_github.GitHubDiscoveryTests.test_issue_edits_and_inventory_changes_are_explicit",
+        "test_discovery_github.GitHubDiscoveryTests.test_pr_detail_drift_from_inventory_is_not_a_stable_head",
+        "test_discovery_planner.PlannerTests.test_refresh_preserves_verified_history_without_reusing_stale_approval",
+        "test_m6_discovery.DiscoveryQualificationTests.test_mixed_graph_pagination_partial_metadata_and_stale_pr_are_honest"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q04.explicit-v1-v2-v3-preservation",
+      "tests": [
+        "test_execution_memory.ExecutionMemoryTests.test_upgrade_is_explicit_idempotent_and_preserves_accepted_records",
+        "test_guard_memory.GuardMemoryTests.test_explicit_upgrade_preserves_v1_tasks_ownership_and_read_only_modes"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q04.handoff-takeover-generation-fence",
+      "tests": [
+        "test_conductor.ConductorTests.test_two_independent_tasks_run_and_report_once",
+        "test_conductor_fencing.FencingTests.test_stale_generation_cannot_dispatch_after_observed_handoff",
+        "test_memory.MemoryTests.test_missing_owner_and_confirmed_takeover"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q04.interrupted-journal-divergence",
+      "tests": [
+        "test_execution_memory.ExecutionMemoryTests.test_interrupted_migration_recovers_v3_without_claiming_foreign_owner",
+        "test_memory.MemoryTests.test_interrupted_commit_replays_journal_once",
+        "test_memory.MemoryTests.test_process_death_during_atomic_replacement_and_inbox_delivery",
+        "test_memory.MemoryTests.test_remote_divergence_is_retained_honestly"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q05.bounded-concurrency-and-reservations",
+      "tests": [
+        "test_conductor.ConductorTests.test_two_independent_tasks_run_and_report_once",
+        "test_guard.ThresholdTests.test_failure_trigger_survives_new_hypothesis_actor_and_restart"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q05.restart-and-exact-sha-review",
+      "tests": [
+        "test_conductor_fencing.FencingTests.test_duplicate_worker_delivery_is_immutable",
+        "test_conductor_fencing.FencingTests.test_observed_publication_cannot_complete_after_local_sha_drift",
+        "test_conductor_recovery.RecoveryTests.test_rejected_review_requires_new_sha_and_fresh_context"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q05.two-unrelated-concurrent-lanes",
+      "tests": [
+        "test_m6_portability.CrossRepositoryQualification.test_two_unrelated_concurrent_lanes_respect_different_review_policies"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q06.historical-retained-artifact-audit",
+      "tests": [],
+      "external": [
+        "HISTORICAL_RUNTIME_AUDIT"
+      ]
+    },
+    {
+      "id": "Q06.single-post-fix-real-runtime-proof",
+      "tests": [],
+      "external": [
+        "FRESH_RUNTIME_AUDIT"
+      ]
+    },
+    {
+      "id": "Q07.all-stall-thresholds-finite-terminal",
+      "tests": [
+        "test_conductor_recovery.RecoveryTests.test_guard_stalls_use_two_independent_bounded_forensics_then_stop",
+        "test_guard.ForensicTests.test_two_bounded_proofs_then_terminal_operator_boundary",
+        "test_guard.ThresholdTests.test_alias_binding_and_reregistration_do_not_reset",
+        "test_guard.ThresholdTests.test_each_other_threshold_is_enforced",
+        "test_guard.ThresholdTests.test_failure_trigger_survives_new_hypothesis_actor_and_restart",
+        "test_guard.ThresholdTests.test_reservation_prevents_alternate_worker_or_duplicate_terminal_result",
+        "test_guard.ThresholdTests.test_thresholds_and_accepted_contract_cannot_be_relaxed"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q07.independent-progress-reset-and-sha-invalidation",
+      "tests": [
+        "test_guard.ProgressEvidenceTests.test_acceptance_drop_and_self_review_are_refused",
+        "test_guard.ProgressEvidenceTests.test_each_meaningful_progress_kind_resets_on_positive_evidence",
+        "test_guard.ProgressEvidenceTests.test_generation_drift_requires_explicit_unknown_abandonment",
+        "test_guard.ProgressEvidenceTests.test_persisted_approval_cannot_self_certify_a_new_authority_context",
+        "test_guard.ProgressEvidenceTests.test_unverified_cosmetic_and_replayed_facts_cannot_reset",
+        "test_guard_memory.GuardMemoryTests.test_task_recreation_cannot_reuse_an_old_guard_attempt_or_approval"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q08.durable-finite-campaign",
+      "tests": [
+        "test_guard_campaign.CampaignTests.test_non_fail_fast_census_preserves_all_counts_and_denominator",
+        "test_m6_accounting.DiagnosticQualificationTests.test_real_memory_campaign_preserves_inventory_across_restart_and_failure"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q08.safety-lost-stop-halts-inventory",
+      "tests": [
+        "test_conductor_fencing.FencingTests.test_unconfirmed_validation_is_durable_execution_hazard",
+        "test_execution_validation.ValidationTests.test_supervisor_loss_preserves_liveness_unknown_and_stops_inventory",
+        "test_guard_campaign.CampaignTests.test_safety_contamination_and_containment_stop_remaining_cases"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q08.validation-all-outcomes-and-quarantine",
+      "tests": [
+        "test_execution_validation.ValidationTests.test_original_denominator_and_quarantine_are_not_waived",
+        "test_execution_validation.ValidationTests.test_zero_exit_does_not_convert_nonpass_outcomes",
+        "test_guard_campaign.CampaignTests.test_quarantine_and_notrun_cannot_create_pass"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q09.forge-pr-comment-restart-drift",
+      "tests": [
+        "test_conductor_fencing.FencingTests.test_observed_publication_cannot_complete_after_local_sha_drift",
+        "test_conductor_recovery.RecoveryTests.test_partial_handoff_failure_reuses_iteration_pr_identity",
+        "test_execution_github.GitHubExecutionTests.test_absence_after_attempt_is_unknown",
+        "test_execution_github.GitHubExecutionTests.test_credentials_are_not_execution_authority",
+        "test_execution_github.GitHubExecutionTests.test_duplicate_markers_on_later_page_are_unknown",
+        "test_execution_github.GitHubExecutionTests.test_lost_post_response_is_reconciled_by_exact_marker_body",
+        "test_execution_github.GitHubExecutionTests.test_permission_failure_and_changed_body_remain_unknown",
+        "test_execution_github.GitHubExecutionTests.test_pr_head_draft_and_repository_identity_are_exact",
+        "test_execution_github.GitHubExecutionTests.test_report_cannot_escape_repository"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q09.git-cas-lost-response",
+      "tests": [
+        "test_conductor_recovery.RecoveryTests.test_lost_dispatch_commit_and_forge_responses_resume_without_duplicates",
+        "test_execution_ports.PortTests.test_mutated_plan_fields_cannot_change_any_ref"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q09.internal-zero-publication",
+      "tests": [
+        "test_conductor_recovery.RecoveryTests.test_internal_iteration_has_zero_forge_actions"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q10.credential-env-permissions-independent-review",
+      "tests": [
+        "test_conductor_fencing.FencingTests.test_unknown_runtime_does_not_claim_stopped_or_redispatch",
+        "test_execution_cli.ExecutionCLITests.test_execution_authority_is_checked_before_loading_operator_code",
+        "test_execution_runtime.RuntimeTests.test_detached_descendant_is_reaped_before_timeout_claim",
+        "test_execution_runtime.RuntimeTests.test_failed_supervisor_probe_never_advertises_supported_runtime",
+        "test_execution_runtime.RuntimeTests.test_mutation_credentials_are_not_inherited_by_worker_frontend",
+        "test_policy.PolicyDecisionTests.test_guard_ownership_and_independent_review_cannot_be_waived"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q10.paths-symlinks-git-administration",
+      "tests": [
+        "test_conductor_fencing.FencingTests.test_ignored_nonadmitted_write_latches_guard_unsafe",
+        "test_m6_evidence.EvidenceQualificationTests.test_source_archive_refuses_traversal_links_and_duplicates",
+        "test_memory.MemoryTests.test_symlink_unexpected_files_and_oversized_delivery_refused",
+        "test_policy_git.GitPolicyTests.test_profile_paths_symlinks_malformed_json_and_missing_governance_refuse"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q10.untrusted-issue-comment-readme",
+      "tests": [
+        "test_conductor_recovery.RecoveryTests.test_internal_iteration_has_zero_forge_actions",
+        "test_discovery_planner.PlannerTests.test_malicious_text_cannot_run_commands_grant_rights_or_admit_acceptance",
+        "test_m6_portability.CrossRepositoryQualification.test_two_unrelated_concurrent_lanes_respect_different_review_policies",
+        "test_policy_adversarial.AdversarialPolicyTests.test_issue_and_comment_text_remain_untrusted_even_with_a_claimed_role"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q10.worker-output-credential-refusal",
+      "tests": [
+        "test_m6_security.CredentialShapeTests.test_credentials_are_detected_in_nested_forensic_fields",
+        "test_m6_security.CredentialShapeTests.test_public_hashes_and_finite_plan_text_are_not_secrets",
+        "test_m6_security.PortableOutputSecurityTests.test_forensic_secret_block_survives_handoff_without_another_context",
+        "test_m6_security.PortableOutputSecurityTests.test_legacy_cached_secret_refuses_without_creating_more_copies",
+        "test_m6_security.PortableOutputSecurityTests.test_worker_credential_shape_is_refused_before_any_checkpoint"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q11.force-merge-deploy-no-authority",
+      "tests": [
+        "test_m6_portability.CrossRepositoryQualification.test_two_unrelated_concurrent_lanes_respect_different_review_policies",
+        "test_policy.PolicyDecisionTests.test_merge_requires_separate_rights_checks_independence_and_m2_approval",
+        "test_policy.PolicyDecisionTests.test_protections_divergence_and_rewrite_never_silently_fallback",
+        "test_policy_git.GitPolicyTests.test_release_and_deploy_are_separate_operator_bound_plans"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q11.network-push-unsupported",
+      "tests": [
+        "test_m6_refusals.UnsupportedOperationQualification.test_network_push_has_no_fallback_or_transport"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q11.public-release-not-authorized",
+      "tests": [
+        "test_m6_evidence.EvidenceQualificationTests.test_frozen_matrix_and_accepted_denominators_are_complete"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q11.unqualified-validation-unsupported",
+      "tests": [
+        "test_execution_validation.ValidationTests.test_unqualified_host_execution_is_unsupported"
+      ],
+      "external": []
+    },
+    {
+      "id": "Q12.clean-install-cli-docs-ci",
+      "tests": [],
+      "external": [
+        "INSTALL_311",
+        "INSTALL_312",
+        "CI_FINAL"
+      ]
+    },
+    {
+      "id": "Q12.full-suite-311",
+      "tests": [],
+      "external": [
+        "SUITE_311"
+      ]
+    },
+    {
+      "id": "Q12.full-suite-312",
+      "tests": [],
+      "external": [
+        "SUITE_312"
+      ]
+    },
+    {
+      "id": "Q12.independent-final-head-code-schema-evidence-review",
+      "tests": [],
+      "external": [
+        "EXACT_HEAD_REVIEW"
+      ]
+    },
+    {
+      "id": "Q12.independent-security-design-review",
+      "tests": [],
+      "external": [
+        "SECURITY_DESIGN_REVIEW"
+      ]
+    }
+  ]
+}

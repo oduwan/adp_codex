@@ -1,6 +1,6 @@
 # Architecture and system boundaries
 
-**Status:** normative design goals. M1–M4 are accepted. M5 has a policy-gated execution candidate; see [Conductor API](CONDUCTOR_API.md) for implemented boundaries and limitations.
+**Status:** normative design goals. M1–M5 are accepted through PR #11; see [Conductor API](CONDUCTOR_API.md) for implemented boundaries and limitations.
 
 ## Purpose
 
@@ -19,7 +19,7 @@ ADP Codex is a portable orchestration layer for existing software repositories. 
 | External Git policy provider | Resolve branch/commit/check/PR/merge rules | Unknown authority means no write |
 | Portable memory | Active state, per-issue compact JSON and generation fencing | Not a raw log archive; separate Git branch |
 
-## Desired user flow (future)
+## Finite authorized user flow
 
 ```text
 adp init -> adp doctor -> adp discover -> adp plan
@@ -37,11 +37,11 @@ adp init -> adp doctor -> adp discover -> adp plan
                          product PR and summary
 ```
 
-The flow includes accepted M1 memory commands and proposed future interfaces.
-Accepted M2 provides a standalone guard API and explicit memory upgrade.
-The accepted [M3 policy API](POLICY_API.md) adds read-only external policy
-inspection and typed authorization decisions. The [M4 discovery candidate](DISCOVERY_API.md)
-adds read-only GitHub observations and dependency proposals. Neither enables `run` or worker execution.
+M1 memory and M2 guard retain their explicit migration/ownership contracts.
+[M3](POLICY_API.md) supplies external decisions and [M4](DISCOVERY_API.md) supplies
+read-only observations. [M5](CONDUCTOR_API.md) integrates them in finite invocations
+with a trusted operator controller and qualified runtime/ports; no component
+implicitly grants execution rights. M6 qualification does not authorize release.
 
 ## Memory and concurrency
 
@@ -67,10 +67,10 @@ Project policy controls branch naming, commit message conventions, CI, code revi
 3. Allow routine in-scope debugging; retain evidence and forbid repeated blind diagnostics.
 4. Review the coherent final revision in a context independent from the code author.
 5. Verify current PR HEAD exactly matches reviewed and qualified revision. Any new commit invalidates the approval.
-6. Merge or close only when authorized by external policy and required checks. Otherwise leave a review-ready PR.
+6. Leave merge/closure/deployment to separate authority; the supplied executor has no such backend.
 7. Publish at most one meaningful product summary for a completed product iteration; omit internal-only cycles.
 
-## Non-goals for first milestone
+## Unsupported or separately qualified operations
 
 No always-on daemon, automatic background scheduling, GitLab adapter, product installation, CI privilege escalation, web dashboard, automatic release deployment, or retroactive import of unrelated production history.
 

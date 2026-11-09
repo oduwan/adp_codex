@@ -14,6 +14,7 @@ from .discovery_types import Status
 from .errors import ADPError, AuthorityError, Conflict
 from .execution_memory import ExecutionJournal, QueuedMemory, invocation_lock
 from .execution_containment import source_seal, admin_seal
+from .execution_privacy import credential_shaped
 from .execution_policy import M4ReadinessService, ReservedSafety, policy_task
 from .execution_schema import worker_result
 from .execution_types import Admission, ExternalObservation, Role, RuntimeStatus, WorkerRequest, WorkerResult
@@ -22,7 +23,7 @@ from .guard_types import (Action, ActionKind, Attestation, DecisionKind, Observa
     Permit, Progress, ProgressKind, data)
 from .policy import PolicyProvider
 from .policy_types import Check, Effect, Operation, Qualifications, Request, Review
-from .schema import integer, key, require, string
+from .schema import MAX_JOURNAL, integer, key, require, string
 from .storage import _MUTEX
 
 
@@ -189,6 +190,7 @@ class Conductor:
                 raise
 
     def _run(self, admissions, *, maximum_parallel, rounds):
+        self._privacy_preflight()
         capabilities = self.runtime.capabilities()
         if not all((capabilities.independent_contexts, capabilities.observe, capabilities.cancel, capabilities.workspace_write)):
             return {"status": "UNSUPPORTED_RUNTIME", "reason": capabilities.reason, "tasks": {}}
@@ -266,6 +268,7 @@ class Conductor:
         if not kwargs.pop("authorized", False):
             raise AuthorityError("resume requires explicit execution/recovery authority")
         with invocation_lock(self.memory.control):
+            self._privacy_preflight()
             self.memory.recover()
             kwargs.setdefault("rounds", 1)
             try:
@@ -362,6 +365,7 @@ class Conductor:
         self._ownership(generation)
         project = self._project(admission)
         if job["result"] is not None:
+            self._public_worker_output(admission, job, job["result"], cached=True)
             head = value(project.root, "rev-parse", "HEAD")
             allowed_head = head == job["revision"]
             if job["role"] == Role.DEVELOPER and not allowed_head:
@@ -407,6 +411,7 @@ class Conductor:
         if observed.status != RuntimeStatus.COMPLETED or observed.result is None or observed.context_id is None:
             raise Conflict("Worker outcome is " + observed.status + "; no completion inferred")
         worker_result(observed.result)
+        self._public_worker_output(admission, job, data(observed.result))
         if request.role != Role.REVIEWER:
             require(not observed.result.approved, "Only an independent Reviewer can approve source")
         unchanged = (value(project.root, "rev-parse", "HEAD") == job["revision"]
@@ -420,6 +425,28 @@ class Conductor:
             elapsed=observed.elapsed_seconds, used_samples=observed.samples, used_bytes=observed.payload_bytes,
             result_digest=source_seal(project.root)))
         return observed.result, self._task(admission)["jobs"][assignment_id]
+
+    def _privacy_preflight(self):
+        # A legacy tainted checkpoint/journal needs operator remediation. Any
+        # ordinary checkpoint would otherwise copy the disclosure again.
+        observed = self.memory.inspect()
+        snapshots = [observed.get("state", {})]
+        pending = self.memory.control / "pending.json"
+        if pending.exists():
+            from .config import load_json
+            snapshots.append(load_json(pending, MAX_JOURNAL).get("state", {}))
+        require(not any(credential_shaped(state.get("execution", {})) for state in snapshots),
+                "Existing execution evidence contains credential-shaped content; no automatic checkpoint/recovery; operator remediation required")
+
+    def _public_worker_output(self, admission, job, payload, *, cached=False):
+        if credential_shaped(payload):
+            # The actual raw receipt remains private. Never put matching text,
+            # including forensic fields, in an error or portable checkpoint.
+            if not cached:
+                self._hazard(admission, job, "contamination", "worker:credential-shaped-output-refused")
+                self.journal.change(lambda execution, state, tasks:
+                    execution["tasks"][key(admission.task_id)].update(stage="BLOCKED"))
+            raise Conflict("Worker output refused for credential-shaped content; operator disposition required")
 
     def _hazard(self, admission, job, risk, reference):
         if job["permit"] is not None:
@@ -539,6 +566,9 @@ class Conductor:
 
     def _cycle(self, admission, generation):
         self._ownership(generation)
+        self._privacy_preflight()
+        if self._task(admission)["stage"] in ("BLOCKED", "CANCELLED"):
+            return {"status": "BLOCKED", "reason": "Task requires explicit operator disposition"}
         self._recover_orphans(admission, generation)
         self._reconcile_forensic(admission)
         stage = self._task(admission)["stage"]
@@ -790,6 +820,7 @@ class Conductor:
             return self._handoff()
 
     def _handoff(self):
+        self._privacy_preflight()
         observed = self.journal.inspect()
         require(observed["local_owner"], "Only the owning Conductor may hand off")
         for task in observed["state"]["execution"]["tasks"].values():

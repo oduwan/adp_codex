@@ -1,6 +1,6 @@
-# Portable working memory — accepted v1 and v2
+# Portable working memory — accepted v1, v2 and v3
 
-**Status:** M1 v1 memory is accepted through PR #7; M2 v2 guard integration is accepted through PR #8. M3 changes neither schema.
+**Status:** M1 v1 memory is accepted through PR #7; M2 v2 guard integration is accepted through PR #8. M3/M4 change neither schema; M5 adds explicitly opted-in v3 through PR #11.
 
 ## Physical layout
 
@@ -155,7 +155,7 @@ size caps, upgrade command and complete synthetic qualification.
 
 ## M5 explicit state version 3
 
-The candidate v3 wrapper adds a bounded closed `execution` object while retaining
+The accepted M5 v3 wrapper adds a bounded closed `execution` object while retaining
 v2 fields and unchanged M1 task/M2 guard schemas. Explicit owner-authorized
 `execution-upgrade` is required; read-only commands never migrate. Old binaries
 refuse v3. The accepted transaction/CAS/ownership protocol transports this

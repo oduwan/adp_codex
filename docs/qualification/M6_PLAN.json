@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "accepted_base": "1eb00b3e94151a16a621aab20e71943b3ea2c8a1",
+  "accepted_regression_denominator": 193,
+  "qualification_denominator": 42,
+  "real_execution_budget": {
+    "maximum_runs": 1,
+    "worker_seconds": 300,
+    "maximum_parallel": 1,
+    "rounds": 2
+  },
+  "public_release": "NOT_AUTHORIZED",
+  "targets": "owned disposable repositories and controlled HTTP fixtures only",
+  "requirements": [
+    {
+      "id": "Q01",
+      "requirement": "Fresh package and portable skill/plugin installation",
+      "original_denominator": 5,
+      "scenarios": [
+        "Q01.wheel-311",
+        "Q01.wheel-312",
+        "Q01.portable-layout",
+        "Q01.host-plugin-install",
+        "Q01.host-enabled-skill-discovery"
+      ]
+    },
+    {
+      "id": "Q02",
+      "requirement": "Two unrelated project policies",
+      "original_denominator": 4,
+      "scenarios": [
+        "Q02.distinct-repositories-and-plans",
+        "Q02.missing-contradictory-policy",
+        "Q02.independent-review-counts",
+        "Q02.cross-repository-replay"
+      ]
+    },
+    {
+      "id": "Q03",
+      "requirement": "Read-only GitHub discovery and dependency planning",
+      "original_denominator": 4,
+      "scenarios": [
+        "Q03.mixed-native-inferred-graph",
+        "Q03.pagination-incomplete-inventory",
+        "Q03.permission-rate-limit-404",
+        "Q03.refresh-source-and-pr-drift"
+      ]
+    },
+    {
+      "id": "Q04",
+      "requirement": "Migration and cross-clone recovery",
+      "original_denominator": 3,
+      "scenarios": [
+        "Q04.explicit-v1-v2-v3-preservation",
+        "Q04.handoff-takeover-generation-fence",
+        "Q04.interrupted-journal-divergence"
+      ]
+    },
+    {
+      "id": "Q05",
+      "requirement": "Isolated bounded concurrent lanes",
+      "original_denominator": 3,
+      "scenarios": [
+        "Q05.two-unrelated-concurrent-lanes",
+        "Q05.bounded-concurrency-and-reservations",
+        "Q05.restart-and-exact-sha-review"
+      ]
+    },
+    {
+      "id": "Q06",
+      "requirement": "Genuine supported Codex evidence",
+      "original_denominator": 2,
+      "scenarios": [
+        "Q06.historical-retained-artifact-audit",
+        "Q06.single-post-fix-real-runtime-proof"
+      ]
+    },
+    {
+      "id": "Q07",
+      "requirement": "Mandatory guard and forensic recovery",
+      "original_denominator": 2,
+      "scenarios": [
+        "Q07.all-stall-thresholds-finite-terminal",
+        "Q07.independent-progress-reset-and-sha-invalidation"
+      ]
+    },
+    {
+      "id": "Q08",
+      "requirement": "Non-fail-fast honest accounting",
+      "original_denominator": 3,
+      "scenarios": [
+        "Q08.durable-finite-campaign",
+        "Q08.validation-all-outcomes-and-quarantine",
+        "Q08.safety-lost-stop-halts-inventory"
+      ]
+    },
+    {
+      "id": "Q09",
+      "requirement": "Observed external-effect idempotency",
+      "original_denominator": 3,
+      "scenarios": [
+        "Q09.git-cas-lost-response",
+        "Q09.forge-pr-comment-restart-drift",
+        "Q09.internal-zero-publication"
+      ]
+    },
+    {
+      "id": "Q10",
+      "requirement": "Security and authority boundaries",
+      "original_denominator": 4,
+      "scenarios": [
+        "Q10.worker-output-credential-refusal",
+        "Q10.paths-symlinks-git-administration",
+        "Q10.untrusted-issue-comment-readme",
+        "Q10.credential-env-permissions-independent-review"
+      ]
+    },
+    {
+      "id": "Q11",
+      "requirement": "Refusal of unauthorized or unsupported operations",
+      "original_denominator": 4,
+      "scenarios": [
+        "Q11.force-merge-deploy-no-authority",
+        "Q11.network-push-unsupported",
+        "Q11.unqualified-validation-unsupported",
+        "Q11.public-release-not-authorized"
+      ]
+    },
+    {
+      "id": "Q12",
+      "requirement": "Final integration documentation and independent reviews",
+      "original_denominator": 5,
+      "scenarios": [
+        "Q12.full-suite-311",
+        "Q12.full-suite-312",
+        "Q12.clean-install-cli-docs-ci",
+        "Q12.independent-security-design-review",
+        "Q12.independent-final-head-code-schema-evidence-review"
+      ]
+    }
+  ]
+}

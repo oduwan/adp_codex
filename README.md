@@ -1,115 +1,92 @@
 # ADP Codex
 
-[![Scaffold CI](https://github.com/oduwan/adp_codex/actions/workflows/scaffold.yml/badge.svg)](https://github.com/oduwan/adp_codex/actions/workflows/scaffold.yml)
+[![Qualification CI](https://github.com/oduwan/adp_codex/actions/workflows/scaffold.yml/badge.svg)](https://github.com/oduwan/adp_codex/actions/workflows/scaffold.yml)
 
-**ADP Codex** is an architecture-first project for a repository-agnostic, Codex-assisted development orchestrator. Its intended workflow is to discover existing GitHub issues, assemble a dependency-aware task track, execute admitted tasks with independent review, and publish only meaningful product outcomes.
+ADP Codex provides portable Git-backed coordination memory, an executable Progress
+Guard, external Git policy decisions, read-only GitHub discovery/planning, and
+finite explicitly authorized Codex orchestration. M1–M5 are accepted through
+[PR #11](https://github.com/oduwan/adp_codex/pull/11), merged at
+`1eb00b3e94151a16a621aab20e71943b3ea2c8a1`.
 
-> **Status: accepted M1–M4, with an M5 policy-gated Conductor candidate.** Execution requires explicit operator authority and supported runtime/ports; unattended scheduling remains unavailable. Memory writes require explicit authorization; discovery/planning grants no product-code, issue or infrastructure execution authority.
+**M6 is qualification codework. Public release is NOT_AUTHORIZED.** No license has
+been selected. A green test, installed skill, Git credential or issue description
+never authorizes execution, merge, deployment or release.
 
-## Principles
+## Installation and first inspection
 
-- **Use the repository's existing work queue.** Read issues, pull requests, dependencies, and current refs; never require proprietary issue syntax.
-- **Keep Git policy external.** Branch conventions, commit rules, merge permissions, acceptance checks, and release authority belong to the target project.
-- **Keep control state separate.** A single Conductor will own compact, portable, Git-backed working memory, independent of product branches and agent-chat history.
-- **Prove progress.** A mandatory Progress Guard will detect repeated unproductive cycles, direct independent forensic reassessment, and never treat skipped or quarantined tests as passing.
-- **Keep product history human-readable.** Internal test repairs, diagnostics, agent handoffs, and orchestration states stay out of product issue comments. Publish no more than one concise product summary per completed product iteration.
-- **Start read-only.** Repository inspection and planning cannot execute issue-body instructions, mutate resources, or assume merge/deploy permissions.
-
-## Accepted M1 portable memory
-
-Issue #1 ships a Python 3.11+ package for explicitly authorized portable
-memory, `init`, `doctor`, `status`, ownership and handoff. See the
-[CLI and API guide](docs/MEMORY_CLI.md) and [v1 state contract](docs/STATE_CONTRACT.md).
-M1 does not execute product code, discover issues or decide Git policy. It was
-reviewed and merged in PR #7; accepted `main` remains non-autonomous.
+Python 3.11+ is required. The engine has no third-party runtime dependencies.
+Install into a fresh virtual environment from the explicitly selected source:
 
 ```bash
-python3 -m pip install .
-adp --help
+python3.11 -m venv /tmp/adp-example-venv
+/tmp/adp-example-venv/bin/python -m pip install .
+/tmp/adp-example-venv/bin/adp --help
 ```
 
-## Accepted M2 Progress Guard
+The Python wheel and portable planning plugin are separate installations. The
+plugin keeps root `plugin.json`, `skills/` and its referenced documentation together;
+see [installation qualification](docs/qualification/INSTALLATION.md). Installing
+that read-only skill does not configure a Conductor or grant execution authority.
+Versions identify local package metadata, not an authorized public release.
 
-Issue #2, accepted through PR #8, adds a standalone executable guard
-with durable counters, externally verified forensic evidence, bounded
-recovery and finite diagnostic censuses. It requires an explicit memory upgrade;
-read-only M1 behavior is preserved. See [the Guard API and migration guide](docs/GUARD_API.md).
-No worker execution or unattended operation is enabled.
-
-## Accepted M3 external policy provider
-
-Issue #3 adds an importable typed provider for project-owned Git conventions,
-policy provenance and exact-plan authorization decisions. Read-only inspection
-and planning neither execute Git writes nor grant permissions from repository
-text or credentials. See [the Policy API](docs/POLICY_API.md) for trust ports,
-profile schema, M1/M2 compatibility and limits. Accepted through PR #9.
-
-## Accepted M4 read-only discovery/planner
-
-Issue #4 adds GET-only GitHub issue/PR discovery, native relationships,
-dependency-aware task proposals and refresh previews that retain prior evidence
-and explicitly mapped M1 progress. Unknown metadata cannot manufacture READY.
-See [the Discovery API](docs/DISCOVERY_API.md) for commands, independent readiness
-assessment, fixtures, schemas and limits. Accepted through PR #10. M4 itself supplies no execution authority.
-
-## M5 Conductor candidate
-
-Issue #5 integrates finite authorized execution, genuine supported Codex delegation,
-independent exact-SHA review and product-only reporting. See [the Conductor API](docs/CONDUCTOR_API.md)
-for explicit v3 migration, trust ports, qualification and unsupported backend limits.
-This candidate still requires independent exact-HEAD integration review.
-
-## Command roadmap
-
-```text
-adp init       inspect a target repository; propose initial configuration
-adp doctor     inspect Git identity, memory health and remote read access
-adp discover   read current issues, PRs, and native relationships
-adp plan       construct and refresh a dependency-aware task track
-adp run        execute authorized work through the Conductor
-adp status     inspect current jobs and blocked decisions
-adp resume     recover safely after an interrupted run
-adp handoff    transfer ownership to another machine
-adp audit      validate evidence, state, and acceptance coverage
-```
-
-**This roadmap includes accepted M1–M4 commands, candidate M5 execution and planned M6 audit.** The packaged Codex skill is intentionally read-only and limited to explaining and reviewing project/track readiness.
-
-## Project layout
-
-```text
-plugin.json                  portable Agent Plugins manifest
-skills/adp-codex/SKILL.md    Codex skill (read-only scaffold)
-docs/ARCHITECTURE.md        core components and ownership boundaries
-docs/PROGRESS_GUARD.md      non-optional anti-loop behavior
-docs/POLICY_PROVIDER.md     external Git workflow integration
-docs/ISSUE_DISCOVERY.md     issue intake and dependency evidence
-docs/ROADMAP.md             independently testable milestones
-AGENTS.md                   contributor and coding-agent rules
-scripts/validate_scaffold.py
-tests/test_scaffold.py
-.github/workflows/scaffold.yml
-```
-
-See [Architecture](docs/ARCHITECTURE.md), [Progress Guard](docs/PROGRESS_GUARD.md), [External policy](docs/POLICY_PROVIDER.md), [Repository Git workflow](docs/GIT_WORKFLOW.md), and [Roadmap](docs/ROADMAP.md).
-
-## Getting started (scaffold)
-
-Clone the repository and validate its packaging:
+Inspect an explicitly selected disposable project without initializing memory:
 
 ```bash
-python3 scripts/validate_scaffold.py
-python3 -m unittest discover -s tests -p 'test_*.py' -v
+adp init --repo ./project --remote team --memory-branch coordination/state --storage ../project-memory --dry-run
+adp discover --repo ./project --remote team --token-env GH_TOKEN
+adp plan --snapshot inventory.json
 ```
 
-Python 3.11+ is the runtime baseline; the package has no third-party runtime dependencies. See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing changes.
+Those names are examples selected by the operator, never ADP defaults. Discovery
+and planning do not mutate files, memory, Git refs or GitHub resources. Missing
+metadata/authority remains UNKNOWN; issue prose never becomes instructions.
 
-## Origin and scope
+## Supported interfaces
 
-This design builds on earlier field experience with compact single-writer coordination and independent exact-revision review, but it does **not** copy any target repository's project-specific safety, deployment, or release policy. The first integration target is GitHub; the system is designed to accommodate other repository providers later. Initial implementation and testing must use disposable synthetic Git repositories and fixture issues, not production worktrees.
+| Component | Available behavior | Authority boundary |
+| --- | --- | --- |
+| [Memory](docs/MEMORY_CLI.md) | init, doctor, status, claim, tasks, immutable inbox, recover, handoff/release | Explicit initialization/write authority and current owner/generation |
+| [Progress Guard](docs/GUARD_API.md) | durable counters, finite forensics, diagnostic censuses | Mandatory reservations; no automatic reset/threshold relaxation |
+| [External policy](docs/POLICY_API.md) | typed inspect/plan/decide | Target-owned branch/commit/check/review rules; final exact-plan ALLOW |
+| [Discovery](docs/DISCOVERY_API.md) | discover, plan, refresh | Read-only observations and independently assessed readiness |
+| [Conductor](docs/CONDUCTOR_API.md) | finite run, status, resume, handoff | Explicit trusted controller/operator evidence, qualified runtime/ports |
 
-## Security and licensing
+Execution first requires separately authorized v1→v2→v3 memory migrations. An
+operator supplies independently verified readiness/policy/evidence services and a
+trusted controller outside product/memory roots. No permissive controller is
+included. Developer, Reviewer and Forensic contexts are separate; source changes
+invalidate review. Bounded concurrency does not imply a daemon or unattended work.
 
-See [SECURITY.md](SECURITY.md). A public GitHub repository is not an authorization to execute arbitrary issue instructions or use private state.
+## Supported-host and backend limits
 
-**License:** not selected yet. No license is granted beyond applicable law. Choose and add a license explicitly before presenting the project as redistributable open-source software.
+Memory writes require POSIX locking, atomic replacement, hard links and fsync.
+Real Codex execution additionally requires Linux `/proc`, child-subreaper support,
+a supported authenticated CLI and trusted OS/authentication installation. Missing
+capabilities produce UNSUPPORTED_RUNTIME. A missing stop receipt remains UNKNOWN.
+
+The supplied Git push backend supports explicitly allowlisted local bare remotes
+with exact CAS; network push is UNSUPPORTED_ATOMIC_REF. Production validation
+needs a separately qualified read-only/network-denied sandbox or port.
+`trusted_disposable=True` is limited to owned synthetic projects. Uncertain
+external delivery and unfinished old-generation approvals require explicit
+reconciliation. No merge, deployment or release execution backend is supplied.
+
+## Qualification and contribution
+
+The [M6 report](docs/qualification/M6_REPORT.md) records Q01–Q12, original
+inventories, exact tested revisions, evidence hashes and remaining limitations.
+It distinguishes synthetic tests, actual installation, historical/fresh real
+Codex proof and independent review. Cross-clone simulation does not prove physical
+power-loss or real cross-machine behavior.
+
+```bash
+python scripts/validate_scaffold.py
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+See [Contributing](CONTRIBUTING.md), [Security](SECURITY.md),
+[Architecture](docs/ARCHITECTURE.md) and [Roadmap](docs/ROADMAP.md).
+The [Git workflow](docs/GIT_WORKFLOW.md) governs contributions to ADP Codex only;
+target repositories retain their own policies. No existing live product repository
+is a qualification target. License/distribution terms, publication, tagging and
+integration remain separate operator decisions.

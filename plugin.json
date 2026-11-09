@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "adp-codex",
-  "version": "0.0.1",
-  "description": "Architecture-stage Codex skill for safely analyzing repository task tracks and planning a future autonomous development orchestrator.",
+  "version": "0.1.0",
+  "description": "Read-only repository planning skill for the separately authorized ADP Codex engine. Installation grants no execution or release authority.",
   "repository": "https://github.com/oduwan/adp_codex"
 }
