@@ -67,6 +67,15 @@ def _group_alive(group):
     return False
 
 
+def frontend_environment():
+    """Only model frontend authentication/settings, never mutation credentials."""
+    names = {"PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TZ", "TERM", "TMPDIR", "TEMP", "TMP",
+        "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+        "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "CODEX_HOME", "CODEX_CA_CERTIFICATE",
+        "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"}
+    return {name: os.environ[name] for name in names if name in os.environ}
+
+
 class CodexExecRuntime:
     """One foreground CLI process per request. No daemon or blind redispatch.
 
@@ -95,12 +104,12 @@ class CodexExecRuntime:
             return self._capabilities
         supported, version, reason = False, "UNKNOWN", "Codex CLI capability probe unavailable"
         try:
-            version = subprocess.check_output([self.executable, "--version"], stderr=subprocess.DEVNULL, timeout=10).decode().strip()
-            help_text = subprocess.check_output([self.executable, "exec", "--help"], stderr=subprocess.DEVNULL, timeout=10).decode()
+            version = subprocess.check_output([self.executable, "--version"], stderr=subprocess.DEVNULL, timeout=10, env=frontend_environment()).decode().strip()
+            help_text = subprocess.check_output([self.executable, "exec", "--help"], stderr=subprocess.DEVNULL, timeout=10, env=frontend_environment()).decode()
             supported = (os.name == "posix" and Path("/proc/self/stat").exists()
                 and all(flag in help_text for flag in ("--json", "--output-schema", "--ephemeral", "--ignore-user-config", "--sandbox")))
             supported = supported and subprocess.check_output([sys.executable, str(self.supervisor), "--probe"],
-                stderr=subprocess.DEVNULL, timeout=5).strip() == b"SUBREAPER_OK"
+                stderr=subprocess.DEVNULL, timeout=5, env=frontend_environment()).strip() == b"SUBREAPER_OK"
             reason = "" if supported else "UNSUPPORTED_RUNTIME: required CLI/sandbox/process-observation capabilities missing"
         except (OSError, subprocess.SubprocessError, UnicodeError):
             supported = False
@@ -184,6 +193,8 @@ class CodexExecRuntime:
             command = [self.executable, "exec", "--ignore-user-config", "--ephemeral", "--json",
                 "--sandbox", "workspace-write" if request.role == Role.DEVELOPER else "read-only",
                 "-c", 'approval_policy="never"', "-c", "sandbox_workspace_write.network_access=false",
+                "-c", 'shell_environment_policy.inherit="core"',
+                "-c", 'shell_environment_policy.exclude=["*_TOKEN","*_SECRET","*_PASSWORD","*_KEY","ADP_*","GIT_*","GH_*","GITHUB_*","AWS_*","AZURE_*","GOOGLE_*","SSH_*","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY"]',
                 "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true", "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
                 "--output-schema", str(schema_path), "-C", str(workspace), "-"]
             wrapper = [sys.executable, str(self.supervisor), "--receipt", str(self.directory / (request.id + ".stop.json")),
@@ -196,7 +207,7 @@ class CodexExecRuntime:
                     source.write(request.prompt.encode())
                     source.seek(0)
                     process = subprocess.Popen([*wrapper, "--", *command], stdin=source, stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT, start_new_session=True)
+                        stderr=subprocess.STDOUT, start_new_session=True, env=frontend_environment())
             except OSError:
                 record["status"] = RuntimeStatus.UNSUPPORTED_RUNTIME
                 self._save(request.id, record)

@@ -27,6 +27,7 @@ class RuntimeTests(unittest.TestCase):
             "if '--version' in sys.argv: print('synthetic-cli');sys.exit(0)\n"
             "if '--help' in sys.argv: print('--json --output-schema --ephemeral --ignore-user-config --sandbox');sys.exit(0)\n"
             "prompt=sys.stdin.read()\n"
+            "if prompt=='environment':\n root=sys.argv[sys.argv.index('-C')+1]\n record={'mutation_present':any(k.startswith(('GH_','GITHUB_','ADP_','GIT_','AWS_','AZURE_','GOOGLE_','SSH_')) for k in os.environ),'model_auth_present':os.environ.get('OPENAI_API_KEY')=='synthetic-model-auth','core_policy':('shell_environment_policy.inherit=\\\"core\\\"' in sys.argv)}\n open(os.path.join(root,'environment.json'),'w').write(json.dumps(record))\n"
             "if prompt=='startup-error': sys.exit(3)\n"
             "print(json.dumps({'type':'thread.started','thread_id':'independent:'+str(os.getpid())}),flush=True)\n"
             "if prompt=='timeout':\n subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']);time.sleep(60)\n"
@@ -135,3 +136,17 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(capabilities.independent_contexts)
         self.assertFalse(capabilities.cancel)
         self.assertEqual(self.runtime.dispatch(self.request()).status,RuntimeStatus.UNSUPPORTED_RUNTIME)
+
+    def test_mutation_credentials_are_not_inherited_by_worker_frontend(self):
+        from unittest.mock import patch
+        sentinels={name:'synthetic-no-permissions' for name in ('GH_TOKEN','GITHUB_TOKEN','ADP_OWNER_TOKEN','GIT_SSH_COMMAND','AWS_SECRET_ACCESS_KEY','AZURE_CLIENT_SECRET','GOOGLE_APPLICATION_CREDENTIALS','SSH_AUTH_SOCK')}
+        sentinels['OPENAI_API_KEY']='synthetic-model-auth'
+        with patch.dict(os.environ,sentinels):
+            request=self.request('environment')
+            self.runtime.dispatch(request)
+            result=self.runtime.wait(request.id)
+        self.assertEqual(result.status,RuntimeStatus.COMPLETED)
+        observed=json.loads((self.root/'environment.json').read_text())
+        self.assertFalse(observed['mutation_present'])
+        self.assertTrue(observed['model_auth_present'])
+        self.assertTrue(observed['core_policy'])

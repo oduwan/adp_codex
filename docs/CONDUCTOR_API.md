@@ -84,8 +84,14 @@ Developer uses `workspace-write`; Reviewer/Forensic use `read-only`. Approval is
 roots are excluded. No dangerous sandbox bypass, model override, private host
 protocol or shared conversation implements delegation.
 
-The CLI, authentication installation, OS sandbox and explicit operator extensions
-are trusted. Capability flags alone do not prove an authenticated model execution;
+The CLI, model-authentication installation, OS sandbox and explicit operator
+extensions are trusted. The CLI frontend receives a minimal environment containing
+basic process settings and required model authentication; Git/forge/ADP/cloud/SSH
+mutation credentials and Git execution overrides are removed. Worker shell commands
+use explicit core inheritance and secret-variable exclusions. Filesystem access to
+the trusted Codex authentication/config installation remains an OS/CLI boundary;
+these environment filters do not certify an arbitrary host's filesystem isolation.
+Capability flags alone do not prove an authenticated model execution;
 a launch failure is UNSUPPORTED_RUNTIME. Supported operation currently requires
 Linux/POSIX, `/proc`, child-subreaper support and local durable runtime receipts. Receipts
 live outside worker roots. Worker prompts are at most 32 KiB, output at most 1 MiB,
