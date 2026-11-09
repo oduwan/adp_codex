@@ -58,6 +58,13 @@ commits or public reports. Live GitHub mutation qualification is not supplied.
 Local CAS push and trusted-disposable validation cannot be relabeled production
 network/sandbox qualification. Unsupported environments/operations fail closed.
 
+The optional [validation sandbox](docs/operations/VALIDATION_SANDBOX.md) requires
+explicit pinned runtime-image and binary selection plus real OS capability probes.
+Its initial Linux x86_64 profile permits one process and no writable scratch;
+namespace mounts and seccomp enforce its boundary. Raw command prefixes do not
+qualify production validation. A supported probe grants no M1/M2/M3 or operator
+execution authority, and an unavailable host never silently executes checks.
+
 ## Reporting a vulnerability
 
 Do not post private data, credentials or sensitive logs in public issues. Use

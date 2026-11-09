@@ -211,8 +211,8 @@ class SubprocessValidation:
         self.sandbox_prefix = sandbox_prefix
 
     def run(self, root, revision, required, *, seconds):
-        require(self.trusted_disposable or self.sandbox_prefix,
-                "UNSUPPORTED_VALIDATION_RUNTIME: explicitly select a qualified sandbox or trusted disposable project")
+        require(self.trusted_disposable and not self.sandbox_prefix,
+                "UNSUPPORTED_VALIDATION_RUNTIME: use an explicitly qualified validation port; bare prefixes are not enforcement")
         require(set(required) == {c.name for c in self.commands}, "Validation matrix must match every required project check")
         results = []
         deadline = time.monotonic() + seconds

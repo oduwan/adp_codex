@@ -1,0 +1,337 @@
+"""Explicit, probed bubblewrap validation; no host-prefix or privilege fallback."""
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import platform
+import selectors
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import asdict, dataclass, is_dataclass
+
+from .config import load_json, safe_path
+from .discovery_schema import digest as canonical_digest
+from .errors import ADPError
+from .execution_containment import admin_seal, source_seal
+from .execution_ports import UnconfirmedValidation, supervised_validation, validation_stopped
+from .execution_privacy import credential_shaped
+from .execution_types import CheckCommand, ValidationResult
+from .git import value
+from .guard_types import Outcome
+from .policy_types import OutcomeCount
+from .schema import decode, fields, integer, require
+from .storage import atomic
+
+
+def digest(value):
+    def plain(item):
+        if is_dataclass(item):
+            return plain(asdict(item))
+        if isinstance(item, Path):
+            return str(item)
+        if isinstance(item, dict):
+            return {key: plain(val) for key, val in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [plain(val) for val in item]
+        return item
+    return canonical_digest(plain(value))
+
+
+class UnsupportedValidation(ADPError):
+    code = 7
+
+
+class UnsafeValidation(ADPError):
+    """Confirmed safety refusal; Conductor's existing exception path latches M2."""
+    def __init__(self, results, reference):
+        super().__init__('Validation containment stop; remaining inventory NOTRUN')
+        self.results, self.reference = tuple(results), reference
+
+
+@dataclass(frozen=True)
+class SandboxPolicy:
+    image: Path
+    image_digest: str
+    binary: Path
+    binary_digest: str
+    executable: str
+    memory_bytes: int = 256 * 1024 * 1024
+    cpu_seconds: int = 10
+    descriptors: int = 64
+    output_bytes: int = 65536
+
+
+@dataclass(frozen=True)
+class ValidationCapability:
+    supported: bool
+    backend: str
+    version: str
+    kernel: str
+    policy_digest: str
+    evidence: str
+    reason: str = ''
+
+
+def file_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def image_digest(root: Path) -> str:
+    """Credential-free operator runtime image, without special files or links."""
+    rows, total = [], 0
+    for path in sorted(root.rglob('*')):
+        info = path.lstat()
+        require(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode), 'Runtime image links/special files are unsupported')
+        require(not stat.S_ISREG(info.st_mode) or info.st_nlink == 1, 'Runtime image hard links are unsupported')
+        total += info.st_size
+        require(len(rows) < 4096 and total <= 128 * 1024 * 1024, 'Runtime image exceeds fixed bounds')
+        rows.append((path.relative_to(root).as_posix(), info.st_mode, file_digest(path) if path.is_file() else ''))
+    return digest(rows)
+
+
+def _private(root: Path) -> Path:
+    root = safe_path(root)
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = root.stat()
+    require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o700, 'Private validation receipts require owned mode0700 storage')
+    return root
+
+
+class BubblewrapValidation:
+    """Single-process, zero-scratch Linux x86_64 profile selected by an operator.
+
+    The image is a dedicated runtime filesystem, not /usr or a host root. No
+    authentication, controller, memory or unrelated worktree belongs in it.
+    Every invocation probes the OS boundary before executing any product check.
+    """
+    def __init__(self, commands: tuple[CheckCommand, ...], *, policy: SandboxPolicy,
+                 protected_roots: tuple[Path, ...], receipts: Path):
+        require(type(policy) is SandboxPolicy and type(commands) is tuple and 0 < len(commands) <= 32,
+                'Explicit typed sandbox policy and finite validation matrix required')
+        self.commands, self.policy = commands, policy
+        self.protected_roots = tuple(safe_path(p) for p in protected_roots)
+        require(bool(self.protected_roots), 'Explicit memory/controller/authentication protection roots required')
+        self.receipts = _private(receipts)
+        self._launcher_digest = file_digest(Path(__file__).with_name('validation_launcher.py'))
+        self._validate_policy()
+
+    def policy_digest(self):
+        return digest({'configuration': self.policy, 'launcher_sha256': self._launcher_digest, 'profile_version': 1})
+
+    def _validate_policy(self):
+        p = self.policy
+        require(platform.system() == 'Linux' and platform.machine() == 'x86_64', 'UNSUPPORTED_VALIDATION_RUNTIME: Linux x86_64 required')
+        image, binary = safe_path(p.image), safe_path(p.binary)
+        require(file_digest(Path(__file__).with_name('validation_launcher.py')) == self._launcher_digest, 'Trusted validation launcher changed')
+        require(image.is_dir() and binary.is_file() and binary.stat().st_mode & 0o111
+                and not binary.stat().st_mode & (stat.S_ISUID | stat.S_ISGID), 'A non-setuid explicit bubblewrap runtime is required')
+        require(file_digest(binary) == p.binary_digest and image_digest(image) == p.image_digest, 'Pinned validation runtime changed')
+        for field, low, high in ((p.memory_bytes, 64 * 1024 * 1024, 1024 * 1024 * 1024),
+                                 (p.cpu_seconds, 1, 300), (p.descriptors, 32, 128), (p.output_bytes, 1024, 65536)):
+            require(type(field) is int and low <= field <= high, 'Invalid fixed sandbox resource limit')
+        for name in ('work', 'proc', 'dev', 'tmp'):
+            require((image / name).is_dir() and not any((image / name).iterdir()), 'Runtime image mount/scratch slots must be empty')
+        protected = (*self.protected_roots, Path(__file__).resolve().parent)
+        require(all(not q.is_relative_to(image) and not image.is_relative_to(q) for q in protected), 'Runtime image overlaps protected host data')
+        require(not self.receipts.is_relative_to(image) and not image.is_relative_to(self.receipts), 'Runtime image overlaps private receipts')
+        for command in self.commands:
+            require(type(command) is CheckCommand and command.argv and command.argv[0] == p.executable
+                    and type(command.seconds) is int and 1 <= command.seconds <= 300
+                    and type(command.denominator) is int and command.denominator > 0, 'Invalid registered executable/argv or original denominator')
+            require(all(type(v) is str and 0 < len(v) <= 32768 and '\0' not in v for v in command.argv)
+                    and sum(len(v) for v in command.argv) <= 65536, 'Registered argv exceeds bounds')
+        require(len({c.name for c in self.commands}) == len(self.commands), 'Validation check names must be unique')
+        guest = PurePosixPath(p.executable)
+        require(guest.is_absolute() and '..' not in guest.parts, 'Executable must name an absolute image path')
+        executable = image.joinpath(*guest.parts[1:])
+        require(executable.is_file() and executable.stat().st_mode & 0o111, 'Registered executable is absent from the pinned image')
+
+    def _source(self, root: Path, revision: str):
+        root = safe_path(root)
+        require(root.is_dir() and (root / '.git').is_dir(), 'UNSUPPORTED_VALIDATION_RUNTIME: standalone Git checkout required')
+        require(value(root, 'rev-parse', 'HEAD') == revision, 'Validation source revision drifted')
+        require(all(not root.is_relative_to(q) and not q.is_relative_to(root) for q in
+                    (*self.protected_roots, self.receipts, self.policy.image)), 'Product overlaps protected validation data')
+        total = 0
+        for index, path in enumerate(root.rglob('*')):
+            info = path.lstat()
+            total += info.st_size
+            require(index < 8192 and total <= 64 * 1024 * 1024, 'Source inventory exceeds fixed validation bounds')
+            require(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode), 'Special source files are unsupported')
+            require(not stat.S_ISREG(info.st_mode) or info.st_nlink == 1, 'Source hard links cannot expose outside data')
+            if stat.S_ISLNK(info.st_mode):
+                require(path.resolve().is_relative_to(root), 'Outside source symlink is refused')
+        config = (root / '.git/config').read_text()
+        require(not credential_shaped(config) and 'extraheader' not in config.lower() and '[credential' not in config.lower(),
+                'Credential-bearing product Git configuration is unsupported')
+        return source_seal(root), admin_seal(root)
+
+    def _argv(self, root, argv, seconds):
+        p = self.policy
+        limits = json.dumps({'memory_bytes': p.memory_bytes, 'cpu_seconds': min(seconds, p.cpu_seconds), 'descriptors': p.descriptors}, separators=(',', ':'))
+        return (sys.executable, '-I', str(Path(__file__).with_name('validation_launcher.py')),
+                '--binary', str(p.binary), '--image', str(p.image), '--source', str(root),
+                '--limits', limits, '--', *argv)
+
+    def _execute(self, root, argv, seconds):
+        require(sum(1 for _ in self.receipts.glob('receipt-*.json')) < 256, 'Private receipt inventory exhausted')
+        raw, errors = bytearray(), bytearray()
+        with supervised_validation(self._argv(root, argv, seconds), seconds) as (launch, stop_path, subject):
+            process = subprocess.Popen(launch, cwd='/', stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, env={'PATH': '/usr/bin:/bin'}, start_new_session=True)
+            try:
+                end = time.monotonic() + seconds
+                try:
+                    with selectors.DefaultSelector() as selector:
+                        selector.register(process.stdout, selectors.EVENT_READ, raw)
+                        selector.register(process.stderr, selectors.EVENT_READ, errors)
+                        while selector.get_map():
+                            left = end - time.monotonic()
+                            ready = selector.select(max(0, left))
+                            if left <= 0 or not ready:
+                                raise subprocess.TimeoutExpired(argv, seconds)
+                            for event, _ in ready:
+                                block = os.read(event.fd, 65536)
+                                if not block:
+                                    selector.unregister(event.fileobj)
+                                else:
+                                    event.data.extend(block)
+                                    if len(raw) + len(errors) > self.policy.output_bytes:
+                                        raise UnsafeValidation((), 'sandbox:output-limit')
+                    process.wait(timeout=max(0.01, end - time.monotonic()))
+                except BaseException:
+                    if process.poll() is None:
+                        process.terminate()
+                    try:
+                        process.wait(timeout=8)  # Fixed M5 stop/reap observation budget, not added check time.
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        try:
+                            process.wait(timeout=1)
+                        finally:
+                            raise UnconfirmedValidation('sandbox:supervisor-stop-unknown', str(stop_path.parent))
+                    validation_stopped(stop_path, subject, process.pid)
+                    raise
+                stop = validation_stopped(stop_path, subject, process.pid)
+                if stop.get('status') not in ('EXITED', 'TIMEOUT'):
+                    raise UnsafeValidation((), 'sandbox:unexpected-supervisor-stop')
+                descriptor, receipt = tempfile.mkstemp(prefix='receipt-', suffix='.json', dir=self.receipts)
+                with os.fdopen(descriptor, 'w') as output:
+                    json.dump({'stop': stop, 'command_digest': digest(argv), 'output_hex': bytes(raw).hex(),
+                               'stderr_hex': bytes(errors).hex()}, output, sort_keys=True)
+                    output.flush()
+                    os.fsync(output.fileno())
+                return bytes(raw), stop
+            finally:
+                process.stdout.close()
+                process.stderr.close()
+
+    def capabilities(self, *, seconds=12) -> ValidationCapability:
+        p = self.policy
+        evidence, version = 'sandbox:unqualified', ''
+        stage = 'policy'
+        try:
+            deadline = time.monotonic() + seconds
+            self._validate_policy()
+            stage = 'runtime-version'
+            version = subprocess.check_output((str(p.binary), '--version'), stderr=subprocess.DEVNULL, timeout=2).decode().strip()
+            with tempfile.TemporaryDirectory(prefix='adp-sandbox-probe-') as temporary:
+                root = Path(temporary)
+                # Trusted probe code, never a target-project command.
+                probes = (('benign', "print('ADP_SANDBOX_READY')", False),
+                          ('write', "open('/work/forbidden','w').write('unsafe')", True),
+                          ('network', "import socket;socket.create_connection(('127.0.0.1',9),1)", True),
+                          ('fork', "import os;os.fork()", True))
+                rows = []
+                for name, source, killed in probes:
+                    stage = 'probe-' + name
+                    left = min(3, int(deadline - time.monotonic()))
+                    require(left > 0, 'Capability probe budget exhausted')
+                    raw, stop = self._execute(root, (p.executable, '-I', '-B', '-c', source), left)
+                    require(stop['stopped'] is True and stop['status'] == 'EXITED'
+                            and (stop['cli_exit'] in (-signal.SIGSYS, 128 + signal.SIGSYS) if killed
+                                 else stop['cli_exit'] == 0 and raw.strip() == b'ADP_SANDBOX_READY'), 'Required OS enforcement probe failed')
+                    rows.append((name, stop['cli_exit'], hashlib.sha256(raw).hexdigest()))
+                evidence = 'sandbox:' + digest({'policy': self.policy_digest(), 'rows': rows, 'version': version, 'kernel': platform.release()})
+            return ValidationCapability(True, 'bubblewrap-seccomp-single-process', version, platform.release(), self.policy_digest(), evidence)
+        except (ADPError, OSError, ValueError, subprocess.SubprocessError) as exc:
+            return ValidationCapability(False, 'bubblewrap-seccomp-single-process', version, platform.release(), self.policy_digest(), evidence,
+                                        'UNSUPPORTED_VALIDATION_RUNTIME: ' + stage + ': ' + type(exc).__name__)
+
+    def _result(self, command, revision, outcome, counts=None, quarantined=0):
+        counts = counts or {name: command.denominator if name == outcome else 0 for name in Outcome}
+        measured = tuple(OutcomeCount(name, counts[name]) for name in sorted(Outcome))
+        return ValidationResult(command.name, revision, outcome, command.denominator, counts[Outcome.PASS],
+                                'sandbox-validation:' + digest({'policy': self.policy_digest(), 'command': command, 'revision': revision, 'counts': counts}), measured, quarantined)
+
+    def run(self, root: Path, revision: str, required: tuple[str, ...], *, seconds: int):
+        require(type(seconds) is int and 1 <= seconds <= 300 and type(required) is tuple
+                and len(set(required)) == len(required) and set(required) == {c.name for c in self.commands},
+                'Exact required validation matrix and bounded invocation required')
+        deadline = time.monotonic() + seconds
+        self._validate_policy()
+        before = self._source(root, revision)
+        lock_path = self.receipts / (digest(str(root)) + '.lock')
+        with open(lock_path, 'a+b') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise UnconfirmedValidation('sandbox:already-running', str(self.receipts))
+            state_path = self.receipts / (digest(str(root)) + '.json')
+            state = load_json(state_path) if state_path.exists() else {}
+            if state.get('status') == 'RUNNING':
+                raise UnconfirmedValidation('sandbox:interrupted-stop-unknown', str(self.receipts))
+            capability = self.capabilities(seconds=max(1, int(deadline - time.monotonic())))
+            if not capability.supported:
+                raise UnsupportedValidation(capability.reason)
+            subject = digest({'root': str(root), 'revision': revision, 'source': before, 'policy': self.policy_digest(), 'commands': self.commands})
+            results = []
+            atomic(state_path, json.dumps({'status': 'RUNNING', 'subject': subject}).encode())
+            try:
+                for index, command in enumerate(self.commands):
+                    left = int(deadline - time.monotonic())
+                    if left <= 0:
+                        results.append(self._result(command, revision, Outcome.NOTRUN))
+                        continue
+                    try:
+                        raw, stop = self._execute(root, command.argv, min(left, command.seconds))
+                        if stop['status'] == 'TIMEOUT':
+                            results.append(self._result(command, revision, Outcome.TIMEOUT))
+                            continue
+                        if stop['cli_exit'] in (-signal.SIGSYS, 128 + signal.SIGSYS):
+                            raise UnsafeValidation((), 'sandbox:OS-policy-refusal')
+                        payload = decode(raw)
+                        fields(payload, 'denominator counts quarantined')
+                        require(type(payload['denominator']) is int and payload['denominator'] == command.denominator,
+                                'Original validation denominator changed')
+                        require(type(payload['counts']) is dict and set(payload['counts']) == set(Outcome), 'All validation outcomes required')
+                        for count in payload['counts'].values():
+                            integer(count)
+                        integer(payload['quarantined'])
+                        require(sum(payload['counts'].values()) == command.denominator and payload['quarantined'] <= command.denominator,
+                                'Incomplete validation accounting')
+                        outcome = Outcome.PASS if stop['cli_exit'] == 0 and payload['counts']['PASS'] == command.denominator and payload['quarantined'] == 0 else Outcome.FAIL
+                        results.append(self._result(command, revision, outcome, payload['counts'], payload['quarantined']))
+                    except subprocess.TimeoutExpired:
+                        results.append(self._result(command, revision, Outcome.TIMEOUT))
+                    except (UnconfirmedValidation, UnsafeValidation) as exc:
+                        measured = [*results, self._result(command, revision, Outcome.UNKNOWN)]
+                        measured.extend(self._result(c, revision, Outcome.NOTRUN) for c in self.commands[index + 1:])
+                        exc.results = tuple(measured)
+                        raise
+                    except (ADPError, OSError):
+                        results.append(self._result(command, revision, Outcome.UNKNOWN))
+                    require(self._source(root, revision) == before, 'Validation source/admin changed')
+                atomic(state_path, json.dumps({'status': 'STOPPED', 'subject': subject, 'results': [r.evidence for r in results]}).encode())
+                return tuple(results)
+            except BaseException:
+                # Durable RUNNING is deliberately not cleared without a complete
+                # stop/accounting proof. Restart never blindly starts another run.
+                raise

@@ -147,10 +147,12 @@ commands never come from issue text. It strips inherited forge/ADP credentials,
 limits IO/time, supervises/reaps detached validation descendants too, and continues
 the original matrix. Host subprocesses are **only**
 allowed with explicit `trusted_disposable=True` for owned synthetic projects.
-Production use must explicitly supply an independently qualified sandbox prefix
-or validation port enforcing read-only filesystem and denied network. Without
-one, it fails `UNSUPPORTED_VALIDATION_RUNTIME`. An argv prefix is trusted operator
-configuration; ADP cannot certify an arbitrary extension or its isolation.
+Production use must explicitly supply an independently qualified validation port
+enforcing read-only filesystem and denied network. Raw argv prefixes are refused;
+their presence is not proof of isolation. Without a supported qualified port it
+fails `UNSUPPORTED_VALIDATION_RUNTIME`. The explicit Linux single-process
+[bubblewrap profile](operations/VALIDATION_SANDBOX.md) probes actual OS enforcement
+and preserves the accepted validation/result interface; it is never auto-enabled.
 Validation is durably RUNNING before launching commands. Missing supervisor stop
 evidence is an execution-liveness hazard, not an ordinary failed check: later
 inventory stays NOTRUN, guard containment stops, and run/resume report UNKNOWN
