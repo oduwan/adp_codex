@@ -238,12 +238,15 @@ def validate_track(track):
     for snapshot in track.snapshots:
         validate_snapshot(snapshot)
     compact(tuple(key(c.identity) for c in track.candidates), MAX_ITEMS, 64)
-    repositories = {s.repository.id: s.repository for s in track.snapshots}
+    observed = {i.identity: (s.repository, i) for s in track.snapshots for i in s.issues}
     for candidate in track.candidates:
         validate_identity(candidate.identity)
         require(candidate.identity == candidate.issue.identity, "Candidate identity mismatch")
-        if candidate.identity.repository_id in repositories:
-            validate_issue(candidate.issue, repositories[candidate.identity.repository_id])
+        validate_repository(candidate.repository)
+        require(candidate.repository.id == candidate.identity.repository_id, "Retained repository identity mismatch")
+        validate_issue(candidate.issue, candidate.repository)
+        if candidate.observed:
+            require(observed.get(candidate.identity) == (candidate.repository, candidate.issue), "Observed candidate differs from its snapshot")
         for dependency in candidate.prerequisites:
             validate_identity(dependency)
         require(len(candidate.progress) <= 8 and len(candidate.reviews) <= 8, "Retained evidence capacity exhausted")

@@ -18,6 +18,26 @@ class PlannerTests(unittest.TestCase):
         self.authority = Authority()
         self.planner = DependencyPlanner(authority=self.authority, clock=lambda: 100)
 
+    def test_unresolved_inferred_targets_need_explicit_confirmation_or_dismissal(self):
+        for body in ("Depends on #999", "Blocked by other/private#1", "Duplicate of #999", "Superseded by #999"):
+            snapshot, _ = discover([issue(body=body)])
+            with self.subTest(body=body):
+                track = self.planner.plan((snapshot,), reviews=assessed(snapshot, self.authority))
+                self.assertEqual(track.candidates[0].status, Status.NEEDS_SPEC)
+
+    def test_retained_issue_schema_is_checked_after_repository_deselection(self):
+        first, _ = discover()
+        old = self.planner.plan((first,), reviews=assessed(first, self.authority))
+        other, _ = discover([issue(name="beta/other")], name="beta/other", rid="repo-opaque-B")
+        refreshed = self.planner.plan((other,), previous=old)
+        self.assertEqual(load_track(data(refreshed)), refreshed)
+        retained = next(i for i, c in enumerate(refreshed.candidates) if c.identity == first.issues[0].identity)
+        for field, value in (("state", "invalid-state"), ("url", "https://evil.invalid/issue"), ("revision", "not-a-digest")):
+            payload = data(refreshed)
+            payload["candidates"][retained]["issue"][field] = value
+            with self.subTest(field=field), self.assertRaises(ADPError):
+                load_track(payload)
+
     def test_disposition_cannot_waive_an_unresolved_native_prerequisite(self):
         path = "/repos/alpha/product/issues/2/dependencies/blocked_by?per_page=100&page=1"
         snapshot, _ = discover([issue(1), issue(2, state="closed")], changed={path: Response(200, [issue(1)])})
@@ -73,6 +93,7 @@ class PlannerTests(unittest.TestCase):
 
     def test_text_dependencies_remain_tentative_until_confirmed_or_dismissed(self):
         snapshot, _ = discover([issue(1), issue(2, body="Depends on #1; ordinary mention #7")])
+        self.assertEqual([r.kind for r in snapshot.issues[1].relations], ["BLOCKED_BY", "RELATED"])
         reviews = assessed(snapshot, self.authority)
         track = self.planner.plan((snapshot,), reviews=reviews)
         self.assertEqual(track.candidates[1].status, Status.NEEDS_SPEC)

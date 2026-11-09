@@ -132,7 +132,8 @@ def inferred(body: str, repository: str, source: str) -> tuple[Relation, ...]:
     pattern = r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/issues/([1-9][0-9]*)|(?<![\w/])(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#([1-9][0-9]*)"
     for match in re.finditer(pattern, body):
         name, number = (match[1], match[2]) if match[1] else (match[3] or repository, match[4])
-        prefix = body[max(0, body.rfind("\n", 0, match.start()) + 1):match.start()].lower()
+        clause = max(body.rfind("\n", 0, match.start()), body.rfind(";", 0, match.start())) + 1
+        prefix = body[clause:match.start()].lower()
         kind = "DUPLICATE_OF" if "duplicate of" in prefix else "SUPERSEDED_BY" if "superseded by" in prefix else (
             "BLOCKED_BY" if any(p in prefix for p in ("depends on", "blocked by", "requires")) else "RELATED")
         result.append(Relation(kind, Target(name, int(number)), "INFERRED", source + ":" + str(match.start())))
@@ -280,7 +281,7 @@ class GitHubDiscoveryAdapter:
         repo = Repository(rid, metadata["full_name"], "https://github.com/" + metadata["full_name"], *local)
         issue_rows = self._pages(prefix + "/issues", "issues", "state=all&sort=created&direction=asc")
         pull_rows = self._pages(prefix + "/pulls", "pulls", "state=all&sort=created&direction=asc")
-        issues, pulls = {}, {}
+        issues, pulls, attempted_issues, attempted_pulls = {}, {}, set(), set()
         for row in issue_rows:
             if type(row) is dict and "pull_request" in row:
                 continue
@@ -288,7 +289,8 @@ class GitHubDiscoveryAdapter:
                 target = _target(row)
                 require(target.repository.lower() == repo.name.lower(), "Foreign issue inventory")
                 number, iid = target.number, Identity(rid, target.issue_id)
-                require(number not in issues, "Duplicate/conflicting issue inventory identity")
+                require(number not in attempted_issues, "Duplicate/conflicting issue inventory identity")
+                attempted_issues.add(number)
                 base = prefix + "/issues/" + str(number)
                 label = "issue:" + key(iid)
                 comments_raw = self._pages(base + "/comments", label + ":comments")
@@ -300,13 +302,20 @@ class GitHubDiscoveryAdapter:
                 relations = [Relation("BLOCKED_BY", _target(dep), "NATIVE", API + base + "/dependencies/blocked_by") for dep in dependencies]
                 relations.extend(Relation("SUB_ISSUE", _target(child), "NATIVE", API + base + "/sub_issues") for child in children)
                 notices = []
-                for event in timeline:
-                    if type(event) is dict and event.get("event") in {"marked_as_duplicate", "unmarked_as_duplicate"}:
-                        notices.append("Native duplicate history requires current canonical disposition assessment: " + digest(event))
-                    if type(event) is dict and event.get("event") == "cross-referenced":
-                        source = event.get("source", {}).get("issue")
-                        if type(source) is dict and "pull_request" in source:
-                            relations.append(Relation("PULL_REQUEST", _target(source), "NATIVE", API + base + "/timeline#" + digest(event)))
+                for event_index, event in enumerate(timeline):
+                    try:
+                        require(type(event) is dict and type(event.get("event")) is str and bool(event["event"]), "Malformed timeline event")
+                        if event["event"] in {"marked_as_duplicate", "unmarked_as_duplicate"}:
+                            notices.append("Native duplicate history requires current canonical disposition assessment: " + digest(event))
+                        if event["event"] == "cross-referenced":
+                            require(type(event.get("source")) is dict and type(event["source"].get("issue")) is dict, "Malformed native cross-reference")
+                            source = event["source"]["issue"]
+                            target = _target(source)
+                            relations.append(Relation("PULL_REQUEST" if "pull_request" in source else "RELATED", target,
+                                "NATIVE", API + base + "/timeline#" + digest(event)))
+                    except (ADPError, KeyError, TypeError, ValueError):
+                        self._coverage(label + ":invalid-timeline:" + str(event_index), base + "/timeline", "PARTIAL", None, 0,
+                                       "Malformed timeline event/cross-reference; known issue retained")
                 body = row.get("body") or ""
                 text(body)
                 relations.extend(inferred(body, repo.name, API + base + ":body"))
@@ -336,6 +345,8 @@ class GitHubDiscoveryAdapter:
                 require(type(row) is dict and type(row.get("number")) is int, "Malformed PR inventory")
                 number = row["number"]
                 integer(number, 1)
+                require(number not in attempted_pulls, "Duplicate/conflicting PR inventory identity")
+                attempted_pulls.add(number)
                 route = prefix + "/pulls/" + str(number)
                 current = self._one(route, "pull:" + str(number))
                 if current is None:

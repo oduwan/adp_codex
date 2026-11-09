@@ -41,6 +41,22 @@ class ReadOnlyCommands(GitFixture):
             code = main([command, "--repo", str(self.a), "--remote", "forge", "--api-fixture", str(self.api), *args])
         return code, output.getvalue(), errors.getvalue()
 
+    def test_empty_incomplete_plan_reports_nonzero_without_losing_preview(self):
+        payload = json.loads(self.api.read_text())
+        for route, response in payload["responses"].items():
+            if "/issues?" in route:
+                response["body"] = []
+            if "/pulls?" in route:
+                response.update(status=404, body=None)
+        self.api.write_text(json.dumps(payload))
+        before = filesystem_snapshot(self.base)
+        code, output, errors = self.invoke("plan")
+        self.assertEqual(code, 4, errors)
+        preview = json.loads(output)
+        self.assertEqual(preview["candidates"], [])
+        self.assertTrue(any(c["status"] == "UNKNOWN" for c in preview["snapshots"][0]["coverage"]))
+        self.assertEqual(before, filesystem_snapshot(self.base))
+
     def test_discover_plan_and_both_refresh_commands_preserve_every_byte_and_ref(self):
         code, output, errors = self.invoke("plan")
         self.assertEqual(code, 0, errors)

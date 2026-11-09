@@ -38,7 +38,8 @@ import caching are outside target-repository operations; use Python's `-B` or
 
 Exit 0 means a preview was generated, not that tasks passed acceptance or may
 execute. Incomplete inventories and UNKNOWN candidates return 4 while preserving
-the available preview. Invalid schemas, unresolvable repository identity and
+the available preview, including an incomplete inventory with zero candidates.
+Invalid schemas, unresolvable repository identity and
 unsafe inputs return a controlled ADP refusal. NEEDS_SPEC, BLOCKED_DEPENDENCY and
 BLOCKED_OPERATOR remain explicit classifications, never successful product work.
 
@@ -158,6 +159,8 @@ retains prior HEAD history and forces reassessment; changed issue observations
 retain digest references. Reviews and exact M1 task records are retained without
 relabeling outcomes. Old reviews can qualify only if the verifier confirms the
 unchanged current context and freshness. A saved status is never current authority.
+Every candidate retains its source repository descriptor so semantic issue schema
+validation still applies after that repository is removed from a refresh.
 
 `MemoryProgressAdapter(memory, bindings)` calls only accepted `Memory.inspect()`
 and schema validation. Explicit `MemoryBinding(identity, task_id)` maps provider

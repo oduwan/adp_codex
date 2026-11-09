@@ -9,7 +9,7 @@ from .config import Config, load_json
 from .guard_types import data
 from .memory import Memory
 from .schema import fields, require
-from .discovery import DependencyPlanner, MemoryProgressAdapter
+from .discovery import DependencyPlanner, MemoryProgressAdapter, complete_snapshot
 from .discovery_github import FixtureTransport, GitHubDiscoveryAdapter, GitHubHTTPTransport, Response
 from .discovery_schema import MAX_BYTES, load_snapshot, load_track, typed
 from .discovery_types import MemoryBinding, Status
@@ -69,7 +69,7 @@ def run(args):
         snapshots = (GitHubDiscoveryAdapter(name, transport, expected_id=args.github_id, config=config).discover(),)
     if args.command == "discover" and not refreshing:
         require(len(snapshots) == 1 and args.memory_bindings is None, "Discovery emits one snapshot; use plan for memory reconciliation")
-        return data(snapshots[0]), 0 if all(c.status == "COMPLETE" for c in snapshots[0].coverage) else 4
+        return data(snapshots[0]), 0 if complete_snapshot(snapshots[0]) else 4
     ports = ()
     if args.memory_bindings:
         if config is None:
@@ -83,4 +83,4 @@ def run(args):
     # CLI deliberately has no self-asserted review/verifier switch. Extensions
     # supply independent authenticated readiness through the importable API.
     track = DependencyPlanner().plan(snapshots, previous=previous, memory=ports)
-    return data(track), 4 if any(c.status == Status.UNKNOWN for c in track.candidates) else 0
+    return data(track), 4 if any(not complete_snapshot(s) for s in snapshots) or any(c.status == Status.UNKNOWN for c in track.candidates) else 0

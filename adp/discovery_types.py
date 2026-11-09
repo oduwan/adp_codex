@@ -164,6 +164,7 @@ class ProgressRecord:
 class Candidate:
     identity: Identity
     issue: Issue
+    repository: Repository
     status: Status
     reasons: tuple[str, ...]
     prerequisites: tuple[Identity, ...]

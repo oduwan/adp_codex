@@ -90,7 +90,7 @@ def _retain(old, current, limit):
     return tuple(records[k] for k in sorted(records))
 
 
-def _complete(snapshot):
+def complete_snapshot(snapshot):
     required = {"repository", "repository-refresh", "issues", "pulls", "issues-refresh", "pulls-refresh",
                 "inventory-stable", "context-stable"}
     for issue in snapshot.issues:
@@ -189,7 +189,8 @@ class DependencyPlanner:
                         graph[identity].add(target)
                 elif relation.kind in {"BLOCKED_BY", "DUPLICATE_OF", "SUPERSEDED_BY"}:
                     accepted = assessments[identity]
-                    if accepted is None or digest(relation) not in accepted.dismissed_inferences and target not in accepted.confirmed_dependencies and target != accepted.duplicate_of:
+                    if accepted is None or (digest(relation) not in accepted.dismissed_inferences
+                            and not (target is not None and (target in accepted.confirmed_dependencies or target == accepted.duplicate_of))):
                         tentative[identity].append("Tentative " + relation.kind + " requires independent confirmation: " + relation.source)
                 elif relation.kind == "SUB_ISSUE" and assessments[identity] is None:
                     tentative[identity].append("Native sub-issue hierarchy needs bounded parent/child scope assessment")
@@ -209,7 +210,7 @@ class DependencyPlanner:
             status = Status.READY
             if snapshot is None:
                 status, why = Status.UNKNOWN, ["Issue absent from refresh; prior observation/evidence retained"]
-            elif not _complete(snapshot):
+            elif not complete_snapshot(snapshot):
                 status, why = Status.UNKNOWN, ["Discovery inventory or required metadata is incomplete"]
             elif missing[identity]:
                 status, why = Status.BLOCKED_DEPENDENCY, missing[identity]
@@ -286,13 +287,16 @@ class DependencyPlanner:
             head_history = tuple(sorted(set((prior.head_history + prior.pull_heads if prior else ()) + tuple(heads[identity])), key=lambda p: (p[0], p[1] or "")))
             history = tuple(sorted(set((prior.observation_history if prior else ()) + (digest(observations[identity]),))))
             require(len(head_history) <= 64 and len(history) <= 8, "Observation evidence capacity exhausted; explicit disposition required")
-            candidates.append(Candidate(identity, observations[identity], statuses[identity], tuple(reasons[identity]),
+            repo = snapshot_map[identity].repository if identity in snapshot_map else prior.repository
+            candidates.append(Candidate(identity, observations[identity], repo, statuses[identity], tuple(reasons[identity]),
                 tuple(sorted(graph[identity])), tuple(sorted(set(heads[identity]))), progress, retained_reviews, identity in snapshot_map,
                 head_history, history))
         if cycles:
             diagnostics.append("Cycles retained; track is not a complete DAG")
         if remaining:
             diagnostics.append("Cyclic tasks and their dependants are not in the proposed order")
+        if any(not complete_snapshot(s) for s in snapshots):
+            diagnostics.append("Selected repository inventory/metadata is incomplete; no readiness is assumed")
         titles = {}
         for identity, issue in observations.items():
             titles.setdefault(issue.title.strip().casefold(), []).append(identity)

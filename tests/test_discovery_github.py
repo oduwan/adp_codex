@@ -18,6 +18,23 @@ from discovery_fixtures import Authority, assessed, discover, issue, pull, respo
 
 
 class GitHubDiscoveryTests(unittest.TestCase):
+    def test_malformed_timeline_entries_are_incomplete_without_losing_the_issue(self):
+        path = "/repos/alpha/product/issues/1/timeline?per_page=100&page=1"
+        for event in (None, {"event": "cross-referenced", "source": {"issue": None}}):
+            snapshot, _ = discover(changed={path: Response(200, [event])})
+            with self.subTest(event=event):
+                self.assertEqual(len(snapshot.issues), 1)
+                self.assertTrue(any(c.status != "COMPLETE" for c in snapshot.coverage))
+                authority = Authority()
+                track = DependencyPlanner(authority=authority, clock=lambda: 100).plan((snapshot,), reviews=assessed(snapshot, authority))
+                self.assertEqual(track.candidates[0].status, Status.UNKNOWN)
+
+    def test_overlapping_pr_pages_keep_partial_preview_without_duplicate_hydration(self):
+        path = "/repos/alpha/product/pulls?state=all&sort=created&direction=asc&per_page=1&page=2"
+        snapshot, transport = discover(prs=[pull(10), pull(11)], per_page=1, changed={path: Response(200, [pull(10)])})
+        self.assertEqual([p.number for p in snapshot.pulls], [10])
+        self.assertEqual(transport.calls.count("/repos/alpha/product/pulls/10"), 1)
+        self.assertTrue(any(c.name == "pulls" and c.status == "PARTIAL" for c in snapshot.coverage))
     def test_native_duplicate_history_and_cross_reference_without_event_id(self):
         pr = pull()
         source = {**issue(10), "node_id": pr["node_id"], "pull_request": {"url": pr["url"]}}
