@@ -1,6 +1,7 @@
 """Actual M1/M2/M3/M5 plus fake authenticated provider and real Git atomic CAS."""
 import copy
 import json
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -228,7 +229,9 @@ class NetworkExecutionQualification(ExecutionFixture):
             self.assertNotIn("ls-remote", args)
             return gv(root, *args)
         self.server.lose_ack = True
-        with patch("adp.policy_adapters.value", side_effect=no_network_git):
+        # Explicitly select the documented canonical UTC transport envelope.
+        # The first local +0200 run correctly refused nonrepresentable commits.
+        with patch("adp.policy_adapters.value", side_effect=no_network_git), patch.dict(os.environ, {"TZ": "UTC"}):
             result = self.conductor.run((self.admissions[0],), maximum_parallel=1, authorized=True)
         self.assertEqual(result["status"], "COMPLETE", result)
         self.assertEqual(sum(kind == "ref" for kind, _ in self.server.mutations), 1)
