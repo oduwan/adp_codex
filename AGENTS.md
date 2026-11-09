@@ -5,7 +5,7 @@ Scope: this repository only (`oduwan/adp_codex`). This is **not** a policy templ
 ## Current phase
 
 - The M0 architecture-and-skill scaffold is complete. Implementation proceeds through the bounded, dependency-ordered issues #1–#6; do not rebuild M0 as a prerequisite.
-- M1 portable memory and `adp init` are accepted on `main` through PR #7; M2 Progress Guard is accepted through PR #8. The autonomous engine, `adp discover`, and `adp run` do **not** yet exist on the accepted main branch. Update capability claims only after the corresponding implementation is reviewed, merged, and qualified.
+- M1 portable memory and `adp init` are accepted on `main` through PR #7; M2 Progress Guard through PR #8; M3 external policy decisions through PR #9. The autonomous engine, `adp discover`, and `adp run` do **not** yet exist on the accepted main branch. Update capability claims only after the corresponding implementation is reviewed, merged, and qualified.
 - Before implementation read the active issue and `docs/ARCHITECTURE.md`, `docs/STATE_CONTRACT.md`, `docs/PROGRESS_GUARD.md`, `docs/POLICY_PROVIDER.md`, and `docs/ROADMAP.md`.
 - Keep each implementation inside its issue's accepted scope; dependencies are entry gates. No dependent issue may treat unmerged work as an accepted prerequisite.
 - Follow the project's binding [Git and commit policy](docs/GIT_WORKFLOW.md): dedicated issue branch, Conventional Commits with issue references, clean/checkable commits, Draft PR and independent exact-HEAD review. This policy is for **adp_codex only**; it must never be imposed on target repositories by the ADP engine.

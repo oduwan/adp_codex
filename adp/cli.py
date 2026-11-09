@@ -56,6 +56,8 @@ def parser() -> argparse.ArgumentParser:
     retire.add_argument("task_id")
     retire.add_argument("--evidence", required=True)
     retire.add_argument("--confirm-disposition", action="store_true")
+    from .discovery_cli import add_commands
+    add_commands(commands, common)
     return root
 
 
@@ -76,6 +78,11 @@ def check_product_worktrees(config: Config) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
+        if args.command in ("discover", "plan", "refresh"):
+            from .discovery_cli import run
+            report, code = run(args)
+            emit(report)
+            return code
         config = Config.discover(args.repo, remote=args.remote,
             repository_id=args.repository_id, branch=args.branch,
             storage=args.storage, config=args.config)

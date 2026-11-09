@@ -1,6 +1,6 @@
 # External Git workflow policy API
 
-Issue #3 supplies a typed, standard-library policy provider candidate. M1 memory
+Issue #3 supplies the accepted typed, standard-library policy provider (PR #9). M1 memory
 and M2 guard are accepted through PRs #7 and #8. This module neither executes
 Git writes nor enables `discover`, `run`, workers, CI, comments or deployments.
 

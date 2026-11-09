@@ -1,6 +1,6 @@
 # Architecture and system boundaries
 
-**Status:** normative design goals. M1 memory and M2 guard are accepted; M3 policy decisions are a scoped candidate. Discovery and autonomous execution remain future work.
+**Status:** normative design goals. M1 memory, M2 guard and M3 policy decisions are accepted. M4 read-only discovery/planning is a scoped candidate; autonomous execution remains future work.
 
 ## Purpose
 
@@ -39,8 +39,9 @@ adp init -> adp doctor -> adp discover -> adp plan
 
 The flow includes accepted M1 memory commands and proposed future interfaces.
 Accepted M2 provides a standalone guard API and explicit memory upgrade.
-The [M3 policy API candidate](POLICY_API.md) adds read-only external policy
-inspection and typed authorization decisions. Neither enables `run` or worker execution.
+The accepted [M3 policy API](POLICY_API.md) adds read-only external policy
+inspection and typed authorization decisions. The [M4 discovery candidate](DISCOVERY_API.md)
+adds read-only GitHub observations and dependency proposals. Neither enables `run` or worker execution.
 
 ## Memory and concurrency
 

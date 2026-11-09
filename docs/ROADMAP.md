@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-**Status:** M0 scaffold, M1 portable memory and M2 Progress Guard are accepted. M3 has an implementation candidate; M4–M6 remain planned milestones. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
+**Status:** M0 scaffold and M1–M3 are accepted. M4 has a read-only implementation candidate; M5–M6 remain planned milestones. The first target is GitHub with Python 3.11+ and a portable Codex skill, validated against unrelated synthetic repositories.
 
 ## Milestones
 
@@ -22,20 +22,24 @@ Implement persistent anti-loop counters, progress evidence, independent forensic
 
 **Gate:** synthetic diagnostic-spiral and false-PASS adversarial tests. Accepted through [PR #8](https://github.com/oduwan/adp_codex/pull/8), merged at `7412af056967e161db54f6111a5b02ab8a8dcf88`.
 
-### M3 — External project policy provider ([#3](https://github.com/oduwan/adp_codex/issues/3))
+### M3 — External project policy provider (accepted, [#3](https://github.com/oduwan/adp_codex/issues/3))
 
 Extract branch, commit, validation, PR, merge and release rules from project-owned policies. ADP provides coordination, not a competing Git workflow.
 
 **Gate:** two incompatible synthetic policy profiles; unknown authority is denied, never invented.
 
-The Issue #3 candidate provides [typed policy decisions](POLICY_API.md) and
-read-only Git/mock adapters. Execution and live forge discovery remain separate.
+Accepted through [PR #9](https://github.com/oduwan/adp_codex/pull/9), merged at
+`81a327b01b42b8ae24f592734e2d3c2c72200c75`. The provider supplies
+[typed policy decisions](POLICY_API.md) and read-only Git/mock adapters.
 
 ### M4 — GitHub issue discovery and planning ([#4](https://github.com/oduwan/adp_codex/issues/4))
 
 Implement read-only `discover`, `plan` and refresh: issue and PR ingestion, native and confirmed dependency edges, cycles, readiness classification and deterministic reconciliation.
 
 **Gate:** pagination, permissions, stale-HEAD, dependency-cycle and prompt-injection fixtures; zero discovery writes.
+
+The [M4 API candidate](DISCOVERY_API.md) supplies GET-only GitHub discovery,
+deterministic dependency proposals and evidence-preserving refresh previews.
 
 ### M5 — Conductor execution and product reporting ([#5](https://github.com/oduwan/adp_codex/issues/5))
 

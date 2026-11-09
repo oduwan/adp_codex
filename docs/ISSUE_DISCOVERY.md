@@ -1,6 +1,6 @@
 # Issue discovery and dependency-aware planning
 
-**Status:** desired contract for future `adp discover` and `adp plan`, not implemented.
+**Status:** binding boundary contract with an M4 read-only implementation candidate. See [Discovery API](DISCOVERY_API.md) for the executable interfaces, schemas, trust ports and limits. No execution or persistent track saving is included.
 
 ## Input
 
