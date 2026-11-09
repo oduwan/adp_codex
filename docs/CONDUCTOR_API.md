@@ -1,8 +1,9 @@
-# M5 Conductor execution candidate
+# Accepted M5 Conductor execution
 
-M1–M4 are accepted through PRs #7–#10. M5 is a candidate requiring independent
-exact-revision integration review. The packaged planning skill remains read-only;
-invoking it supplies no execution rights. M6 release qualification is not implemented.
+M1–M5 are accepted through PRs #7–#11; M5 merged at
+`1eb00b3e94151a16a621aab20e71943b3ea2c8a1`. The packaged planning skill remains read-only;
+invoking it supplies no execution rights. M6 qualification is tracked separately in [the report](qualification/M6_REPORT.md);
+public release remains NOT_AUTHORIZED.
 
 ## Entry points and authority
 
@@ -208,7 +209,15 @@ receipts for independent audit; omit it to delete the disposable fixture on exit
 Fixture-runtime unit tests are explicitly synthetic and never substituted
 for this proof. Raw runtime records/logs, tokens and local memory are not committed.
 
-Strict production network-CAS, arbitrary validation sandbox qualification, release
-qualification and unattended scheduling remain outside the supplied backend. No
+Strict production network-CAS, arbitrary validation sandbox qualification, public
+release execution and unattended scheduling remain outside the supplied backend. No
 ongoing work is promised after invocation exit; unobserved process state is reported
 explicitly rather than claiming a background worker or successful cancellation.
+
+## M6 privacy qualification correction
+
+Recognizable credential/private-key shapes in fresh or cached worker results
+(including nested forensic output) are refused before a portable checkpoint.
+Raw responses stay in private runtime evidence; contamination blocks the work.
+This is a bounded detector, not universal secret detection or a substitute for
+trusted output classification. M1–M5 schemas and guard thresholds are unchanged.

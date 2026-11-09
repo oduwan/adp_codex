@@ -1,26 +1,65 @@
 # Security policy
 
-## Status
+## Supported scope and release boundary
 
-ADP Codex is a research/architecture-stage project, not a production-grade autonomous execution system. The current skill is read-only. Do not use this scaffold to authorize changes to product repositories.
+M1–M5 are accepted implementations, including finite policy-gated execution.
+M6 independently qualifies the stated host/backend envelope; it does not certify
+production deployment, select a license or authorize a public release. The
+packaged planning skill remains read-only. No security support SLA is promised.
 
-## Threat model
+## Trust and containment
 
-This project will ingest **untrusted** issue bodies, comments, pull requests, repository text, test logs and tool results. Such content can contain prompt-injection attempts, misleading links, forged instructions or malicious commands. It must never be promoted into operator, system, repository governance or tool authority merely because it appears in an Issue.
+Issue/comment/README text, policy prose, PR metadata, worker output and test logs
+are untrusted data. They cannot grant execution rights or authenticate a reviewer.
+The operator, supported Codex CLI/authentication installation, OS controls, Git
+administration, external evidence verifiers and explicitly configured extensions
+are trusted. A verifier that accepts arbitrary labels invalidates that boundary.
 
-Future engine boundaries must enforce:
+- M1 has one owner, generation fencing, immutable assignments/results and strict
+  checkpoint/CAS recovery. Git is not a distributed lease; takeover requires a
+  separately confirmed stopped owner. Read-only inspection never claims ownership.
+- M2 reserves material execution, retains stall counters, requires independent
+  exact-context evidence and stops unsafe/unproductive attempts. No reset or
+  threshold bypass is available. Diagnostic censuses retain non-PASS denominators.
+- M3 requires verified external project rules and exact operation authorization;
+  credentials and green CI confer no merge, release or deployment rights.
+- M4 intake/planning is GET-only and cannot execute embedded commands, mutate
+  canonical memory or manufacture readiness from incomplete observations.
+- M5 isolates workspaces and Developer/Reviewer/Forensic contexts, binds review to
+  exact SHA, checks every effect and persists intent before external submission.
+  Linux subreapers must kill/reap detached descendants before stop confirmation.
+  Missing worker/validation stop evidence remains UNKNOWN across restart/handoff.
 
-- Explicit repository and user authorization for each mutating action.
-- Separation of independent review from the authoring context.
-- Exact-revision validation and refusal after HEAD drift.
-- Git and memory ownership fencing, no force-push/rewrite on conflicts.
-- No secrets, personal data, production documents or raw diagnostics in portable memory.
-- Data minimization and bounded retention of working state.
-- A mandatory Progress Guard that blocks unproductive or unsafe retries.
-- No deployment, account administration, credential handling or release merge without separately established authority.
+The trusted engine must be installed outside worker roots. Developer sandbox
+writes are admitted narrowly; review/forensics are read-only. Direct worker
+network and broad temporary write roots are disabled. The CLI frontend receives
+minimal process/model-auth settings; Git/forge/ADP/cloud/SSH environment credentials
+are excluded. Shell inheritance is restricted. These filters do not prove an
+arbitrary host's filesystem/authentication isolation or defend against hostile
+same-user administration, kernel compromise or replacement of trusted binaries.
+
+## Private evidence and output
+
+Raw worker transcripts, credentials, diagnostic logs, local ownership tokens and
+runtime state stay outside Git. Only bounded structured public summaries, hashes
+and approved identifiers belong in portable memory/product reporting. Recognizable
+credential/private-key shapes in worker results, including nested forensic fields,
+are refused before checkpointing; the affected work is blocked and ordinary
+reservations receive a contamination stop. This bounded detector is defense in
+depth, not universal secret detection or proof that arbitrary prose is public.
+Trusted output classification and operator review remain necessary. Existing
+historical disclosure cannot be repaired by hiding a later result; stop, rotate
+any real exposed credential and obtain explicit disposition without rewriting
+history under this qualification task.
+
+Qualification uses synthetic credential markers and newly disposable repositories
+only. Real production records, tokens and raw artifacts must never enter tests,
+commits or public reports. Live GitHub mutation qualification is not supplied.
+Local CAS push and trusted-disposable validation cannot be relabeled production
+network/sandbox qualification. Unsupported environments/operations fail closed.
 
 ## Reporting a vulnerability
 
-Do not post exploit instructions, credentials, tokens, private data or sensitive logs in public issues. If GitHub private vulnerability reporting is available for this repository, use it. Otherwise request a private disclosure channel from the maintainer without sharing exploit detail publicly.
-
-As the project matures, this file will document supported versions and a formal response policy. No security support SLA is currently promised.
+Do not post private data, credentials or sensitive logs in public issues. Use
+GitHub private vulnerability reporting when available; otherwise request a private
+channel from the maintainer without disclosing exploit detail publicly.
