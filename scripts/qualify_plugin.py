@@ -84,11 +84,18 @@ def main():
     environment={k:v for k,v in os.environ.items() if k in ('PATH','HOME','USER','LANG','LC_ALL','TMPDIR','HTTPS_PROXY','HTTP_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR','CODEX_HOME')}
     command(['git','init','--initial-branch=local-catalog'],cwd=catalog,log=directory/'git-init.log',env=environment)
     selector='adp-codex@'+name
-    installed=False;attempted=False
+    installed=False;attempted=False;catalog_attempted=False
     evidence={'schema_version':1,'source':args.source_ref,'original_denominator':3,'archive_sha256':archive_hash,
               'public_release':'NOT_AUTHORIZED','limits':'Enabled host discovery only; no GUI/model-driven skill usage, model turn or public listing'}
     try:
         evidence['runtime']=subprocess.check_output(['codex','--version'],env=environment,stderr=subprocess.DEVNULL,timeout=10).decode().strip()
+        # CLI catalog registration is explicit; desktop repository auto-discovery
+        # is not a substitute for observing the CLI's configured marketplace.
+        catalog_attempted=True
+        registered=call(['codex','plugin','marketplace','add',str(catalog),'--json'],catalog,environment,directory/'catalog-add.log')
+        write_evidence(directory/'catalog-add.json',registered)
+        if registered.get('marketplaceName')!=name or registered.get('alreadyAdded') is True:
+            raise ValueError('Qualification catalog is not freshly registered')
         before=call(['codex','plugin','list','--marketplace',name,'--available','--json'],catalog,environment,directory/'before.log')
         write_evidence(directory/'before.json',before)
         if any(p.get('name')=='adp-codex' for p in before.get('installed',[])):raise ValueError('Qualification namespace is not fresh')
@@ -114,20 +121,36 @@ def main():
         evidence.update(status='UNSUPPORTED' if isinstance(exc,FileNotFoundError) else 'ERROR',error_type=type(exc).__name__)
         raise
     finally:
-        if attempted and not installed:
-            actual=call(['codex','plugin','list','--marketplace',name,'--json'],catalog,environment,directory/'reconcile.log')
-            write_evidence(directory/'reconcile.json',actual)
-            installed=any(p.get('name')=='adp-codex' for p in actual.get('installed',[]))
-        if installed:
-            cleanup=call(['codex','plugin','remove',selector,'--json'],catalog,environment,directory/'remove.log')
-            write_evidence(directory/'remove.json',cleanup)
-            after_cleanup=call(['codex','plugin','list','--marketplace',name,'--json'],catalog,environment,directory/'cleanup-check.log')
-            write_evidence(directory/'cleanup-check.json',after_cleanup)
-            if any(p.get('name')=='adp-codex' for p in after_cleanup.get('installed',[])):
-                raise RuntimeError('Disposable plugin cleanup is unconfirmed')
-            evidence['own_namespace_removed']=True
-        digest=write_evidence(directory/'plugin.json',evidence)
-        print(json.dumps({'status':evidence.get('status','UNKNOWN'),'source':args.source_ref,'evidence_sha256':digest,'public_release':'NOT_AUTHORIZED'},sort_keys=True))
+        try:
+            if attempted and not installed:
+                actual=call(['codex','plugin','list','--marketplace',name,'--json'],catalog,environment,directory/'reconcile.log')
+                write_evidence(directory/'reconcile.json',actual)
+                installed=any(p.get('name')=='adp-codex' for p in actual.get('installed',[]))
+            if installed:
+                cleanup=call(['codex','plugin','remove',selector,'--json'],catalog,environment,directory/'remove.log')
+                write_evidence(directory/'remove.json',cleanup)
+                after_cleanup=call(['codex','plugin','list','--marketplace',name,'--json'],catalog,environment,directory/'cleanup-check.log')
+                write_evidence(directory/'cleanup-check.json',after_cleanup)
+                if any(p.get('name')=='adp-codex' for p in after_cleanup.get('installed',[])):
+                    raise RuntimeError('Disposable plugin cleanup is unconfirmed')
+                evidence['own_namespace_removed']=True
+            if catalog_attempted:
+                catalogs=call(['codex','plugin','marketplace','list','--json'],catalog,environment,directory/'catalog-reconcile.log')
+                write_evidence(directory/'catalog-reconcile.json',catalogs)
+                if any(row.get('name')==name for row in catalogs.get('marketplaces',[])):
+                    removed=call(['codex','plugin','marketplace','remove',name,'--json'],catalog,environment,directory/'catalog-remove.log')
+                    write_evidence(directory/'catalog-remove.json',removed)
+                remaining=call(['codex','plugin','marketplace','list','--json'],catalog,environment,directory/'catalog-cleanup.log')
+                write_evidence(directory/'catalog-cleanup.json',remaining)
+                if any(row.get('name')==name for row in remaining.get('marketplaces',[])):
+                    raise RuntimeError('Disposable catalog cleanup is unconfirmed')
+                evidence['own_catalog_removed']=True
+        except Exception as exc:
+            evidence.update(status='ERROR',cleanup_error_type=type(exc).__name__)
+            raise
+        finally:
+            digest=write_evidence(directory/'plugin.json',evidence)
+            print(json.dumps({'status':evidence.get('status','UNKNOWN'),'source':args.source_ref,'evidence_sha256':digest,'public_release':'NOT_AUTHORIZED'},sort_keys=True))
     return 0
 
 

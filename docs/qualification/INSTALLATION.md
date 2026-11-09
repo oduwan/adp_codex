@@ -43,10 +43,16 @@ the pinned package. The [Codex CLI reference](https://learn.chatgpt.com/docs/cli
 documents local plugin installation/listing/removal; no public listing is involved:
 
 ```text
+codex plugin marketplace add /absolute/path/to/YOUR_DISPOSABLE_CATALOG --json
 codex plugin add adp-codex@YOUR_DISPOSABLE_CATALOG --json
 codex plugin list --marketplace YOUR_DISPOSABLE_CATALOG --json
 codex plugin remove adp-codex@YOUR_DISPOSABLE_CATALOG --json
+codex plugin marketplace remove YOUR_DISPOSABLE_CATALOG --json
 ```
+
+Register the uniquely named local catalog explicitly for CLI use. Desktop
+repository catalog discovery alone did not register it in CLI0.167.0. Remove
+only that temporary plugin and catalog after checking discovery.
 
 The qualification procedure checks original bytes and metadata in the installed
 copy, then actual enabled skill discovery through documented `skills/list` in a
