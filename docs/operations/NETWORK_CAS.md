@@ -162,7 +162,10 @@ The original frozen new-method inventory is
 [NETWORK_CAS_TEST_INVENTORY.json](NETWORK_CAS_TEST_INVENTORY.json):33 methods.
 Independent review adds12 security methods in the separate
 [NETWORK_CAS_SECURITY_TEST_INVENTORY.json](NETWORK_CAS_SECURITY_TEST_INVENTORY.json).
-The original33 and accepted210 denominators remain unchanged. Existing tests/fixtures,
+The original33 and accepted210 denominators remain unchanged. Three runner
+accounting tests are separately frozen in
+[M7_ACCOUNTING_TEST_INVENTORY.json](M7_ACCOUNTING_TEST_INVENTORY.json), giving48
+new methods in total (33original +12security +3accounting). Existing tests/fixtures,
 frozen M6 scenario maps, state schemas and guard thresholds remain unchanged.
 CI runs the accepted suite and separate honest M7 runner on Python3.11/3.12.
 
@@ -225,6 +228,16 @@ PASS (Python3.11.10), log SHA256
 `eb4ea86fb8b7e0599a8f7be7b63ed0f0510e2180c9fdf368eb5e47bc057d696f`.
 The prior additional security campaign passed8/8 atb58dea72a8d106ad53044245e5f54033d15bdf5a,
 log SHA256 `5f405ea5bc142b89fd3dfccb8a6460b692244bb73cbce1d2f0b7df87adeba645`.
+Independent corrected cleanup replay1/1PASS SHA256
+`f912d2b28cae73e3a03ae0880b15694c56b0f5b41cca58c51bf847528d8860b9`;
+independent corrected repository-scope proof SHA256
+`1e3aaa61f160104e960b5f2c4adc1e888af43caca57179d9d0614925f5ea216c`.
+The shared M7 runner also now preserves class/module setup and teardown failures
+as separate fixture observations: affected original method IDs remain NOTRUN,
+and any fixture ERROR/SKIP prevents aggregate PASS. The accepted M6 helper is
+unchanged. Independent runner proof3/3PASS includes spoofed lifecycle-looking
+ordinary IDs, which still fail strict inventory accounting (private log SHA256
+`d91de3bdbf69ebfee651d6d4582d26d685ee24c8e412ee8b83aaef7f5947b6a1`).
 All new security cases and fresh independent assessment remain required at the
 final committed revision. No timeout, guard threshold or assertion was relaxed.
 
