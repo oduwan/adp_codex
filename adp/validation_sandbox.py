@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass, is_dataclass
+from contextlib import contextmanager
 
 from .config import load_json, safe_path
 from .discovery_schema import digest as canonical_digest
@@ -27,7 +28,7 @@ from .git import value
 from .guard_types import Outcome
 from .policy_types import OutcomeCount
 from .schema import decode, fields, integer, require
-from .storage import atomic
+from .storage import atomic, sync_directory
 
 
 def digest(value):
@@ -180,10 +181,41 @@ class BubblewrapValidation:
                 '--binary', str(p.binary), '--image', str(p.image), '--source', str(root),
                 '--limits', limits, '--', *argv)
 
+    @contextmanager
+    def _flight(self, argv):
+        descriptor = os.open(self.receipts / 'execution.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'a+b') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise UnconfirmedValidation('sandbox:execution-already-running', str(self.receipts))
+            active = self.receipts / 'active.json'
+            if active.exists() or active.is_symlink():
+                raise UnconfirmedValidation('sandbox:prior-launch-stop-unknown', str(self.receipts))
+            atomic(active, json.dumps({'status': 'PREPARED', 'command_digest': digest(argv),
+                                       'policy_digest': self.policy_digest()}).encode())
+            yield active
+
+    def _record(self, active, argv, raw, errors, stop):
+        descriptor, receipt = tempfile.mkstemp(prefix='receipt-', suffix='.json', dir=self.receipts)
+        payload = json.dumps({'stop': stop, 'command_digest': digest(argv), 'policy_digest': self.policy_digest(),
+                              'output_hex': bytes(raw).hex(), 'stderr_hex': bytes(errors).hex()}, sort_keys=True).encode()
+        with os.fdopen(descriptor, 'wb') as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        active.unlink()
+        sync_directory(self.receipts)
+        return 'sandbox-stop:' + hashlib.sha256(payload).hexdigest()
+
     def _execute(self, root, argv, seconds):
+        self._validate_policy()
         require(sum(1 for _ in self.receipts.glob('receipt-*.json')) < 256, 'Private receipt inventory exhausted')
         raw, errors = bytearray(), bytearray()
-        with supervised_validation(self._argv(root, argv, seconds), seconds) as (launch, stop_path, subject):
+        with self._flight(argv) as active, supervised_validation(self._argv(root, argv, seconds), seconds) as (launch, stop_path, subject):
+            atomic(active, json.dumps({'status': 'RUNNING', 'command_digest': digest(argv),
+                                       'policy_digest': self.policy_digest(), 'stop_path': str(stop_path),
+                                       'request_digest': subject}).encode())
             process = subprocess.Popen(launch, cwd='/', stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE, env={'PATH': '/usr/bin:/bin'}, start_new_session=True)
             try:
@@ -206,7 +238,7 @@ class BubblewrapValidation:
                                     if len(raw) + len(errors) > self.policy.output_bytes:
                                         raise UnsafeValidation((), 'sandbox:output-limit')
                     process.wait(timeout=max(0.01, end - time.monotonic()))
-                except BaseException:
+                except BaseException as exc:
                     if process.poll() is None:
                         process.terminate()
                     try:
@@ -217,18 +249,14 @@ class BubblewrapValidation:
                             process.wait(timeout=1)
                         finally:
                             raise UnconfirmedValidation('sandbox:supervisor-stop-unknown', str(stop_path.parent))
-                    validation_stopped(stop_path, subject, process.pid)
+                    stop = validation_stopped(stop_path, subject, process.pid)
+                    exc.validation_evidence = self._record(active, argv, raw, errors, stop)
                     raise
                 stop = validation_stopped(stop_path, subject, process.pid)
                 if stop.get('status') not in ('EXITED', 'TIMEOUT'):
                     raise UnsafeValidation((), 'sandbox:unexpected-supervisor-stop')
-                descriptor, receipt = tempfile.mkstemp(prefix='receipt-', suffix='.json', dir=self.receipts)
-                with os.fdopen(descriptor, 'w') as output:
-                    json.dump({'stop': stop, 'command_digest': digest(argv), 'output_hex': bytes(raw).hex(),
-                               'stderr_hex': bytes(errors).hex()}, output, sort_keys=True)
-                    output.flush()
-                    os.fsync(output.fileno())
-                return bytes(raw), stop
+                reference = self._record(active, argv, raw, errors, stop)
+                return bytes(raw), stop, reference
             finally:
                 process.stdout.close()
                 process.stderr.close()
@@ -254,22 +282,25 @@ class BubblewrapValidation:
                     stage = 'probe-' + name
                     left = min(3, int(deadline - time.monotonic()))
                     require(left > 0, 'Capability probe budget exhausted')
-                    raw, stop = self._execute(root, (p.executable, '-I', '-B', '-c', source), left)
+                    raw, stop, reference = self._execute(root, (p.executable, '-I', '-B', '-c', source), left)
                     require(stop['stopped'] is True and stop['status'] == 'EXITED'
                             and (stop['cli_exit'] in (-signal.SIGSYS, 128 + signal.SIGSYS) if killed
                                  else stop['cli_exit'] == 0 and raw.strip() == b'ADP_SANDBOX_READY'), 'Required OS enforcement probe failed')
-                    rows.append((name, stop['cli_exit'], hashlib.sha256(raw).hexdigest()))
+                    rows.append((name, stop['cli_exit'], hashlib.sha256(raw).hexdigest(), reference))
                 evidence = 'sandbox:' + digest({'policy': self.policy_digest(), 'rows': rows, 'version': version, 'kernel': platform.release()})
             return ValidationCapability(True, 'bubblewrap-seccomp-single-process', version, platform.release(), self.policy_digest(), evidence)
+        except UnconfirmedValidation:
+            raise  # Uncertain liveness is not an unsupported platform or safe retry.
         except (ADPError, OSError, ValueError, subprocess.SubprocessError) as exc:
             return ValidationCapability(False, 'bubblewrap-seccomp-single-process', version, platform.release(), self.policy_digest(), evidence,
                                         'UNSUPPORTED_VALIDATION_RUNTIME: ' + stage + ': ' + type(exc).__name__)
 
-    def _result(self, command, revision, outcome, counts=None, quarantined=0):
+    def _result(self, command, revision, outcome, counts=None, quarantined=0, receipt=None):
         counts = counts or {name: command.denominator if name == outcome else 0 for name in Outcome}
         measured = tuple(OutcomeCount(name, counts[name]) for name in sorted(Outcome))
         return ValidationResult(command.name, revision, outcome, command.denominator, counts[Outcome.PASS],
-                                'sandbox-validation:' + digest({'policy': self.policy_digest(), 'command': command, 'revision': revision, 'counts': counts}), measured, quarantined)
+                                'sandbox-validation:' + digest({'policy': self.policy_digest(), 'command': command, 'revision': revision,
+                                                               'counts': counts, 'stop_receipt': receipt}), measured, quarantined)
 
     def run(self, root: Path, revision: str, required: tuple[str, ...], *, seconds: int):
         require(type(seconds) is int and 1 <= seconds <= 300 and type(required) is tuple
@@ -279,7 +310,8 @@ class BubblewrapValidation:
         self._validate_policy()
         before = self._source(root, revision)
         lock_path = self.receipts / (digest(str(root)) + '.lock')
-        with open(lock_path, 'a+b') as lock:
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'a+b') as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -301,9 +333,9 @@ class BubblewrapValidation:
                         results.append(self._result(command, revision, Outcome.NOTRUN))
                         continue
                     try:
-                        raw, stop = self._execute(root, command.argv, min(left, command.seconds))
+                        raw, stop, reference = self._execute(root, command.argv, min(left, command.seconds))
                         if stop['status'] == 'TIMEOUT':
-                            results.append(self._result(command, revision, Outcome.TIMEOUT))
+                            results.append(self._result(command, revision, Outcome.TIMEOUT, receipt=reference))
                             continue
                         if stop['cli_exit'] in (-signal.SIGSYS, 128 + signal.SIGSYS):
                             raise UnsafeValidation((), 'sandbox:OS-policy-refusal')
@@ -318,9 +350,9 @@ class BubblewrapValidation:
                         require(sum(payload['counts'].values()) == command.denominator and payload['quarantined'] <= command.denominator,
                                 'Incomplete validation accounting')
                         outcome = Outcome.PASS if stop['cli_exit'] == 0 and payload['counts']['PASS'] == command.denominator and payload['quarantined'] == 0 else Outcome.FAIL
-                        results.append(self._result(command, revision, outcome, payload['counts'], payload['quarantined']))
-                    except subprocess.TimeoutExpired:
-                        results.append(self._result(command, revision, Outcome.TIMEOUT))
+                        results.append(self._result(command, revision, outcome, payload['counts'], payload['quarantined'], receipt=reference))
+                    except subprocess.TimeoutExpired as exc:
+                        results.append(self._result(command, revision, Outcome.TIMEOUT, receipt=getattr(exc, 'validation_evidence', None)))
                     except (UnconfirmedValidation, UnsafeValidation) as exc:
                         measured = [*results, self._result(command, revision, Outcome.UNKNOWN)]
                         measured.extend(self._result(c, revision, Outcome.NOTRUN) for c in self.commands[index + 1:])

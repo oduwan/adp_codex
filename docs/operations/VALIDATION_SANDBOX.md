@@ -38,9 +38,12 @@ they cannot silently fall back to the host. This is not a general container or
 package-manager service.
 
 The seccomp filter checks the x86_64 audit architecture, rejects x32/compat ABIs,
-and kills filesystem mutation, writable open/openat, process/thread creation,
-setsid, Internet/raw sockets, namespace changes, tracing, alternate open and
-selected kernel/IPC interfaces. A caught write error followed by exit zero cannot
+and defaults to KILL for every unlisted syscall, including unknown/future calls.
+An explicit read-only query/memory/timer/lifecycle allowlist excludes filesystem
+mutation, writable open/openat, process/thread creation, setsid, Internet/raw
+sockets, namespace changes, tracing, alternate open and kernel/IPC mutation.
+Writes are restricted to the original stdout/stderr pipes; closing/replacing/
+duplicating those descriptors is forbidden. A caught write error followed by exit zero cannot
 manufacture PASS: the mutation syscall kills the process before its handler can
 emit a receipt. AF_UNIX socket creation returns EPERM, still denied, because libc
 NSS performs that harmless startup probe; no host Unix socket path is mounted.
@@ -92,7 +95,11 @@ the runtime at4096entries/128MiB.
 
 The port reuses M5 `supervised_validation` and `validation_stopped`; every process
 must have a request-bound supervisor stop receipt. Private receipt copies contain
-actual stop status and bounded output, not public product comments. A per-source
+actual stop status and bounded stdout/stderr, not public product comments. Every
+probe and product launch first writes a durable in-flight marker; only a validated
+actual stop clears it. Capability checks propagate unknown liveness rather than
+downgrading it to unsupported, and probe restart cannot bypass a pending marker.
+A per-source
 nonblocking lock and durable RUNNING record prevent duplicate or interrupted
 validation from blindly launching again. A missing stop, stale RUNNING record,
 or concurrently held lock raises `UnconfirmedValidation`. No PID disappearance
@@ -142,17 +149,17 @@ the precise cause is UNKNOWN and no timeout increase is justified. Independent
 reassessment also reproduced an uncertain-probe-stop propagation defect in the
 candidate (one safety assertion FAIL, private evidence SHA256
 `b1944a873497a797e593ffb2ffaa12a6fe9a11a93cc41a5661f50f9fd1570fb1`).
-Its failing regression is preserved before the correction; this candidate must
-not be accepted until every probe has durable launch fencing and lost-stop
-propagation is corrected and independently re-reviewed.
+Its failing regression is preserved in the candidate commit before the correction.
+The correction adds durable launch fencing and typed unknown-stop propagation;
+final independent re-review remains mandatory.
 
 Independent review also demonstrated a modern fchmodat2 attempt returning an OS
 read-only error, caught by a command that then emitted a false PASS under the
 first denylist. Source bytes remained unchanged, but terminal-attempt accounting
 was defective. Private reproduction SHA256
 `cd0168b60766fc64c97cb16a8685ceef31b76874556c797637b8e7225f8dacdd`.
-The preserved modern-mutator regression requires a default-deny syscall domain;
-no unsupported or future mutation syscall may evade the terminal boundary.
+The preserved modern-mutator regression is followed by an explicit allowlist and
+default-KILL syscall domain; no unsupported/future syscall is silently allowed.
 
 The focused inventory is `tests_m7/test_validation_sandbox.py` (16 methods: the
 original14 plus independently reproduced lost-stop and modern-mutator regressions),

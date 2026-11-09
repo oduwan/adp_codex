@@ -15,31 +15,53 @@ import struct
 
 
 def seccomp_program() -> bytes:
-    # Linux x86_64 only. Reject other ABIs and the x32 syscall namespace.
+    # Linux x86_64 only. Unknown/new and x32 syscalls fail closed.
     load, equal, greater_equal, bits, ret = 0x20, 0x15, 0x35, 0x45, 0x06
     kill, allow = 0x80000000, 0x7fff0000
     rows = [(load, 0, 0, 4), (equal, 1, 0, 0xc000003e), (ret, 0, 0, kill),
             (load, 0, 0, 0), (greater_equal, 0, 1, 0x40000000), (ret, 0, 0, kill)]
-    # No process/thread creation, socket creation, namespace/privilege changes,
-    # filesystem mutations, tracing, kernel interfaces or alternative open API.
-    denied = (29, 30, 31, 53, 56, 57, 58, 62, 64, 65, 66, 67, 68, 69,
-              70, 71, 76, 77, 82, 83, 84, 85, 86, 87, 88,
-              90, 91, 92, 93, 94, 101, 103, 132, 133, 155, 161, 165, 166,
-              167, 168, 169, 175, 176, 188, 189, 190, 197, 198, 199, 200,
-              112, 220, 234, 235, 246, 248, 249, 250, 258, 259, 260, 261, 263, 264,
-              265, 266, 268, 272, 280, 285, 298, 303, 304, 308, 310, 311,
-              313, 316, 317, 321, 323, 425, 426, 427, 435, 437, 438)
-    for number in denied:
-        rows.extend(((equal, 0, 1, number), (ret, 0, 0, kill)))
-    # libc's NSS startup probes AF_UNIX even without a passwd file. Deny that
-    # socket with EPERM (never allow it); Internet/raw sockets kill the process.
-    rows.extend(((equal, 0, 5, 41), (load, 0, 0, 16), (equal, 0, 1, 1),
-                 (ret, 0, 0, 0x00050001), (ret, 0, 0, kill), (load, 0, 0, 0)))
+
+    def branch(number, body):
+        rows.append((equal, 0, len(body), number))
+        rows.extend(body)
+
+    # Only the original stdout/stderr pipes are writable. They cannot be
+    # closed, replaced, duplicated or marked close-on-exec by the target.
+    for number in (1, 20):  # write/writev
+        branch(number, [(load, 0, 0, 16), (equal, 1, 0, 1), (equal, 0, 1, 2),
+                        (ret, 0, 0, allow), (ret, 0, 0, kill)])
+    branch(3, [(load, 0, 0, 16), (greater_equal, 1, 0, 3),
+               (ret, 0, 0, kill), (ret, 0, 0, allow)])
     writable = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND | 0x400000
     for number, argument in ((2, 1), (257, 2)):  # open/openat flags
-        rows.extend(((equal, 0, 4, number), (load, 0, 0, 16 + argument * 8),
-                     (bits, 0, 1, writable), (ret, 0, 0, kill), (load, 0, 0, 0)))
-    rows.append((ret, 0, 0, allow))
+        branch(number, [(load, 0, 0, 16 + argument * 8), (bits, 0, 1, writable),
+                        (ret, 0, 0, kill), (ret, 0, 0, allow)])
+    # libc NSS may probe AF_UNIX during startup. EPERM is denial, never ALLOW.
+    branch(41, [(load, 0, 0, 16), (equal, 0, 1, 1),
+                (ret, 0, 0, 0x00050001), (ret, 0, 0, kill)])
+    branch(16, [(load, 0, 0, 24), (equal, 0, 1, 0x5401), (ret, 0, 0, allow),
+                (equal, 0, 1, 0x5413), (ret, 0, 0, allow), (ret, 0, 0, kill)])
+    branch(72, [(load, 0, 0, 24), (equal, 0, 1, 1), (ret, 0, 0, allow),
+                (equal, 0, 1, 3), (ret, 0, 0, allow), (ret, 0, 0, kill)])
+    branch(302, [(load, 0, 0, 32), (equal, 0, 3, 0), (load, 0, 0, 36),
+                 (equal, 0, 1, 0), (ret, 0, 0, allow), (ret, 0, 0, kill)])
+    branch(157, [(load, 0, 0, 16), (equal, 0, 1, 39), (ret, 0, 0, allow),
+                 (equal, 0, 1, 21), (ret, 0, 0, allow), (ret, 0, 0, kill)])
+    # Read-only queries, process-local memory/signal/timer operations, bounded
+    # pipe/event descriptors and lifecycle exit/wait. No filesystem mutator,
+    # process creator, network effect, credential change or new syscall is here.
+    allowed = (0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 21, 22,
+               23, 24, 25, 27, 28, 34, 35, 36, 37, 38, 39, 59, 60, 61, 63,
+               78, 79, 80, 81, 89, 95, 96, 97, 98, 99, 100, 102, 104, 107,
+               108, 110, 111, 115, 118, 120, 121, 124, 125, 127, 128, 130,
+               131, 137, 138, 140, 143, 145, 146, 147, 148, 158, 186, 201,
+               202, 204, 213, 217, 218, 219, 221, 222, 223, 224, 225, 226,
+               228, 229, 230, 231, 232, 233, 247, 262, 267, 269, 270, 271,
+               273, 281, 282, 283, 284, 286, 287, 289, 290, 291, 293, 318,
+               332, 334, 439, 441, 449, 462)
+    for number in allowed:
+        rows.extend(((equal, 0, 1, number), (ret, 0, 0, allow)))
+    rows.append((ret, 0, 0, kill))
     return b''.join(struct.pack('HBBI', *row) for row in rows)
 
 
