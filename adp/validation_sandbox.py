@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, is_dataclass
 from contextlib import contextmanager
@@ -29,6 +30,10 @@ from .guard_types import Outcome
 from .policy_types import OutcomeCount
 from .schema import decode, fields, integer, require
 from .storage import atomic, sync_directory
+
+_QUALIFICATIONS = {}
+_UNCERTAIN_QUALIFICATIONS = set()
+_QUALIFICATION_LOCK = threading.RLock()
 
 
 def digest(value):
@@ -124,7 +129,26 @@ class BubblewrapValidation:
         self._validate_policy()
 
     def policy_digest(self):
-        return digest({'configuration': self.policy, 'launcher_sha256': self._launcher_digest, 'profile_version': 1})
+        return digest({'configuration': self.policy, 'protected_roots': self.protected_roots,
+                       'launcher_sha256': self._launcher_digest, 'profile_version': 1})
+
+    def _host_key(self):
+        status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
+        return digest({'policy': self.policy_digest(), 'port_sha256': file_digest(Path(__file__)),
+            'kernel': platform.release(), 'boot': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+            'pid': os.getpid(), 'uid': os.getresuid(), 'gid': os.getresgid(), 'groups': sorted(os.getgroups()),
+            'namespaces': {name: os.readlink('/proc/self/ns/' + name) for name in ('user', 'mnt', 'net', 'pid')},
+            'controls': {name: status.get(name, '').strip() for name in ('NoNewPrivs', 'Seccomp', 'Seccomp_filters', 'CapEff', 'CapBnd')}})
+
+    def _assert_idle(self):
+        descriptor = os.open(self.receipts / 'execution.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'a+b') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise UnconfirmedValidation('sandbox:execution-already-running', str(self.receipts))
+            if (self.receipts / 'active.json').exists() or (self.receipts / 'active.json').is_symlink():
+                raise UnconfirmedValidation('sandbox:prior-launch-stop-unknown', str(self.receipts))
 
     def _validate_policy(self):
         p = self.policy
@@ -143,7 +167,8 @@ class BubblewrapValidation:
         require(all(not q.is_relative_to(image) and not image.is_relative_to(q) for q in protected), 'Runtime image overlaps protected host data')
         require(not self.receipts.is_relative_to(image) and not image.is_relative_to(self.receipts), 'Runtime image overlaps private receipts')
         for command in self.commands:
-            require(type(command) is CheckCommand and command.argv and command.argv[0] == p.executable
+            require(type(command) is CheckCommand and type(command.argv) is tuple and command.argv and command.argv[0] == p.executable
+                    and type(command.name) is str and 0 < len(command.name) <= 128
                     and type(command.seconds) is int and 1 <= command.seconds <= 300
                     and type(command.denominator) is int and command.denominator > 0, 'Invalid registered executable/argv or original denominator')
             require(all(type(v) is str and 0 < len(v) <= 32768 and '\0' not in v for v in command.argv)
@@ -156,8 +181,8 @@ class BubblewrapValidation:
 
     def _source(self, root: Path, revision: str):
         root = safe_path(root)
-        require(root.is_dir() and (root / '.git').is_dir(), 'UNSUPPORTED_VALIDATION_RUNTIME: standalone Git checkout required')
-        require(value(root, 'rev-parse', 'HEAD') == revision, 'Validation source revision drifted')
+        require(root.is_dir() and (root / '.git').is_dir() and not (root / '.git').is_symlink(),
+                'UNSUPPORTED_VALIDATION_RUNTIME: standalone Git checkout required')
         require(all(not root.is_relative_to(q) and not q.is_relative_to(root) for q in
                     (*self.protected_roots, self.receipts, self.policy.image)), 'Product overlaps protected validation data')
         total = 0
@@ -169,9 +194,15 @@ class BubblewrapValidation:
             require(not stat.S_ISREG(info.st_mode) or info.st_nlink == 1, 'Source hard links cannot expose outside data')
             if stat.S_ISLNK(info.st_mode):
                 require(path.resolve().is_relative_to(root), 'Outside source symlink is refused')
-        config = (root / '.git/config').read_text()
-        require(not credential_shaped(config) and 'extraheader' not in config.lower() and '[credential' not in config.lower(),
-                'Credential-bearing product Git configuration is unsupported')
+        config_path = safe_path(root / '.git/config')
+        require(config_path.stat().st_size <= 65536, 'Product Git configuration exceeds validation bounds')
+        config = config_path.read_text()
+        import re
+        require(not credential_shaped(config) and not re.search(
+                r'(?im)^\s*\[(?:credential|include|includeif)\b|^\s*(?:extraheader|worktree|hookspath|fsmonitor|sshcommand)\s*=', config),
+                'External or credential-bearing product Git configuration is unsupported')
+        require(not (root / '.git/objects/info/alternates').exists(), 'External Git object alternates are unsupported')
+        require(value(root, 'rev-parse', 'HEAD') == revision, 'Validation source revision drifted')
         return source_seal(root), admin_seal(root)
 
     def _argv(self, root, argv, seconds):
@@ -216,8 +247,11 @@ class BubblewrapValidation:
             atomic(active, json.dumps({'status': 'RUNNING', 'command_digest': digest(argv),
                                        'policy_digest': self.policy_digest(), 'stop_path': str(stop_path),
                                        'request_digest': subject}).encode())
-            process = subprocess.Popen(launch, cwd='/', stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE, env={'PATH': '/usr/bin:/bin'}, start_new_session=True)
+            try:
+                process = subprocess.Popen(launch, cwd='/', stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE, env={'PATH': '/usr/bin:/bin'}, start_new_session=True)
+            except OSError:
+                raise UnconfirmedValidation('sandbox:launch-stop-unknown', str(stop_path.parent))
             try:
                 end = time.monotonic() + seconds
                 try:
@@ -253,15 +287,53 @@ class BubblewrapValidation:
                     exc.validation_evidence = self._record(active, argv, raw, errors, stop)
                     raise
                 stop = validation_stopped(stop_path, subject, process.pid)
-                if stop.get('status') not in ('EXITED', 'TIMEOUT'):
-                    raise UnsafeValidation((), 'sandbox:unexpected-supervisor-stop')
                 reference = self._record(active, argv, raw, errors, stop)
+                if stop.get('status') not in ('EXITED', 'TIMEOUT'):
+                    exception = UnsafeValidation((), 'sandbox:unexpected-supervisor-stop')
+                    exception.validation_evidence = reference
+                    raise exception
                 return bytes(raw), stop, reference
             finally:
                 process.stdout.close()
                 process.stderr.close()
 
-    def capabilities(self, *, seconds=12) -> ValidationCapability:
+    def capabilities(self, *, seconds=12, fresh=False) -> ValidationCapability:
+        require(type(seconds) is int and seconds > 0 and type(fresh) is bool, 'Invalid capability observation budget')
+        deadline = time.monotonic() + min(seconds, 12)
+        self._validate_policy()  # Actual bytes are rechecked, never just a flag.
+        self._assert_idle()  # A cache cannot hide an in-flight or uncertain launch.
+        key = self._host_key()
+        if not _QUALIFICATION_LOCK.acquire(timeout=max(0.01, deadline - time.monotonic())):
+            return ValidationCapability(False, 'bubblewrap-seccomp-single-process', '', platform.release(),
+                self.policy_digest(), 'sandbox:probe-lock-budget', 'UNSUPPORTED_VALIDATION_RUNTIME: concurrent probe budget')
+        try:
+            self._assert_idle()
+            if key in _UNCERTAIN_QUALIFICATIONS:
+                raise UnconfirmedValidation('sandbox:prior-qualification-stop-unknown', str(self.receipts))
+            known = _QUALIFICATIONS.get(key)
+            if not fresh and known is not None and known[0] > time.monotonic():
+                return known[1]
+            try:
+                remaining = int(deadline - time.monotonic())
+                if remaining <= 0:
+                    return ValidationCapability(False, 'bubblewrap-seccomp-single-process', '', platform.release(),
+                        self.policy_digest(), 'sandbox:probe-budget', 'UNSUPPORTED_VALIDATION_RUNTIME: capability budget exhausted')
+                observed = self._probe(seconds=remaining)
+            except UnconfirmedValidation:
+                _QUALIFICATIONS.pop(key, None)
+                _UNCERTAIN_QUALIFICATIONS.add(key)
+                raise
+            if observed.supported:
+                if len(_QUALIFICATIONS) >= 32:
+                    del _QUALIFICATIONS[next(iter(_QUALIFICATIONS))]
+                _QUALIFICATIONS[key] = (time.monotonic() + 300, observed)
+            else:
+                _QUALIFICATIONS.pop(key, None)
+            return observed
+        finally:
+            _QUALIFICATION_LOCK.release()
+
+    def _probe(self, *, seconds=12) -> ValidationCapability:
         p = self.policy
         evidence, version = 'sandbox:unqualified', ''
         stage = 'policy'
@@ -302,7 +374,7 @@ class BubblewrapValidation:
                                 'sandbox-validation:' + digest({'policy': self.policy_digest(), 'command': command, 'revision': revision,
                                                                'counts': counts, 'stop_receipt': receipt}), measured, quarantined)
 
-    def run(self, root: Path, revision: str, required: tuple[str, ...], *, seconds: int):
+    def run(self, root: Path, revision: str, required: tuple[str, ...], *, seconds: int) -> tuple[ValidationResult, ...]:
         require(type(seconds) is int and 1 <= seconds <= 300 and type(required) is tuple
                 and len(set(required)) == len(required) and set(required) == {c.name for c in self.commands},
                 'Exact required validation matrix and bounded invocation required')
@@ -332,13 +404,19 @@ class BubblewrapValidation:
                     if left <= 0:
                         results.append(self._result(command, revision, Outcome.NOTRUN))
                         continue
+                    if self._source(root, revision) != before:
+                        raise UnsafeValidation([*results, *(self._result(c, revision, Outcome.NOTRUN)
+                            for c in self.commands[index:])], 'sandbox:source-changed-before-check')
+                    reference = None
                     try:
                         raw, stop, reference = self._execute(root, command.argv, min(left, command.seconds))
                         if stop['status'] == 'TIMEOUT':
                             results.append(self._result(command, revision, Outcome.TIMEOUT, receipt=reference))
                             continue
                         if stop['cli_exit'] in (-signal.SIGSYS, 128 + signal.SIGSYS):
-                            raise UnsafeValidation((), 'sandbox:OS-policy-refusal')
+                            exception = UnsafeValidation((), 'sandbox:OS-policy-refusal')
+                            exception.validation_evidence = reference
+                            raise exception
                         payload = decode(raw)
                         fields(payload, 'denominator counts quarantined')
                         require(type(payload['denominator']) is int and payload['denominator'] == command.denominator,
@@ -354,13 +432,22 @@ class BubblewrapValidation:
                     except subprocess.TimeoutExpired as exc:
                         results.append(self._result(command, revision, Outcome.TIMEOUT, receipt=getattr(exc, 'validation_evidence', None)))
                     except (UnconfirmedValidation, UnsafeValidation) as exc:
-                        measured = [*results, self._result(command, revision, Outcome.UNKNOWN)]
+                        if isinstance(exc, UnconfirmedValidation):
+                            with _QUALIFICATION_LOCK:
+                                cache_key = self._host_key()
+                                _QUALIFICATIONS.pop(cache_key, None)
+                                _UNCERTAIN_QUALIFICATIONS.add(cache_key)
+                        measured = [*results, self._result(command, revision, Outcome.UNKNOWN,
+                            receipt=getattr(exc, 'validation_evidence', None))]
                         measured.extend(self._result(c, revision, Outcome.NOTRUN) for c in self.commands[index + 1:])
                         exc.results = tuple(measured)
                         raise
                     except (ADPError, OSError):
-                        results.append(self._result(command, revision, Outcome.UNKNOWN))
-                    require(self._source(root, revision) == before, 'Validation source/admin changed')
+                        results.append(self._result(command, revision, Outcome.UNKNOWN, receipt=reference))
+                    if self._source(root, revision) != before:
+                        raise UnsafeValidation([*results[:-1], self._result(command, revision, Outcome.UNKNOWN, receipt=reference),
+                            *(self._result(c, revision, Outcome.NOTRUN) for c in self.commands[index + 1:])],
+                            'sandbox:source-changed-after-check')
                 atomic(state_path, json.dumps({'status': 'STOPPED', 'subject': subject, 'results': [r.evidence for r in results]}).encode())
                 return tuple(results)
             except BaseException:

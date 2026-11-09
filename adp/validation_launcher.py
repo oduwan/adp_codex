@@ -67,7 +67,7 @@ def seccomp_program() -> bytes:
 
 def arguments(binary: str, image: str, source: str, descriptor: int, argv: tuple[str, ...]) -> tuple[str, ...]:
     return (binary, '--unshare-user', '--unshare-net', '--unshare-pid', '--unshare-ipc',
-            '--unshare-uts', '--die-with-parent', '--new-session', '--cap-drop', 'ALL',
+            '--unshare-uts', '--as-pid-1', '--die-with-parent', '--new-session', '--cap-drop', 'ALL',
             '--clearenv', '--setenv', 'PATH', '/runtime/bin', '--setenv', 'LANG', 'C',
             '--setenv', 'PYTHONDONTWRITEBYTECODE', '1', '--ro-bind', image, '/',
             '--ro-bind', source, '/work', '--proc', '/proc', '--remount-ro', '/proc',

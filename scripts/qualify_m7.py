@@ -18,7 +18,7 @@ BASE = "16c7a4e103c6a824f361f96e2eb237fbbf4faf48"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inventory", type=Path, required=True)
+    parser.add_argument("--inventory", type=Path, nargs="+", required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     args = parser.parse_args()
     require_clean = subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain"])
@@ -32,7 +32,20 @@ def main():
         current = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD:" + path.decode()], text=True).strip()
         if current != blob:
             raise ValueError("Accepted M1–M6 test/fixture changed")
-    inventory = json.loads(args.inventory.read_text())
+    inventories, inventory = {}, []
+    for path in args.inventory:
+        resolved = path.resolve()
+        if path.is_symlink() or not resolved.is_relative_to(ROOT / "docs/operations"):
+            raise ValueError("Use committed operation inventories inside source")
+        relative = resolved.relative_to(ROOT).as_posix()
+        subprocess.check_output(["git", "-C", str(ROOT), "ls-files", "--error-unmatch", relative], stderr=subprocess.DEVNULL)
+        cases = json.loads(resolved.read_text())
+        if (type(cases) is not list or not 1 <= len(cases) <= 512
+                or any(type(case) is not str or not 1 <= len(case) <= 512 or "\0" in case for case in cases)
+                or len(cases) != len(set(cases)) or set(cases) & set(inventory) or relative in inventories):
+            raise ValueError("Invalid, duplicate or overlapping frozen M7 inventory")
+        inventories[relative] = cases
+        inventory.extend(cases)
     suite = unittest.defaultTestLoader.discover(str(ROOT / "tests_m7"))
     actual = sorted(test_ids(suite))
     if len(inventory) != len(set(inventory)) or sorted(inventory) != actual:
@@ -42,7 +55,9 @@ def main():
         result = unittest.TextTestRunner(stream=output, verbosity=2, failfast=False, resultclass=HonestResult).run(suite)
     summary = accounting(actual, result.observations)
     summary.update(source=source, python=platform.python_version(), accepted_denominator=210,
-        inventory_sha256=sha256(args.inventory), log_sha256=sha256(directory / "unittest.log"),
+        inventories={name: {"sha256": sha256(ROOT / name),
+            **{key: value for key, value in accounting(cases, {case: result.observations[case] for case in cases if case in result.observations}).items() if key != "tests"}}
+            for name, cases in inventories.items()}, log_sha256=sha256(directory / "unittest.log"),
         public_release="NOT_AUTHORIZED")
     digest = write_evidence(directory / "suite.json", summary)
     print(json.dumps({k: summary[k] for k in ("source", "python", "status", "original_denominator", "counts", "accepted_denominator")}, sort_keys=True))

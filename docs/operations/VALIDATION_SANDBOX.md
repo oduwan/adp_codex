@@ -32,7 +32,11 @@ Bubblewrap mounts that image read-only at `/`, the explicit product read-only at
 read-only at `/dev`. The original host paths, temporary directories, IPC/socket
 stores and authentication files are not mounted. `/tmp` is an empty read-only
 image directory. The initial qualified profile deliberately supports **one
-process and zero writable scratch bytes**. Checks needing children, threads,
+process and zero writable scratch bytes**. The target is PID1 in its namespace
+(`--as-pid-1`); its filter forbids all child creation, and the external accepted
+M5 subreaper supervises namespace teardown. The optional bubblewrap PID1 reaper
+is unnecessary for this profile and would require an extra internal eventfd
+write permission. Checks needing children, threads,
 native network or writable caches/scratch require a separately qualified profile;
 they cannot silently fall back to the host. This is not a general container or
 package-manager service.
@@ -74,10 +78,18 @@ tuple of accepted `CheckCommand` records, not commands extracted from an issue.
 No shell interprets the argv. The policy image's `/work`, `/proc`, `/dev` and
 `/tmp` mount slots must exist and be empty before execution.
 
-`capabilities()` runs a finite benign/write/network/fork probe against a newly
-owned disposable directory and returns a typed `ValidationCapability`. Every
-`run` performs a fresh probe before launching its registered product matrix.
-No positive flag, old receipt or bare prefix bypasses that check. Raw
+`capabilities(fresh=True)` runs a finite benign/write/network/fork probe against a
+newly owned disposable directory and returns a typed `ValidationCapability`.
+Successful proof may be cached in this process for at most300s, with at most32
+entries, only while actual policy/image/binary/launcher bytes, protected roots,
+kernel/boot/PID/UID/GID/groups, user/mount/network/PID namespaces and parent
+seccomp/no-new-privs/capability state remain identical. A bounded lock prevents
+concurrent duplicate probes. Every launch still revalidates actual bytes and
+executes the exact mandatory namespace/mount/seccomp setup. Cache hits grant no
+command authority and cannot conceal a durable in-flight or unknown-stop marker.
+Only success is cached; failure/uncertainty is never cached as qualification,
+and an uncertain launch invalidates its cache key. No persisted or caller-provided
+positive flag or bare prefix bypasses those checks. Raw
 `SubprocessValidation.sandbox_prefix` is refused. Explicit
 `trusted_disposable=True` remains available only for owned synthetic fixtures;
 it is not used to implement this production port.
@@ -143,7 +155,9 @@ remain fatal. The corrected actual benign/write/network/fork probe succeeded.
 The first-observation record SHA256 is
 `306be170643d3f42229e4475e185ca471ec6ab33cfa00675676a710f4e26ebcc`.
 
-The corrected first full run observed13PASS/1ERROR, zeroSKIP, in283.102s. The
+The corrected first full run observed13PASS/1ERROR, zeroSKIP, in283.102s. Log SHA256
+`9c1c4f6e62ba326b3eaa784ac57c39fe9628dd7625fd4a79e81337d3c3f5b1dd`.
+The
 error was an honest capability TimeoutExpired; its stage was not retained, so
 the precise cause is UNKNOWN and no timeout increase is justified. Independent
 reassessment also reproduced an uncertain-probe-stop propagation defect in the
@@ -153,6 +167,17 @@ Its failing regression is preserved in the candidate commit before the correctio
 The correction adds durable launch fencing and typed unknown-stop propagation;
 final independent re-review remains mandatory.
 
+The independent finite reassessment classified that timeout as
+UNCLASSIFIED_ADMISSION_INFRA: no product check launched, exact timeout stage lost.
+With stage labels and unchanged budgets, the one targeted accounting-method
+proof completed1/1PASS in154.435s (private log SHA256
+`84b2847b55527343f48601b62026601706fb08c7839c693c3c1a3c9ca824b5c7`).
+A separate actual four-probe stage observation completed in10.808s under the
+existing version2s/probe3s/total12s limits (private evidence SHA256
+`fb43a11eecaeacc958c3cb4d137b28cba78921ff57a7430b7cb8f98c179babd8`).
+These exploratory working-snapshot observations do not retroactively replace the
+earlier ERROR or claim final exact-source qualification. No timeout was increased.
+
 Independent review also demonstrated a modern fchmodat2 attempt returning an OS
 read-only error, caught by a command that then emitted a false PASS under the
 first denylist. Source bytes remained unchanged, but terminal-attempt accounting
@@ -161,8 +186,9 @@ was defective. Private reproduction SHA256
 The preserved modern-mutator regression is followed by an explicit allowlist and
 default-KILL syscall domain; no unsupported/future syscall is silently allowed.
 
-The focused inventory is `tests_m7/test_validation_sandbox.py` (16 methods: the
-original14 plus independently reproduced lost-stop and modern-mutator regressions),
+The focused inventory is `tests_m7/test_validation_sandbox.py` (17 methods: the
+original14, independently reproduced lost-stop and modern-mutator regressions,
+and a cache freshness/uncertainty regression),
 separate from all210 byte-preserved accepted M1–M6 tests. Required observations:
 
 | Boundary | Actual procedure | Required result |

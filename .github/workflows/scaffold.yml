@@ -35,4 +35,4 @@ jobs:
       - name: Test all accepted M1 through M5 and M6 qualification
         run: python scripts/qualify_m6.py --evidence-dir "$RUNNER_TEMP/adp-suite"
       - name: Test additive M7 workstreams
-        run: python scripts/qualify_m7.py --inventory docs/operations/VALIDATION_SANDBOX_TEST_INVENTORY.json --evidence-dir "$RUNNER_TEMP/adp-m7-suite"
+        run: python scripts/qualify_m7.py --inventory docs/operations/*_TEST_INVENTORY.json --evidence-dir "$RUNNER_TEMP/adp-m7-suite"
