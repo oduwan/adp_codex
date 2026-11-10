@@ -212,7 +212,7 @@ class GitHubEvidenceSource:
             inventories = []
             if "github-status" in kinds:
                 statuses = self._pages(prefix + "/statuses")
-                inventories.append(("/statuses", None, "", digest(statuses)))
+                inventories.append(("/statuses", None, "", digest({"items": statuses})))
                 current_names = set()
                 for row in statuses:  # GitHub documents reverse chronological order.
                     name, state = row["context"], row["state"]
@@ -229,9 +229,9 @@ class GitHubEvidenceSource:
                 # The reference endpoint truncates at 1000 suites. A bounded full
                 # suite inventory first refuses that unsupported envelope.
                 suites = self._pages(prefix + "/check-suites", "check_suites")
-                inventories.append(("/check-suites", "check_suites", "", digest(suites)))
+                inventories.append(("/check-suites", "check_suites", "", digest({"items": suites})))
                 runs = self._pages(prefix + "/check-runs", "check_runs", "filter=all")
-                inventories.append(("/check-runs", "check_runs", "filter=all", digest(runs)))
+                inventories.append(("/check-runs", "check_runs", "filter=all", digest({"items": runs})))
                 identities = Counter((r.get("name"), r.get("app", {}).get("id")) for r in runs)
                 for row in runs:
                     require(row.get("head_sha") == request.revision
@@ -253,7 +253,7 @@ class GitHubEvidenceSource:
                         _time(reported) if reported is not None else now, complete=unique,
                         provider_status=state + ":" + (conclusion or "unavailable")))
             for suffix, field, query_string, previous in inventories:
-                if digest(self._pages(prefix + suffix, field, query_string)) != previous:
+                if digest({"items": self._pages(prefix + suffix, field, query_string)}) != previous:
                     self._coverage = "CHANGED"
                     raise ADPError("Project CI inventory changed during observation")
             require(self._context(request) == context, "Repository/PR/ref changed during observation")
