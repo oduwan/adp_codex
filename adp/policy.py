@@ -14,7 +14,8 @@ from .policy_types import (Authorization, BranchPlan, Check, CommitPlan, Decisio
     DeploymentPlan, Effect, Inspection, MergePlan, Operation, OutcomeCount, Plan, PolicyAuthority,
     Protection, Provenance, PullRequestPlan, Qualifications, ReleasePlan, RepositoryAdapter,
     Request, Review, Rules, Safety, SafetyAdapter, SourceClaim, SourceKind, Task,
-    EditPlan, PushPlan, ReportPlan, StagePlan, ValidationPlan, ProjectCheck, ProjectQualifications)
+    EditPlan, PushPlan, ReportPlan, StagePlan, ValidationPlan, ProjectCheck, ProjectQualifications,
+    CandidateSource, CandidateValidationRequest, CandidateValidationPlan, TicketEditRequest, TicketEditPlan)
 from .schema import integer, key, require, string
 
 RANK = {SourceKind.OPERATOR: 0, SourceKind.GOVERNANCE: 1,
@@ -214,8 +215,13 @@ class PolicyProvider:
 
     def plan(self, task: Task, request: Request) -> Plan:
         validate_task(task)
-        require(type(request) is Request and isinstance(request.operation, str)
+        require(type(request) in (Request, CandidateValidationRequest, TicketEditRequest) and isinstance(request.operation, str)
                 and request.operation in set(Operation), "Unsupported policy operation")
+        candidate = type(request) is CandidateValidationRequest
+        ticket = type(request) is TicketEditRequest
+        require(not candidate or request.operation == Operation.VALIDATE and type(request.candidate) is CandidateSource,
+                "Candidate evidence is a distinct validation operation")
+        require(not ticket or request.operation == Operation.TICKET_EDIT, "Ticket effect request differs")
         for text in (request.summary, request.version, request.environment):
             require(isinstance(text, str) and len(text) <= 256 and all(ord(c) >= 32 for c in text), "Invalid bounded operation input")
         require(type(request.paths) is tuple, "Expected bounded stage paths")
@@ -248,7 +254,7 @@ class PolicyProvider:
                 reasons.append("External permission remains unknown at the controlling authority")
         if (task.repository_id, task.revision, task.source_ref) != (snapshot.repository_id, snapshot.revision, snapshot.source_ref):
             denied.append("Task repository/ref/revision differs from the inspected checkout")
-        if not snapshot.worktree_clean and op not in (Operation.STAGE, Operation.EDIT, Operation.INSPECT):
+        if not snapshot.worktree_clean and op not in (Operation.STAGE, Operation.EDIT, Operation.INSPECT) and not candidate:
             reasons.append("Unstaged or untracked product changes require a new clean inspection")
         local = {r.name: r.revision for r in snapshot.local_refs}
         remote = {r.name: r.revision for r in snapshot.remote_refs}
@@ -296,7 +302,27 @@ class PolicyProvider:
         elif op == Operation.VALIDATE:
             if not required_checks:
                 reasons.append("No external validation/check matrix was specified")
-            payload = ValidationPlan(required_checks)
+            if candidate:
+                for item in (request.candidate.content_digest, request.candidate.index_digest, request.candidate.worktree_digest):
+                    fingerprint(item)
+                if (request.candidate.index_digest != snapshot.index_digest
+                        or request.candidate.worktree_digest != snapshot.worktree_digest):
+                    denied.append("Candidate index or working-tree content differs from current inspection")
+                payload = CandidateValidationPlan(required_checks, request.candidate)
+            else:
+                payload = ValidationPlan(required_checks)
+        elif op == Operation.TICKET_EDIT:
+            if not ticket:
+                reasons.append("Exact ticket version, scope and effect reference required")
+            else:
+                string(request.issue_id, 256)
+                integer(request.number, 1)
+                fingerprint(request.issue_revision)
+                fingerprint(request.edit_digest)
+                string(request.edit_reference, 128)
+                require(request.envelope in ("OBSERVED_VERSION", "ATOMIC_VERSION"), "Unknown ticket-write envelope")
+                payload = TicketEditPlan(request.issue_id, request.number, request.issue_revision,
+                    request.edit_reference, request.edit_digest, request.envelope)
         elif op in (Operation.PR, Operation.MERGE) and base_ref and task_ref:
             target = base_ref
             if snapshot.source_ref != task_ref or task_ref == base_ref:

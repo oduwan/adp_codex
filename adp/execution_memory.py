@@ -79,11 +79,25 @@ class ExecutionJournal:
             head, state, tasks = self.memory._start()
             require(state["schema_version"] == 3, "Upgrade execution explicitly first")
             execution = state["execution"]
-            if execution["schema_version"] == 2:
+            if execution["schema_version"] in (2, 3):
                 return self.memory.inspect()
             require(execution["schema_version"] == 1, "Unsupported execution migration")
             execution["schema_version"] = 2
             execution["product_flows"] = {}
+            return self.memory._checkpoint(head, state, tasks)
+
+    def upgrade_track(self, *, authorized=False):
+        """Opt into finite track state; accepted owner/guard/task data is intact."""
+        if not authorized:
+            raise AuthorityError("Track migration requires explicit memory-write authorization")
+        with locked(self.memory.control):
+            head, state, tasks = self.memory._start()
+            require(state["schema_version"] == 3, "Upgrade execution explicitly first")
+            execution = state["execution"]
+            if execution["schema_version"] == 3:
+                return self.memory.inspect()
+            require(execution["schema_version"] == 2, "Upgrade product flow explicitly first")
+            execution.update(schema_version=3, track=None, lifecycles={}, ticket_effects={})
             return self.memory._checkpoint(head, state, tasks)
 
     def change(self, callback):

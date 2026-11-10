@@ -258,6 +258,9 @@ class Memory:
         with locked(self.control):
             head, state, tasks = self._start()
             if state["schema_version"] == 3:
+                if state["execution"]["schema_version"] == 3:
+                    require(all(effect["status"] == "OBSERVED" for effect in state["execution"]["ticket_effects"].values()),
+                            "Reconcile all ticket effects before owner handoff")
                 require(all(j["status"] in ("COMPLETE", "CANCELLED") and j["validation_stop"] not in ("RUNNING", "UNKNOWN") for t in state["execution"]["tasks"].values()
                             for j in t["jobs"].values()) and all(a["status"] == "OBSERVED" for a in state["execution"]["actions"].values()),
                         "Observe/cancel execution and reconcile external effects before handoff")

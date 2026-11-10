@@ -27,6 +27,7 @@ class Operation(StrEnum):
     RELEASE = "RELEASE"
     DEPLOY = "DEPLOY"
     REPORT = "REPORT"
+    TICKET_EDIT = "TICKET_EDIT"
     FORCE_PUSH = "FORCE_PUSH"
     REBASE = "REBASE"
     REWRITE = "REWRITE"
@@ -153,6 +154,29 @@ class Request:
 
 
 @dataclass(frozen=True)
+class CandidateSource:
+    """Uncommitted content, never an assertion that base HEAD was checked."""
+    content_digest: str
+    index_digest: str
+    worktree_digest: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class CandidateValidationRequest(Request):
+    candidate: CandidateSource
+
+
+@dataclass(frozen=True, kw_only=True)
+class TicketEditRequest(Request):
+    issue_id: str
+    number: int
+    issue_revision: str
+    edit_reference: str
+    edit_digest: str
+    envelope: str
+
+
+@dataclass(frozen=True)
 class Safety:
     guard: GuardDecision
     owns_memory: bool
@@ -239,6 +263,21 @@ class ValidationPlan:
 
 
 @dataclass(frozen=True)
+class CandidateValidationPlan(ValidationPlan):
+    candidate: CandidateSource
+
+
+@dataclass(frozen=True)
+class TicketEditPlan:
+    issue_id: str
+    number: int
+    issue_revision: str
+    edit_reference: str
+    edit_digest: str
+    envelope: str
+
+
+@dataclass(frozen=True)
 class PullRequestPlan:
     head_ref: str
     base_ref: str
@@ -276,13 +315,13 @@ class DeploymentPlan:
     revision: str
 
 
-Payload = BranchPlan | CommitPlan | StagePlan | EditPlan | ReportPlan | ValidationPlan | PullRequestPlan | PushPlan | MergePlan | ReleasePlan | DeploymentPlan
+Payload = BranchPlan | CommitPlan | StagePlan | EditPlan | ReportPlan | ValidationPlan | CandidateValidationPlan | TicketEditPlan | PullRequestPlan | PushPlan | MergePlan | ReleasePlan | DeploymentPlan
 
 
 @dataclass(frozen=True)
 class Plan:
     task: Task
-    request: Request
+    request: Request | CandidateValidationRequest | TicketEditRequest
     snapshot_digest: str
     policy_digest: str
     remote: str

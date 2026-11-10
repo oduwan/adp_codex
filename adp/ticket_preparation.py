@@ -189,6 +189,17 @@ class TicketArchive:
         require(baseline == value, "Original identity baseline differs")
         return original
 
+    def frozen_reference(self, identity: Identity):
+        """Read the first observation without replacing it on refresh."""
+        validate_identity(identity)
+        baseline = self.directory / ("baseline-" + key(identity) + ".json")
+        if not baseline.exists():
+            return None
+        value = json_value(self._read(baseline), MAX_ARTIFACT)
+        reference = ORIGINAL + _hash(value)
+        require(self.original(reference).issue.identity == identity, "Frozen identity differs")
+        return reference
+
     def save_packet(self, packet: CodexPacket) -> str:
         with locked(self.directory):
             return PACKET + self._put("packet-", data(packet))

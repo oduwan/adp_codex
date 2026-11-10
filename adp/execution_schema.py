@@ -86,8 +86,9 @@ def worker_result(result: WorkerResult):
 
 def execution_schema(value, repository_id):
     version = value.get("schema_version") if type(value) is dict else None
-    fields(value, "schema_version repository_id tasks actions publications" + (" product_flows" if version == 2 else ""))
-    require(type(version) is int and version in (1, 2)
+    fields(value, "schema_version repository_id tasks actions publications" + (" product_flows" if version in (2, 3) else "")
+           + (" track lifecycles ticket_effects" if version == 3 else ""))
+    require(type(version) is int and version in (1, 2, 3)
             and value["repository_id"] == repository_id, "Unsupported execution schema/repository")
     require(type(value["tasks"]) is dict and len(value["tasks"]) <= MAX_EXECUTION_TASKS, "Execution task capacity exhausted")
     all_contexts = []
@@ -137,7 +138,7 @@ def execution_schema(value, repository_id):
                         and j["result"]["approved"] and j["context"] == task["review"]["context"]
                         and "worker:" + j["request_id"] == task["review"]["reviewer"]
                         and j["receipt"] == task["review"]["receipt"] and j["revision"] == task["review"]["revision"]
-                        and (j["validation_stop"] == "CONFIRMED" or version == 2 and j["validation_stop"] == "NOT_STARTED"
+                        and (j["validation_stop"] == "CONFIRMED" or version in (2, 3) and j["validation_stop"] == "NOT_STARTED"
                              and not j["checks"] and value["product_flows"].get(task_key, {}).get("review_job") == aid
                              and value["product_flows"][task_key]["gates"]
                              and all(typed(EvidenceGate, g).qualified
@@ -155,7 +156,7 @@ def execution_schema(value, repository_id):
         sha(action["revision"])
         string(action["source_ref"])
         require(action["operation"] in (Operation.STAGE, Operation.COMMIT, Operation.BRANCH, Operation.PUSH, Operation.PR, Operation.REPORT)
-                or version == 2 and action["operation"] == Operation.MERGE,
+                or version in (2, 3) and action["operation"] == Operation.MERGE,
                 "Unsupported external execution operation")
         string(action["target"], 512)
         if action["expected_target"] is not None:
@@ -176,7 +177,7 @@ def execution_schema(value, repository_id):
                 and value["actions"][publication["action"]]["status"] == "OBSERVED", "Publication must reference an observed product report")
         fingerprint(publication["body_digest"])
         string(publication["reference"], 512)
-    if version == 2:
+    if version in (2, 3):
         require(type(value["product_flows"]) is dict and len(value["product_flows"]) <= MAX_EXECUTION_TASKS,
                 "Product-flow capacity exhausted")
         for task_key, flow in value["product_flows"].items():
@@ -219,4 +220,7 @@ def execution_schema(value, repository_id):
                 integer(pending["generation"], 1)
                 fingerprint(pending["gates"])
                 string(pending["receipt"], 128)
+    if version == 3:
+        from .track_schema import track_schema
+        track_schema(value, repository_id)
     encode(value)

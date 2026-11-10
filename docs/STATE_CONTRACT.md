@@ -172,3 +172,27 @@ identity and a compact pending acceptance subject; only v2 permits MERGE journal
 actions. Legacy v1/default serialization is unchanged. Reads never migrate and
 old writers refuse v2. See [GitHub product flow](operations/GITHUB_PRODUCT_FLOW.md)
 for capacities, evidence, recovery and authority boundaries.
+
+## Explicit Issue #22 internal execution version 3
+
+`ExecutionJournal.upgrade_track(authorized=True)` selects internal execution v3
+only after the explicit product-flow v2 migration. The outer state remains v3;
+M1 task files, owner/generation/CAS protocol and M2 requirements, counters,
+thresholds, evidence facts and replay checks remain unchanged. The optional
+`execution-upgrade --track-lifecycle --authorize-memory-write` selects these
+existing prerequisite migrations explicitly. Reads never upgrade.
+
+The bounded new fields are `track` (one immutable configuration/deadline and
+persisted finite round/task/lane usage), `lifecycles` (packet and actual check/job
+references, current correction stage and bounded feedback), and `ticket_effects`
+(exact existing-ticket requests and observed/uncertain effects). They share the
+accepted checkpoint, owner and mutation queue; no independent canonical writer
+or counter reset exists. Ticket and Git effects share the original 32-effect
+cap. Closed validation and original memory/journal caps remain mandatory.
+
+Original/proposal and check/action payloads stay in private retained evidence;
+portable records carry bounded references/digests and honest outcomes. A missing
+private artifact cannot be replaced by its digest alone. Current code supports
+legacy internal v1/v2 and v3, while an older binary must refuse v3. See the
+[track contract](operations/AUTONOMOUS_TRACK.md) for recovery, handoff limitations
+and independently authenticated original-scope/operation gates.

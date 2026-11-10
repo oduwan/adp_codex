@@ -19,6 +19,7 @@ class Controller:
     conductor: Conductor
     admissions: tuple[Admission, ...]
     maximum_parallel: int = 1
+    track: object = None
 
 
 def add_commands(commands, common):
@@ -31,6 +32,7 @@ def add_commands(commands, common):
         command.add_argument("--test-runtime", action="store_true", help="Explicit synthetic runtime qualification only")
     upgrade = commands.add_parser("execution-upgrade", parents=[common], help="Explicit owned v2 to v3 execution-journal upgrade")
     upgrade.add_argument("--authorize-memory-write", action="store_true")
+    upgrade.add_argument("--track-lifecycle", action="store_true", help="Explicitly select product-flow v2 and finite track v3")
 
 
 def load_controller(path, config):
@@ -60,14 +62,21 @@ def run(args):
     config.require_storage()
     controller = load_controller(args.controller, config)
     conductor = controller.conductor
+    selected = conductor
+    if controller.track is not None:
+        from .autonomous_track import AutonomousTrack
+        require(type(controller.track) is AutonomousTrack and controller.track.c is conductor and not controller.admissions,
+                "Select one actual track controller, not mixed admissions")
+        selected = controller.track
     if args.command == "status":
-        return conductor.status(), 0
+        return selected.status(), 0
     if args.command == "handoff":
-        return conductor.handoff(authorized=True), 0
+        return selected.handoff(authorized=True), 0
     if type(conductor.runtime) is not CodexExecRuntime and not args.test_runtime:
         return {"status": "UNSUPPORTED_RUNTIME", "reason": "A real supported Codex runtime is required", "background_work": False}, 7
     parallel = args.maximum_parallel if args.maximum_parallel is not None else controller.maximum_parallel
     require(1 <= parallel <= controller.maximum_parallel, "Requested parallelism exceeds explicit project/operator limit")
-    method = conductor.resume if args.command == "resume" else conductor.run
-    result = method(controller.admissions, maximum_parallel=parallel, rounds=args.rounds, authorized=True)
-    return result, 0 if result["status"] == "COMPLETE" else 7 if result["status"] == "UNSUPPORTED_RUNTIME" else 4
+    method = selected.resume if args.command == "resume" else selected.run
+    result = (method(controller.admissions, maximum_parallel=parallel, rounds=args.rounds, authorized=True)
+              if selected is conductor else method(maximum_parallel=parallel, rounds=args.rounds, authorized=True))
+    return result, 0 if result["status"] == "COMPLETE" else 7 if result["status"] in ("UNSUPPORTED_RUNTIME", "UNSUPPORTED") else 4

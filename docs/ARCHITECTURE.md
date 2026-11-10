@@ -67,7 +67,9 @@ Project policy controls branch naming, commit message conventions, CI, code revi
 3. Allow routine in-scope debugging; retain evidence and forbid repeated blind diagnostics.
 4. Review the coherent final revision in a context independent from the code author.
 5. Verify current PR HEAD exactly matches reviewed and qualified revision. Any new commit invalidates the approval.
-6. Leave merge/closure/deployment to separate authority; the supplied executor has no such backend.
+6. Leave merge/closure/deployment to separate authority. Explicitly selected #16
+   supports only its project-delegated native merge envelope; no deployment or
+   automatic issue-closure backend is supplied.
 7. Publish at most one meaningful product summary for a completed product iteration; omit internal-only cycles.
 
 ## Unsupported or separately qualified operations
@@ -75,3 +77,11 @@ Project policy controls branch naming, commit message conventions, CI, code revi
 No always-on daemon, automatic background scheduling, GitLab adapter, product installation, CI privilege escalation, web dashboard, automatic release deployment, or retroactive import of unrelated production history.
 
 See [Progress Guard](PROGRESS_GUARD.md), [Policy Provider](POLICY_PROVIDER.md), [Issue discovery](ISSUE_DISCOVERY.md), and [Roadmap](ROADMAP.md).
+
+The opt-in [Issue #22 lifecycle](operations/AUTONOMOUS_TRACK.md) composes accepted
+preparation, discovery, memory, Progress Guard, Codex runtime, #21 project evidence,
+#14 effects and #16 product flow. Its finite track journal is inside the existing
+single-writer M1 checkpoint. Project-owned environments execute checks; ADP does
+not provision CI or a sandbox. Original-scope proofs and separately authenticated
+operation grants remain mandatory at every execution boundary. This branch's
+implementation awaits independent integration acceptance; it is not an M8 pilot.

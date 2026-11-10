@@ -36,6 +36,7 @@ class Project:
     forge: object
     validation: object
     product_flow: object = None
+    lifecycle: object = None
 
 
 class UnsupportedRuntime(ADPError):
@@ -111,6 +112,13 @@ class Conductor:
 
     def _admit(self, admission, track, generation):
         self._validate_admission(admission)
+        execution = self.journal.inspect()["state"]["execution"]
+        if execution["schema_version"] == 3:
+            for effect in execution["ticket_effects"].values():
+                if effect["task_id"] == admission.task_id or effect["request"]["issue_id"] == admission.identity.issue_id:
+                    require(effect["task_id"] == admission.task_id and effect["status"] == "OBSERVED" and self.guard.inspect(effect["task_id"],
+                        effect["requirement"]).kind == DecisionKind.ALLOW,
+                        "Ticket effects/finite preparation guard must be reconciled before code admission")
         project = self._project(admission)
         candidates = [c for c in track.candidates if c.identity == admission.identity]
         require(len(candidates) == 1, "Admitted issue identity is not in the current track")
@@ -254,11 +262,22 @@ class Conductor:
                 # Unreadable private effect state is UNKNOWN. It must not
                 # prevent cancellation of independently tracked worker handles.
                 unconfirmed.add("git:" + digest({"project": identity}))
-        for admission in admissions:
+        if admissions is None:
+            # Track recovery must also account for workers whose current M4
+            # task cannot yet be selected. No replacement admission is forged.
             try:
-                jobs = self._task(admission)["jobs"].values()
+                groups = [task["jobs"].values() for task in self.journal.inspect()["state"]["execution"]["tasks"].values()]
             except Exception:
-                continue  # Launched handles below do not depend on readable memory.
+                groups = []
+                unconfirmed.add("execution:unreadable-worker-state")
+        else:
+            groups = []
+            for admission in admissions:
+                try:
+                    groups.append(self._task(admission)["jobs"].values())
+                except Exception:
+                    continue
+        for jobs in groups:
             for job in jobs:
                 if job["validation_stop"] == "CONFIRMED":
                     reference = "validation:" + job["request_id"]
@@ -308,6 +327,9 @@ class Conductor:
         return requirement_id(admission.requirement.contract, admission.requirement.gate)
 
     def _prompt(self, admission, role, revision, forensic=None):
+        lifecycle = self._project(admission).lifecycle
+        if lifecycle is not None:
+            return lifecycle.prompt(admission, role, revision, forensic)
         contract = {"scope": admission.product_goal, "criteria": admission.requirement.acceptance,
             "paths": admission.allowed_paths, "revision": revision, "role": role}
         instruction = ("Implement the bounded contract. Edit only admitted source paths. Do not commit, push, publish, or modify Git administration. "
@@ -330,10 +352,12 @@ class Conductor:
         assignment = self.memory.assign(admission.task_id, worker)
         permit = None
         seconds, deadline, samples, payload_bytes = admission.seconds, None, 1000, 1048576
+        if self._project(admission).lifecycle is not None:
+            seconds = min(seconds, self._project(admission).lifecycle.seconds_left())
         if forensic is None:
             state, mem_task, item = self.guard._snapshot(admission.task_id, self._requirement(admission))
             hypothesis, exit_criteria = "worker:" + request_id, "One bounded worker result and observed validation"
-            seconds = admission.seconds
+            seconds = min(seconds, admission.seconds)
             if item["mode"] == "ready":
                 plan = item["plan"]["report"]["plan"]
                 hypothesis, exit_criteria = plan["action"], plan["pass_means"]
@@ -413,6 +437,8 @@ class Conductor:
                          else Request(Operation.VALIDATE))
             with _MUTEX:
                 self._authorize_policy(admission, permit, operation, forensic=forensic["id"] if forensic else None)
+                if project.lifecycle is not None:
+                    project.lifecycle.authorize_worker(admission, request)
                 self._grant("execution/dispatch", digest(request), context={"role": request.role, "host": job["host"]})
                 self._launched.add(request.id)
                 observed = self.runtime.dispatch(request)
@@ -474,12 +500,12 @@ class Conductor:
                 self.guard.observe(admission.task_id, self._requirement(admission), typed(Permit, job["permit"]),
                     Observation(Outcome.UNKNOWN, (reference,), tuple(item["unresolved"]), risk=risk))
 
-    def _deliver(self, admission, assignment_id, job, outcome):
+    def _deliver(self, admission, assignment_id, job, outcome, *, evidence=(), summary=None):
         observed = self.memory.inspect()
         task = observed["tasks"][key(admission.task_id)]
         assignment = task["assignments"][assignment_id]
         result = {"outcome": outcome if outcome in ("PASS", "FAIL", "ERROR", "SKIP", "UNKNOWN") else "ERROR",
-            "summary": "Observed " + job["role"] + " result at exact source revision", "evidence": [job["receipt"]]}
+            "summary": summary or "Observed " + job["role"] + " result at exact source revision", "evidence": [job["receipt"], *evidence]}
         envelope = {"schema_version": 1, "task_key": key(admission.task_id), "assignment_id": assignment_id,
             "generation": job["generation"], "worker": "worker:" + job["request_id"], "source_revision": job["revision"], "result": result}
         from .config import load_json
@@ -590,6 +616,8 @@ class Conductor:
                         **({"dispatch": dispatch, "validate": final_forge_validation} if dispatch is not None and project.product_flow is not None
                            else {"dispatch": dispatch} if dispatch is not None else {}))
                 else:
+                    if request.operation == Operation.COMMIT and project.lifecycle is not None:
+                        project.lifecycle.before_commit(admission, job, generation)
                     if dispatch is not None:
                         observation = project.git_port.submit(action, provider, plan, authorization, dispatch=dispatch)
                     else:
@@ -615,6 +643,10 @@ class Conductor:
             return {"status": "BLOCKED", "reason": "Task requires explicit operator disposition"}
         self._recover_orphans(admission, generation)
         self._reconcile_forensic(admission)
+        lifecycle = self._project(admission).lifecycle
+        if lifecycle is not None:
+            lifecycle.bind(admission, generation)
+            lifecycle.resolve_dependencies(admission, generation)
         stage = self._task(admission)["stage"]
         decision = self.guard.inspect(admission.task_id, self._requirement(admission))
         if decision.kind in (DecisionKind.STOP_UNSAFE, DecisionKind.OPERATOR_DECISION_REQUIRED):
@@ -630,6 +662,14 @@ class Conductor:
             if decision.kind in (DecisionKind.STOP_UNSAFE, DecisionKind.OPERATOR_DECISION_REQUIRED):
                 return {"status": "BLOCKED", "reason": decision.reason}
         if self._task(admission)["stage"] == "REVIEW":
+            if lifecycle is not None and not lifecycle.before_review(admission, generation):
+                return {"status": lifecycle.record(admission)["phase"], "revision": self._task(admission)["revision"]}
+            if lifecycle is not None:
+                current = self.guard.inspect(admission.task_id, self._requirement(admission))
+                if current.kind == DecisionKind.FORENSIC_REQUIRED:
+                    return self._forensic(admission, generation)
+                if current.kind in (DecisionKind.STOP_UNSAFE, DecisionKind.OPERATOR_DECISION_REQUIRED):
+                    return {"status": "BLOCKED", "reason": current.reason}
             self._review(admission, generation)
         if self._task(admission)["stage"] == "PUBLISH":
             self._publish(admission, generation)
@@ -681,6 +721,9 @@ class Conductor:
             self.memory.accept(aid)
 
     def _develop(self, admission, generation):
+        lifecycle = self._project(admission).lifecycle
+        if lifecycle is not None:
+            return lifecycle.develop(admission, generation)
         assignment_id, job = self._job(admission, Role.DEVELOPER, generation)
         result, job = self._worker(admission, assignment_id, job, generation)
         project = self._project(admission)
@@ -731,6 +774,16 @@ class Conductor:
             # Exact independent code approval is real progress, while every
             # acceptance criterion remains unresolved until project evidence.
             proof = Progress(ProgressKind.CORRECTION_APPROVED, "exact-source-code-reviewed", (job["receipt"],)) if approved else None
+            if approved and project.lifecycle is not None:
+                state, memory_task, item = self.guard._snapshot(admission.task_id, self._requirement(admission))
+                from .guard_schema import digest as guard_digest
+                seen = guard_digest({"kind": ProgressKind.CORRECTION_APPROVED, "identity": job["revision"]}) in item["seen_facts"]
+                if seen:
+                    # A new independent verdict at the SAME source is real
+                    # evidence, but not a new M2 progress fact/counter reset.
+                    require(item["approval"] is not None and item["approval"]["context"] == self.guard._context(state, memory_task),
+                            "UNSUPPORTED_CURRENT_CONTEXT_REAPPROVAL: prior SHA approval belongs to another owner context")
+                    proof = None
             self._measured(admission, job, result.outcome, proof=proof,
                 principal="worker:" + job["request_id"] if approved else None)
             def code_review(execution, state, tasks):
@@ -829,6 +882,11 @@ class Conductor:
         task = self._task(admission)
         project = self._project(admission)
         if project.product_flow is not None:
+            if project.lifecycle is not None:
+                # Keep fresh #21/M3 evidence binding stable against sibling
+                # checkpoints. Worker dispatch/wait remains independently parallel.
+                with _MUTEX:
+                    return project.product_flow.advance(admission, generation)
             return project.product_flow.advance(admission, generation)
         require(task["review"] is not None and task["review"]["revision"] == task["revision"], "Current independent review is required")
         require(value(project.root, "rev-parse", "HEAD") == task["revision"]
@@ -903,11 +961,14 @@ class Conductor:
                         if hasattr(project.forge, "unconfirmed_contexts")), "Unconfirmed forge transport stop refuses handoff")
         observed = self.journal.inspect()
         require(observed["local_owner"], "Only the owning Conductor may hand off")
-        if observed["state"]["execution"]["schema_version"] == 2:
+        if observed["state"]["execution"]["schema_version"] in (2, 3):
             require(not any(a["operation"] in (Operation.PR, Operation.MERGE, Operation.REPORT)
                             and a["status"] in ("SUBMITTED", "UNKNOWN")
                             for a in observed["state"]["execution"]["actions"].values()),
                     "Unreconciled forge delivery refuses handoff")
+        if observed["state"]["execution"]["schema_version"] == 3:
+            require(all(e["status"] == "OBSERVED" for e in observed["state"]["execution"]["ticket_effects"].values()),
+                    "Unreconciled ticket effect refuses handoff")
         for task in observed["state"]["execution"]["tasks"].values():
             for assignment_id, job in task["jobs"].items():
                 require(job["validation_stop"] not in ("RUNNING", "UNKNOWN"), "Unconfirmed validation descendants refuse handoff")
@@ -917,13 +978,15 @@ class Conductor:
                     if job["permit"]:
                         from .guard_schema import requirement_id
                         requirements = observed["state"]["progress_guard"]["requirements"]
-                        rid = next(k for k, v in requirements.items() if key(task["task_id"]) in v["tasks"])
+                        rid = typed(Permit, job["permit"]).decision.baseline.requirement_id
                         if requirements[rid]["active"] is not None:
                             self.guard.abandon(task["task_id"], rid, evidence_reference="handoff:observed-worker-stop")
                     self.journal.change(lambda execution, state, tasks, tid=key(task["task_id"]), aid=assignment_id:
                         execution["tasks"][tid]["jobs"][aid].update(status="CANCELLED"))
             require(task["workspace_key"] in self.projects, "Portable handoff requires every admitted workspace binding")
             project = self.projects[task["workspace_key"]]
+            if project.lifecycle is not None:
+                project.lifecycle.before_handoff()
             require(not value(project.root, "status", "--porcelain", "--untracked-files=all"), "Uncommitted product changes are not portable; handoff refused")
             remote = project.git_port.config.remote
             if hasattr(project.git_port, "remote_revision"):
