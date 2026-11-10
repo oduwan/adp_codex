@@ -36,7 +36,7 @@ class ProductServer:
         self.f = fixture
         self.pulls, self.comments, self.calls = [], [], []
         self.review_rows = []
-        self.failure, self.loss, self.before_write = None, None, None
+        self.failure, self.loss, self.before_write, self.read_hook = None, None, None, None
         self.pages = None
 
     def bind_repository(self, node, database):
@@ -45,6 +45,8 @@ class ProductServer:
 
     def request(self, method, path, body=None, *, seconds):
         self.calls.append((method, path, copy.deepcopy(body)))
+        if method == "GET" and self.read_hook is not None:
+            self.read_hook(path)
         if self.failure is not None:
             return Response(self.failure, b'{}')
         base = "/repos/demo/project"
@@ -120,7 +122,9 @@ class ProductFixture(ExecutionFixture):
             # A fresh trusted synthetic provider snapshot per operation; the
             # actual M3 decision and actual M1/M2 safety remain in use.
             snapshot = GitPolicyAdapter(self.projects["one"].git_port.config, governance=(), fingerprint_worktree=True).inspect()
-            provider = PolicyProvider(MockRepositoryAdapter(snapshot), authority=self.authority, safety=safety, clock=lambda: self.now)
+            adapter = MockRepositoryAdapter(snapshot)
+            adapter.config = self.projects["one"].git_port.config  # actual Git port's exact root binding
+            provider = PolicyProvider(adapter, authority=self.authority, safety=safety, clock=lambda: self.now)
             source = SourceClaim(SourceKind.OPERATOR, "fixture:product-policy", "b" * 64, self.rules["one"], self.now, self.now + 300)
             provider.sources = (replace(source, evidence=self.authority.grant(purpose="policy/operator",
                 subject=provider.source_subject(source, snapshot))),)

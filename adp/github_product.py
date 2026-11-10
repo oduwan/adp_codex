@@ -196,7 +196,8 @@ class GitHubProductForge(GitHubForgeBackend):
         except (ADPError, OSError, KeyError, TypeError):
             return ExternalObservation("UNKNOWN")
 
-    def submit(self, key, operation, payload, *, authorization=None, plan_digest=None, dispatch=None):
+    def submit(self, key, operation, payload, *, authorization=None, plan_digest=None, dispatch=None, validate=None):
+        require(callable(validate), "Fresh final M1/M2/M3 validation callback required")
         require(dispatch in self._dispatches, "Fresh one-use forge dispatch required")
         canonical_key, claim = self._dispatches.pop(dispatch)
         observed, row = self._canonical(key, operation, payload)
@@ -209,13 +210,15 @@ class GitHubProductForge(GitHubForgeBackend):
         require(not credential_shaped(payload), "Sensitive forge payload refused")
         with self.service.bounded():
             if operation != Operation.MERGE:
-                return super().submit(key, operation, payload, authorization=authorization, plan_digest=plan_digest)
+                return super().submit(key, operation, payload, authorization=authorization, plan_digest=plan_digest,
+                    before_mutation=validate)
             require(payload["method"] in ("merge", "squash") and payload["envelope"] == "HEAD_ATOMIC_BASE_OBSERVED",
                     "UNSUPPORTED: provider merge method/base envelope")
             item = self.pull(payload["pull"], revision=payload["revision"], source_ref=payload["head_ref"],
                 base_ref=payload["base_ref"], expected_base=payload["expected_base"])
             require(item is not None and item["draft"] is False and item["state"] == "open" and not item["merged"],
                     "Fresh exact ready PR/head/base required")
+            validate()  # after all provider reads, immediately before PUT
             # Native API atomically tests HEAD only. This is deliberately not #14 CAS.
             try:
                 self.service.request("PUT", f"/repos/{self.repository}/pulls/{payload['pull']['number']}/merge",

@@ -117,8 +117,10 @@ class Conductor:
         candidate = candidates[0]
         self._specification(admission, track, candidate)
         if project.product_flow is not None:
+            prior = self.journal.inspect()["state"]["execution"]["tasks"].get(key(admission.task_id))
             project.product_flow.authorize_scope(admission, candidate,
-                value(project.root, "rev-parse", "HEAD"), initial=key(admission.task_id) not in self.journal.inspect()["state"]["execution"]["tasks"])
+                value(project.root, "rev-parse", "HEAD"), initial=prior is None,
+                completed=prior is not None and prior["stage"] == "COMPLETE")
         require(candidate.repository.memory_id == self.memory.config.identity, "Provider/memory identity binding differs")
         existing = self.journal.inspect()["state"]["execution"]["tasks"].get(key(admission.task_id))
         if existing:
@@ -131,6 +133,9 @@ class Conductor:
                         and not value(project.root, "status", "--porcelain", "--untracked-files=all"),
                         "Completed task source drifted; prior evidence is historical only")
                 execution = self.journal.inspect()["state"]["execution"]
+                if project.product_flow is not None:
+                    project.product_flow.reobserve_completed(admission)
+                    return
                 for action_id, action in execution["actions"].items():
                     if action["task_key"] == key(admission.task_id) and action["operation"] in (Operation.PUSH, Operation.PR, Operation.REPORT):
                         effect = self._observe_action(project, action_id, action)
@@ -568,8 +573,22 @@ class Conductor:
                     require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Policy changed before forge mutation")
                     if project.product_flow is not None:
                         project.product_flow.authorize_effect(admission, job, generation, provider, plan)
+                    def final_forge_validation():
+                        self._ownership(generation)
+                        project.product_flow._context(admission, job, generation)
+                        fresh_provider, fresh_plan, fresh_authorization = self._authorize_policy(admission, permit, request,
+                            qualifications=qualifications)
+                        require(data(fresh_plan.payload) == data(plan.payload) and fresh_plan.policy_digest == plan.policy_digest
+                                and fresh_plan.expected_target == plan.expected_target
+                                and fresh_plan.remote_fingerprint == plan.remote_fingerprint,
+                                "Policy/source/base changed during forge observation")
+                        project.product_flow.authorize_effect(admission, job, generation, fresh_provider, fresh_plan)
+                        self._grant("execution/effect", digest({"id": action_id, "plan": digest(fresh_plan), "payload": payload}))
+                        self._ownership(generation)
                     observation = project.forge.submit(action_id, request.operation, payload,
-                        authorization=effect_authorization, plan_digest=digest(plan), **({"dispatch": dispatch} if dispatch is not None else {}))
+                        authorization=effect_authorization, plan_digest=digest(plan),
+                        **({"dispatch": dispatch, "validate": final_forge_validation} if dispatch is not None and project.product_flow is not None
+                           else {"dispatch": dispatch} if dispatch is not None else {}))
                 else:
                     if dispatch is not None:
                         observation = project.git_port.submit(action, provider, plan, authorization, dispatch=dispatch)
@@ -700,19 +719,27 @@ class Conductor:
             # was launched, so retain NOT_STARTED and leave every M2 criterion.
             approved = result.approved and result.outcome == Outcome.PASS
             self._deliver(admission, assignment_id, job, result.outcome)
-            def code_review(execution, state, tasks):
-                current = execution["tasks"][key(admission.task_id)]
-                current["jobs"][assignment_id]["status"] = "COMPLETE"
-                current.update(review=None, stage="PUBLISH" if approved else "DEVELOP")
-            self.journal.change(code_review)
             if approved:
-                project.product_flow.bind(admission, job, generation)
-                project.product_flow._save(admission, review_job=assignment_id)
+                _, _, reserved = self.guard._snapshot(admission.task_id, self._requirement(admission))
+                if reserved["active"] is not None:
+                    project.product_flow.bind(admission, job, generation)
+                else:
+                    # A cached actual result and matching M2 last observation
+                    # finish the same transition; no replacement reservation.
+                    project.product_flow.authorize_scope(admission, self._refresh_issue(admission), job["revision"])
+                    require(project.product_flow._flow(admission)["revision"] == job["revision"], "Pending code review source changed")
             # Exact independent code approval is real progress, while every
             # acceptance criterion remains unresolved until project evidence.
             proof = Progress(ProgressKind.CORRECTION_APPROVED, "exact-source-code-reviewed", (job["receipt"],)) if approved else None
             self._measured(admission, job, result.outcome, proof=proof,
                 principal="worker:" + job["request_id"] if approved else None)
+            def code_review(execution, state, tasks):
+                current = execution["tasks"][key(admission.task_id)]
+                current["jobs"][assignment_id]["status"] = "COMPLETE"
+                current.update(review=None, stage="PUBLISH" if approved else "DEVELOP")
+                if approved:
+                    execution["product_flows"][key(admission.task_id)]["review_job"] = assignment_id
+            self.journal.change(code_review)
             return
         state, memory_task, item = self.guard._snapshot(admission.task_id, self._requirement(admission))
         interrupted_criterion = item["active"] is not None and item["active"]["id"] != permit.token

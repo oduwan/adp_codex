@@ -171,3 +171,32 @@ source corrections; it is historical, not final exact-HEAD acceptance. Final
 Python3.11/3.12 focused/full CI, clean installation and independent exact-HEAD
 code/schema/security review remain required and are reported in the Draft PR.
 Real GitHub target writes and the whole-track M8 pilot are **NOTRUN**.
+
+Independent review of candidate `a43a923` found durable code-review/acceptance
+crash windows, historical Draft observation on completed resume, persistence of
+same-SHA rerun failures and authorization freshness after provider reads. The
+correction keeps code-review jobs nonterminal until their M2 observation is
+proven, then checkpoints the real review link and next stage atomically. A bounded
+pending acceptance subject lives in the existing product-flow row before permit
+consumption; recovery proves the actual last M2 observation, resumes an existing
+exact criterion reservation and skips already verified facts. It never replaces
+an unresolved permit or resets counters. When no reservation remains, accepted
+M2 inspection is used solely to reconstruct and reauthenticate retained evidence;
+new effects still require their own real reservation. An expired gate blocks
+recovery. New observations cannot overwrite a pending acceptance transition.
+
+A nonqualified same-SHA check atomically removes current `task.review` and records
+the correction/pending phase; accepted M2 facts remain historical. Final forge
+callbacks recheck actual owner/generation, reservation/deadline, source, exact M3
+policy and delegation after provider reads immediately before POST/PUT. Completed
+resume observes the current PR/result and preserves old creation/PUSH intents.
+An unchanged immutable code-review receipt is freshly authenticated against the
+current policy; this is not a new runtime review or an invented universal review
+expiry. External project revocation and freshness rules remain binding.
+
+Candidate `a43a923` CI recorded accepted210/210 plus accepted104/104 PASS, focused
+5/42 PASS and37 ERROR on each Python3.11/3.12 job, with installation6/6 and scaffold
+PASS. These red focused results remain failures. The local restricted host could
+not build fresh installations (3.11 build-dependency retrieval unavailable,
+3.12 lacked pip); CI supplies the independently observed installation evidence.
+Final corrected focused and CI results remain pending.

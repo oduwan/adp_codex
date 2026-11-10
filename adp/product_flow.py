@@ -35,7 +35,7 @@ class PreparedScope:
         require(type(preparer) is TicketPreparer, "Use the accepted ticket preparer")
         self.preparer, self.packet_reference = preparer, packet_reference
 
-    def verify(self, admission, candidate, revision, *, initial=False):
+    def verify(self, admission, candidate, revision, *, initial=False, completed=False):
         preparer = self.preparer
         packet = preparer.archive.packet(self.packet_reference)
         original = preparer.archive.original(packet.original_reference)
@@ -66,7 +66,7 @@ class PreparedScope:
                 and packet.prepared_issue_revision == frozen[0].issue.revision
                 and (not initial or candidate.issue.revision == packet.prepared_issue_revision)
                 and (candidate.issue.title, candidate.issue.body) == (frozen[0].issue.title, frozen[0].issue.body)
-                and candidate.status in (Status.READY, Status.IN_PROGRESS)
+                and candidate.status in ((Status.READY, Status.IN_PROGRESS, Status.DONE) if completed else (Status.READY, Status.IN_PROGRESS))
                 and admission.product_goal == packet.goal == scope.goal and tuple(admission.allowed_paths) == tuple(paths) == packet.allowed_paths
                 and tuple(admission.requirement.acceptance) == tuple(c.text for c in clauses if c.kind == "ACCEPTANCE")
                 and packet.clauses == clauses and packet.checks == checks and packet.dependencies == dependencies,
@@ -84,8 +84,8 @@ class GitHubProductFlow:
         self.conductor, self.scope = conductor, scope
         self.validation_factory, self.delegation_factory = validation_factory, delegation_factory
 
-    def authorize_scope(self, admission, candidate, revision, *, initial=False):
-        packet = self.scope.verify(admission, candidate, revision, initial=initial)
+    def authorize_scope(self, admission, candidate, revision, *, initial=False, completed=False):
+        packet = self.scope.verify(admission, candidate, revision, initial=initial, completed=completed)
         # Immutable preparation proves the admitted original. A fresh external
         # authority assesses the current observed context, including harmless PR
         # link/comment changes, without treating that historical proof as a grant.
@@ -96,7 +96,31 @@ class GitHubProductFlow:
             context={"packet": data(packet), "current_issue": data(candidate.issue)})
         return packet
 
-    def _context(self, admission, job, generation):
+    def reobserve_completed(self, admission):
+        """Validate current disposition without replaying historical creation."""
+        c = self.conductor
+        task, project, flow = c._task(admission), c._project(admission), self._flow(admission)
+        if task["kind"] == "INTERNAL":
+            require(task["review"] is not None and task["review"]["revision"] == task["revision"], "Internal acceptance is missing")
+            return
+        require(flow["pull"] is not None and task["review"] is not None and task["review"]["revision"] == task["revision"],
+                "Completed product lacks current exact review/PR")
+        actions = c.journal.inspect()["state"]["execution"]["actions"]
+        creation = next(a for a in actions.values() if a["task_key"] == key(admission.task_id) and a["operation"] == Operation.PR)
+        require(project.forge.pull(flow["pull"], revision=task["revision"], source_ref=task["source_ref"],
+            base_ref=creation["payload"]["base_ref"]) is not None, "Completed current PR head/ref/identity changed")
+        if flow["merge_result"] is not None:
+            merge_id, merge = next((k, a) for k, a in actions.items() if a["task_key"] == key(admission.task_id) and a["operation"] == Operation.MERGE)
+            observed = c._observe_action(project, merge_id, merge)
+            require(observed.status == "PRESENT" and observed.revision == flow["merge_result"], "Completed merge result is unproven")
+        else:
+            require(project.git_port.remote_revision(task["source_ref"]) == task["revision"], "Current published source changed")
+        for action_id, action in actions.items():
+            if action["task_key"] == key(admission.task_id) and action["operation"] == Operation.REPORT:
+                observed = c._observe_action(project, action_id, action)
+                require(observed.status == "PRESENT" and observed.revision == task["revision"], "Completed product report changed")
+
+    def _context(self, admission, job, generation, *, reserved=True):
         c = self.conductor
         c._ownership(generation)
         candidate = c._refresh_issue(admission)
@@ -117,7 +141,8 @@ class GitHubProductFlow:
                 and canonical[0]["permit"] == job["permit"] and job["revision"] == task["revision"]
                 and job["source_ref"] == task["source_ref"], "Current actual M1/M2 product job required")
         provider, context = c._policy(admission, permit)
-        ReservedSafety(c.guard, permit).observe(context)  # actual reservation, owner and deadline
+        if reserved:
+            ReservedSafety(c.guard, permit).observe(context)  # actual reservation, owner and deadline
         state = c.journal.inspect()["state"]["execution"]
         require(state["schema_version"] == 2, "Explicit product-flow upgrade required")
         return task, project, packet, provider, context, permit
@@ -138,11 +163,11 @@ class GitHubProductFlow:
         if old is not None:
             require(old["scope"] == subject and old["original"] == packet.original_reference, "Frozen product scope changed")
             if old["revision"] != task["revision"]:
-                self._save(admission, revision=task["revision"], gates=[], review_job=None, phase="PREPARED", merge_result=None)
+                self._save(admission, revision=task["revision"], gates=[], review_job=None, phase="PREPARED", merge_result=None, acceptance=None)
             return self._flow(admission)
         record = {"original": packet.original_reference, "preparation": packet.preparation_reference,
             "scope": subject, "revision": task["revision"], "phase": "PREPARED", "pull": None,
-            "gates": [], "review_job": None, "delegation": "0" * 64, "merge_result": None}
+            "gates": [], "review_job": None, "delegation": "0" * 64, "merge_result": None, "acceptance": None}
         self.conductor.journal.change(lambda execution, state, tasks: execution["product_flows"].update({key(admission.task_id): record}))
         return self._flow(admission)
 
@@ -199,13 +224,19 @@ class GitHubProductFlow:
         phases = [g for g in self._flow(admission)["gates"] if g["request"]["phase"] != phase]
         phases.append(data(gate))
         status = "VALIDATED" if gate.qualified else "REQUIRES_CORRECTION" if gate.reason == "ACTIONABLE_PROJECT_FAILURE" else "PENDING_VALIDATION"
-        self._save(admission, gates=phases, phase=status)
+        def save(execution, state, tasks):
+            current = execution["product_flows"][key(admission.task_id)]
+            require(current["acceptance"] is None, "Reconcile pending acceptance before a new check observation")
+            current.update(gates=phases, phase=status)
+            if not gate.qualified:
+                execution["tasks"][key(admission.task_id)]["review"] = None
+        self.conductor.journal.change(save)
         return gate
 
-    def qualifications(self, admission, provider, plan):
+    def qualifications(self, admission, provider, plan, *, allow_code_review=False):
         c = self.conductor
         flow, task = self._flow(admission), c._task(admission)
-        validation_provider, context = c._policy(admission, provider.safety.permit)
+        validation_provider, context = provider, plan.task
         validation_plan = validation_provider.plan(context, Request(Operation.VALIDATE))
         validation = self.validation_factory(validation_provider, context)
         # Authenticate complete project phase inventory without running CI.
@@ -241,6 +272,11 @@ class GitHubProductFlow:
                 checks.append(replace(check, evidence=evidence))
         require({(r.name, r.phase) for r in checks} == set(required), "Every prescribed project phase must qualify")
         review = task["review"]
+        if review is None and allow_code_review:
+            job = task["jobs"][flow["review_job"]]
+            require(job["role"] == Role.REVIEWER and job["status"] == "COMPLETE" and job["result"]["approved"], "Actual code review required")
+            review = {"revision": job["revision"], "context": job["context"], "reviewer": "worker:" + job["request_id"],
+                "receipt": job["receipt"], "criteria": job["result"]["criteria"], "checks": []}
         require(review is not None and review["revision"] == task["revision"], "Actual independent final exact-SHA review required")
         approved = Review(review["reviewer"], review["revision"], True, now, now + 300)
         evidence = c._grant("policy/review", provider.review_subject(plan, approved), context=review, principal=review["reviewer"])
@@ -284,57 +320,95 @@ class GitHubProductFlow:
         return pull
 
     def qualify_review(self, admission, job, generation):
-        """Accept no M2 criterion until every #21 phase and the real review pass."""
+        """Resume the same durable acceptance and exact M2 criterion actions."""
         c = self.conductor
-        self.bind(admission, job, generation)
-        for phase in Phase:
-            gate = self.checks(admission, job, generation, phase)
-            if gate is not None and not gate.qualified:
-                return False
-        task, project, packet, provider, context, permit = self._context(admission, job, generation)
         flow = self._flow(admission)
-        assignment = flow["review_job"]
-        require(assignment is not None, "Actual independent code-review receipt required")
-        reviewed = task["jobs"][assignment]
-        require(reviewed["revision"] == task["revision"] and reviewed["generation"] == generation and reviewed["status"] == "COMPLETE"
-                and reviewed["role"] == Role.REVIEWER and reviewed["result"]["approved"]
-                and reviewed["result"]["outcome"] == Outcome.PASS, "Code review is not independent/current/PASS")
-        require(set(admission.requirement.acceptance) <= set(reviewed["result"]["criteria"]),
-                "Code review omitted admitted criteria")
-        # Reuse the accepted M2 progress API, now including the actual project
-        # evidence in the independently authenticated progress subject/context.
+        pending = flow["acceptance"]
+        if pending is None:
+            self.bind(admission, job, generation)
+            for phase in Phase:
+                gate = self.checks(admission, job, generation, phase)
+                if gate is not None and not gate.qualified:
+                    return False
+            task, project, packet, provider, context, permit = self._context(admission, job, generation)
+            flow = self._flow(admission)
+            assignment_id = next(k for k, j in task["jobs"].items() if j["request_id"] == job["request_id"])
+            pending = {"job": assignment_id, "review_job": flow["review_job"], "gates": digest(flow["gates"]),
+                "generation": generation, "revision": task["revision"], "receipt": "pending"}
+            pending["receipt"] = "product-acceptance:" + digest(pending)
+            from .execution_types import WorkerResult
+            def prepared(execution, state, tasks):
+                execution["product_flows"][key(admission.task_id)]["acceptance"] = pending
+                current = execution["tasks"][key(admission.task_id)]["jobs"][assignment_id]
+                current.update(status="OBSERVED", receipt=pending["receipt"],
+                    result=data(WorkerResult(Outcome.PASS, False, (), "Qualified project evidence awaiting durable acceptance")))
+            c.journal.change(prepared)
+        task, project, packet, provider, context, permit = self._context(admission, job, generation, reserved=False)
+        flow = self._flow(admission)
+        require(pending["generation"] == generation and pending["revision"] == task["revision"]
+                and pending["gates"] == digest(flow["gates"])
+                and task["jobs"][pending["job"]]["request_id"] == job["request_id"], "Pending acceptance context changed")
+        reviewed = task["jobs"].get(pending["review_job"])
+        require(reviewed is not None and reviewed["revision"] == task["revision"] and reviewed["generation"] == generation
+                and reviewed["status"] == "COMPLETE" and reviewed["role"] == Role.REVIEWER
+                and reviewed["result"]["approved"] and reviewed["result"]["outcome"] == Outcome.PASS
+                and set(admission.requirement.acceptance) <= set(reviewed["result"]["criteria"]),
+                "Actual independent current code-review acceptance required")
         from .guard_types import Action, ActionKind, Observation, Progress, ProgressKind
-        principal = "worker:" + reviewed["request_id"]
-        _, _, item = c.guard._snapshot(admission.task_id, c._requirement(admission))
-        proof = None if item["approval"] is not None else Progress(ProgressKind.CORRECTION_APPROVED, "exact-source-reviewed", (reviewed["receipt"],))
-        observation = Observation(Outcome.PASS, (reviewed["receipt"], "project-gates:" + digest(flow["gates"])),
-            tuple(item["unresolved"]), progress=proof)
-        evidence = c._grant("progress", c.guard.progress_subject(admission.task_id, c._requirement(admission), permit, observation),
-            context={"receipt": reviewed["receipt"], "principal": principal, "gates": flow["gates"]}, principal=principal) if proof else None
-        c.guard.observe(admission.task_id, c._requirement(admission), permit, observation, evidence=evidence)
+        from .policy import PolicyProvider
+        from .policy_adapters import M2SafetyAdapter
+        principal, receipt = "worker:" + reviewed["request_id"], pending["receipt"]
+        state, memory_task, item = c.guard._snapshot(admission.task_id, c._requirement(admission))
+        active = item["active"]
+        if active is None:
+            require(item["last"] is not None and receipt in item["last"]["observation"]["evidence"]
+                    and item["last"]["context"] == c.guard._context(state, memory_task),
+                    "Original acceptance consumption is not authoritatively proven")
+            # This is observational policy/evidence reconstruction, not an ALLOW
+            # execution capability. Actual accepted M2 inspection supplies safety.
+            provider = PolicyProvider(provider.adapter, sources=provider.sources, protections=provider.protections,
+                authority=provider.authority, safety=M2SafetyAdapter(c.guard), clock=provider.clock)
+        elif active["id"] != permit.token:
+            require(active["action"]["actor"] == "conductor:criterion-observation"
+                    and active["action"]["hypothesis"].startswith("criterion:")
+                    and active["context"] == c.guard._context(state, memory_task), "Conflicting acceptance reservation")
+            current = Permit(active["id"], c.guard._decision(c._requirement(admission), state, memory_task, item))
+            provider, context = c._policy(admission, current)
+        # Reauthenticate all actual retained #21 proof, its original counts,
+        # current phase policy and exact independent review before local recovery.
+        self.qualifications(admission, provider, provider.plan(context, Request(Operation.VALIDATE)), allow_code_review=True)
+        if active is not None and active["id"] == permit.token:
+            proof = None if item["approval"] is not None else Progress(ProgressKind.CORRECTION_APPROVED,
+                "exact-source-reviewed", (reviewed["receipt"],))
+            observation = Observation(Outcome.PASS, (reviewed["receipt"], receipt), tuple(item["unresolved"]), progress=proof)
+            evidence = c._grant("progress", c.guard.progress_subject(admission.task_id, c._requirement(admission), permit, observation),
+                context={"receipt": reviewed["receipt"], "principal": principal, "gates": flow["gates"]}, principal=principal) if proof else None
+            c.guard.observe(admission.task_id, c._requirement(admission), permit, observation, evidence=evidence)
         for criterion in admission.requirement.acceptance:
-            _, _, item = c.guard._snapshot(admission.task_id, c._requirement(admission))
-            require(criterion in reviewed["result"]["criteria"], "Code review omitted admitted criterion")
+            state, memory_task, item = c.guard._snapshot(admission.task_id, c._requirement(admission))
             if criterion not in item["unresolved"]:
                 continue
-            reserved = c.guard.begin(admission.task_id, c._requirement(admission), Action("conductor:criterion-observation", ActionKind.CHECK,
-                "criterion:" + criterion, "Actual project gates plus independent exact-SHA review"))
-            measured = Observation(Outcome.PASS, (reviewed["receipt"], "project-gates:" + digest(flow["gates"])),
-                tuple(x for x in item["unresolved"] if x != criterion),
+            if item["active"] is not None:
+                require(item["active"]["action"]["actor"] == "conductor:criterion-observation"
+                        and item["active"]["action"]["hypothesis"] == "criterion:" + criterion,
+                        "Interrupted criterion differs")
+                reserved = Permit(item["active"]["id"], c.guard._decision(c._requirement(admission), state, memory_task, item))
+            else:
+                reserved = c.guard.begin(admission.task_id, c._requirement(admission), Action("conductor:criterion-observation", ActionKind.CHECK,
+                    "criterion:" + criterion, "Actual project gates plus independent exact-SHA review"))
+            measured = Observation(Outcome.PASS, (reviewed["receipt"], receipt), tuple(x for x in item["unresolved"] if x != criterion),
                 progress=Progress(ProgressKind.REQUIREMENT_VERIFIED, criterion, (reviewed["receipt"],)))
             evidence = c._grant("progress", c.guard.progress_subject(admission.task_id, c._requirement(admission), reserved, measured),
                 context={"receipt": reviewed["receipt"], "principal": principal, "gates": flow["gates"]}, principal=principal)
             c.guard.observe(admission.task_id, c._requirement(admission), reserved, measured, evidence=evidence)
-        from .execution_types import WorkerResult
-        job.update(receipt=reviewed["receipt"], result=data(WorkerResult(Outcome.PASS, False, (), "Project gates and independent review qualified")))
-        assignment_id = next(k for k, j in task["jobs"].items() if j["request_id"] == job["request_id"])
-        c._deliver(admission, assignment_id, job, Outcome.PASS)
+        job = task["jobs"][pending["job"]]
+        c._deliver(admission, pending["job"], job, Outcome.PASS)
         def accepted(execution, state, tasks):
             current = execution["tasks"][key(admission.task_id)]
-            current["jobs"][assignment_id].update(status="COMPLETE", receipt=job["receipt"], result=job["result"])
+            current["jobs"][pending["job"]]["status"] = "COMPLETE"
             current["review"] = {"revision": reviewed["revision"], "context": reviewed["context"], "reviewer": principal,
                 "receipt": reviewed["receipt"], "criteria": reviewed["result"]["criteria"], "checks": []}
-            execution["product_flows"][key(admission.task_id)]["phase"] = "VALIDATED"
+            execution["product_flows"][key(admission.task_id)].update(phase="VALIDATED", acceptance=None)
         c.journal.change(accepted)
         return True
 
@@ -441,6 +515,10 @@ class GitHubProductFlow:
         c = self.conductor
         assignment, job = c._job(admission, Role.COORDINATION, generation)
         task = c._task(admission)
+        flow = c.journal.inspect()["state"]["execution"]["product_flows"].get(key(admission.task_id))
+        if flow is not None and flow["acceptance"] is not None:
+            self.qualify_review(admission, job, generation)
+            return "VALIDATED"
         outcome = Outcome.UNKNOWN
         if task["kind"] == "INTERNAL":
             self.bind(admission, job, generation)

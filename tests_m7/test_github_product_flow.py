@@ -7,25 +7,39 @@ import json
 import os
 from pathlib import Path
 from unittest.mock import patch
+from contextlib import contextmanager
 
 from product_flow_fixtures import ProductFixture, ProductServer, run
 from adp.discovery_schema import digest, typed
 from adp.errors import ADPError
 from adp.execution_memory import ExecutionJournal
 from adp.execution_schema import execution_schema
-from adp.execution_types import Role
+from adp.execution_types import Role, WorkerResult
 from adp.forge_http_child import validate_request
 from adp.github_product import GitHubProductForge, delegation_subject
-from adp.guard_types import Attestation, Outcome, data
+from adp.guard_types import Attestation, Outcome, Permit, data
 from adp.network_git import GitHubCAS
 from adp.network_http import GitHubHTTPTransport, installation_scope_subject
 from adp.policy import PolicyProvider
-from adp.policy_types import Operation, OutcomeCount, ProjectQualifications, Qualifications, Request
+from adp.policy_types import Operation, OutcomeCount, ProjectQualifications, Qualifications, Request, Review
 from adp.project_validation_types import Phase, ResultStatus
 from adp.schema import key
 
 
 class ProductFlowTests(ProductFixture):
+    @contextmanager
+    def isolated(self):
+        fixture = ProductFixture()
+        try:
+            fixture.setUp()
+            yield fixture
+        finally:
+            fixture.doCleanups()
+
+    def accept_fixture(self, fixture):
+        fixture.draft(ready=True)
+        self.assertTrue(fixture.flow.qualify_review(fixture.admission, fixture.job, fixture.generation))
+        fixture.assignment, fixture.job = fixture.conductor._job(fixture.admission, Role.COORDINATION, fixture.generation)
     def accepted(self, *, ready=True):
         pull = self.draft(ready=ready)
         self.assertIsNotNone(pull)
@@ -63,7 +77,7 @@ class ProductFlowTests(ProductFixture):
 
     def test_v2_unknown_counts_roundtrip_without_legacy_coercion(self):
         self.accepted()
-        provider, context = self.conductor._policy(self.admission, typed(__import__('adp.guard_types', fromlist=['Permit']).Permit, self.job["permit"]))
+        provider, context = self.conductor._policy(self.admission, typed(Permit, self.job["permit"]))
         plan = provider.plan(context, Request(Operation.REPORT, report_target="https://github.com/demo/project/issues/1", report_body="Product"))
         q = self.flow.qualifications(self.admission, provider, plan)
         self.assertIs(type(q), ProjectQualifications)
@@ -104,6 +118,13 @@ class ProductFlowTests(ProductFixture):
         with self.assertRaises(ADPError):self.flow.bind(self.admission, self.job, self.generation + 1)
         changed = copy.deepcopy(self.job); changed["permit"]["token"] = "a" * 64
         with self.assertRaises(ADPError):self.flow.bind(self.admission, changed, self.generation)
+        def lose_owner(path):
+            if path == "/repos/demo/project":
+                self.server.read_hook = None
+                (self.memory.control / "owner.json").unlink()
+        self.server.read_hook = lose_owner
+        with self.assertRaises(ADPError):self.draft()
+        self.assertFalse(self.memory.inspect()["local_owner"])
         self.assertEqual(self.mutations(), [])
 
     def test_credentials_and_forged_delegation_not_authority(self):
@@ -120,6 +141,20 @@ class ProductFlowTests(ProductFixture):
         self.assertIsNone(self.conductor._task(self.admission)["review"])
         self.assertEqual(self.guard_state()["unresolved"], ["criterion:answer"])
         self.assertEqual(self.mutations("PUT"), [])
+        self.authority.denied.remove("project-validation/observation")
+        self.assertTrue(self.flow.qualify_review(self.admission, self.job, self.generation))
+        self.assignment, self.job = self.conductor._job(self.admission, Role.COORDINATION, self.generation)
+        provider, context = self.conductor._policy(self.admission, typed(Permit, self.job["permit"]))
+        plan = provider.plan(context, Request(Operation.MERGE))
+        qualified = self.flow.qualifications(self.admission, provider, plan)
+        author = self.guard_state()["authors"][0]
+        forged = Review(author, context.revision, True, self.now, self.now + 300)
+        forged = replace(forged, evidence=Attestation(author, "forged:author-review", provider.review_subject(plan, forged)))
+        q = replace(qualified, reviews=(forged,))
+        authorization = self.projects["one"].policy_authorizer.authorize(plan, q)
+        self.assertEqual(provider.decide(plan, authorization).effect, "DENY")
+        q = replace(qualified, reviews=())
+        self.assertNotEqual(provider.decide(plan, self.projects["one"].policy_authorizer.authorize(plan, q)).effect, "ALLOW")
 
     def test_before_pr_only_needs_no_post_pr_gate(self):
         self.accepted()
@@ -174,16 +209,23 @@ class ProductFlowTests(ProductFixture):
 
     def test_failed_checks_return_bounded_in_scope_correction(self):
         self.phases = (Phase.AFTER_PR,)
+        self.accepted()
         self.check_status = ResultStatus.FAIL
-        self.draft()
-        self.assertFalse(self.flow.qualify_review(self.admission, self.job, self.generation))
+        self.assertFalse(self.flow.checks(self.admission, self.job, self.generation, Phase.AFTER_PR).qualified)
         self.assertEqual(self.flow._flow(self.admission)["phase"], "REQUIRES_CORRECTION")
         self.assertIsNone(self.conductor._task(self.admission)["review"])
-        self.assertEqual(self.guard_state()["unresolved"], ["criterion:answer"])
+        self.assertEqual(self.guard_state()["unresolved"], [])  # retained historical M2 facts, no reset
         self.assertNotEqual(self.guard_state()["mode"], "unsafe")
+        self.assertEqual(self.mutations("PUT"), [])
 
     def test_changed_policy_and_divergent_base_invalidate_gates(self):
         self.accepted()
+        tree = run(self.root, "rev-parse", "HEAD^{tree}")
+        sibling = run(self.remote, "commit-tree", tree, "-p", self.initial, "-m", "Independent divergent base")
+        run(self.remote, "update-ref", "refs/heads/trunk", sibling, self.initial)
+        self.server.pulls[0]["base"]["sha"] = sibling
+        with self.assertRaises(ADPError):self.merge()
+        self.assertEqual(self.mutations("PUT"), [])
         self.rules["one"] = replace(self.rules["one"], checks=("unit", "new-check"))
         with self.assertRaises(ADPError):self.merge()
         self.assertEqual(self.mutations("PUT"), [])
@@ -199,11 +241,27 @@ class ProductFlowTests(ProductFixture):
 
     def test_unique_draft_retained_across_source_correction(self):
         pull = self.draft()
+        original = self.conductor._task(self.admission)["revision"]
+        self.job.update(receipt="fixture:pending-correction", result=data(WorkerResult(Outcome.UNKNOWN, False, (), "Correction required")))
+        self.conductor._deliver(self.admission, self.assignment, self.job, Outcome.UNKNOWN)
+        self.conductor._measured(self.admission, self.job, Outcome.UNKNOWN)
+        self.conductor.journal.change(lambda e, s, t: e["tasks"][key(self.admission.task_id)]["jobs"][self.assignment].update(status="COMPLETE"))
+        self.runtime.serial_corrections = True
+        self.conductor._develop(self.admission, self.generation)
+        self.conductor._review(self.admission, self.generation)
+        revised = self.conductor._task(self.admission)["revision"]
+        self.assertNotEqual(revised, original)
+        self.assertIsNone(self.conductor._task(self.admission)["review"])
+        self.assertEqual(self.flow._flow(self.admission)["gates"], [])
+        self.server.pulls[0]["head"]["sha"] = revised
+        self.assignment, self.job = self.conductor._job(self.admission, Role.COORDINATION, self.generation)
         self.assertEqual(self.draft(), pull)
+        self.assertTrue(self.flow.qualify_review(self.admission, self.job, self.generation))
         self.assertEqual(len(self.server.pulls), 1)
         self.assertEqual(len(self.mutations("POST")), 1)
         action = next(a for a in self.conductor.journal.inspect()["state"]["execution"]["actions"].values() if a["operation"] == Operation.PR)
-        self.assertEqual(action["payload"]["revision"], self.conductor._task(self.admission)["revision"])
+        self.assertEqual(action["payload"]["revision"], original)
+        self.assertEqual(self.conductor._task(self.admission)["review"]["revision"], revised)
 
     def test_unauthorized_pr_or_report_permits_no_write(self):
         self.review()
@@ -276,6 +334,17 @@ class ProductFlowTests(ProductFixture):
             self.envelope = envelope
             self.assertEqual(self.merge(), "UNSUPPORTED")
         self.assertEqual(self.mutations("PUT"), [])
+        self.envelope = "HEAD_ATOMIC_BASE_OBSERVED"
+        reads = []
+        def expire_after_backend_read(path):
+            if path == "/repos/demo/project/pulls/1":
+                reads.append(path)
+                if len(reads) == 2:
+                    self.guard.clock = lambda: self.job["deadline"] + 1
+        self.server.read_hook = expire_after_backend_read
+        with self.assertRaises(ADPError):self.merge()
+        self.assertEqual(len(reads), 2)
+        self.assertEqual(self.mutations("PUT"), [])
 
     def test_one_substantive_product_summary_per_iteration(self):
         self.accepted(); self.merge()
@@ -312,6 +381,12 @@ class ProductFlowTests(ProductFixture):
         self.assertNotIn("Merged as", self.server.comments[0]["body"])
 
     def test_lost_pr_response_before_after_never_duplicate(self):
+        with self.isolated() as other:
+            other.review(); other.server.loss = "before"
+            with self.assertRaises(ADPError):other.draft()
+            with self.assertRaises(ADPError):other.draft()
+            self.assertEqual(len([r for r in other.server.calls if r[0] == "POST"]), 1)
+            self.assertEqual(other.server.pulls, [])
         self.review(); self.server.loss = "after"
         self.draft()
         self.assertEqual(len(self.server.pulls), 1)
@@ -319,18 +394,62 @@ class ProductFlowTests(ProductFixture):
         self.assertEqual(len(self.mutations("POST")), 1)
 
     def test_lost_merge_response_before_after_never_blind_retry(self):
-        self.accepted(); self.server.loss = "after"
+        with self.isolated() as other:
+            self.accept_fixture(other); other.server.loss = "before"
+            with self.assertRaises(ADPError):other.flow.merge(other.admission, other.job, other.generation)
+            with self.assertRaises(ADPError):other.flow.merge(other.admission, other.job, other.generation)
+            self.assertFalse(other.server.pulls[0]["merged"])
+            self.assertEqual(len([r for r in other.server.calls if r[0] == "PUT"]), 1)
+        self.draft(ready=True)
+        original = self.guard.observe
+        crashed = []
+        def after_consumption(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if not crashed and any(e.startswith("product-acceptance:") for e in args[3].evidence):
+                crashed.append(True)
+                raise OSError("Synthetic interruption after durable acceptance observation")
+            return result
+        with patch.object(self.guard, "observe", side_effect=after_consumption):
+            with self.assertRaises(OSError):self.flow.qualify_review(self.admission, self.job, self.generation)
+        self.assertIsNotNone(self.flow._flow(self.admission)["acceptance"])
+        self.assertIsNone(self.guard_state()["active"])
+        self.assertTrue(self.flow.qualify_review(self.admission, self.job, self.generation))
+        self.assignment, self.job = self.conductor._job(self.admission, Role.COORDINATION, self.generation)
+        self.server.loss = "after"
         self.assertEqual(self.merge(), "MERGED")
         self.assertEqual(self.merge(), "MERGED")
         self.assertEqual(len(self.mutations("PUT")), 1)
 
     def test_lost_comment_response_before_after_never_duplicate(self):
+        with self.isolated() as other:
+            self.accept_fixture(other); other.flow.merge(other.admission, other.job, other.generation)
+            other.server.loss = "before"
+            with self.assertRaises(ADPError):other.flow.report(other.admission, other.job, other.generation)
+            with self.assertRaises(ADPError):other.flow.report(other.admission, other.job, other.generation)
+            self.assertEqual(other.server.comments, [])
+            self.assertEqual(len([r for r in other.server.calls if r[0] == "POST" and r[1].endswith("/comments")]), 1)
         self.accepted(); self.merge(); self.server.loss = "after"
         self.report(); self.report()
         self.assertEqual(len(self.server.comments), 1)
 
     def test_restart_prepared_submitted_preserves_owner_and_one_use(self):
-        self.review(); self.server.loss = "before"
+        self.conductor._develop(self.admission, self.generation)
+        original = self.conductor._measured
+        crashed = []
+        def interrupted(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if args[1]["role"] == Role.REVIEWER and not crashed:
+                crashed.append(True)
+                raise OSError("Synthetic interruption after code review observation")
+            return result
+        with patch.object(self.conductor, "_measured", side_effect=interrupted):
+            with self.assertRaises(OSError):self.conductor._review(self.admission, self.generation)
+        self.assertEqual(self.conductor._task(self.admission)["stage"], "REVIEW")
+        self.assertIsNone(self.guard_state()["active"])
+        with patch.object(self.guard, "begin", side_effect=AssertionError("must reconcile original review")):
+            self.conductor._review(self.admission, self.generation)
+        self.assignment, self.job = self.conductor._job(self.admission, Role.COORDINATION, self.generation)
+        self.server.loss = "before"
         with self.assertRaises(ADPError):self.draft()
         self.projects["one"] = replace(self.projects["one"], forge=GitHubProductForge(self.service, self.conductor.journal, self.authority))
         with self.assertRaises(ADPError):self.draft()

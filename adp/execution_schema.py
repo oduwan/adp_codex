@@ -8,6 +8,7 @@ from .guard_types import Outcome
 from .schema import JOB, KEY, encode, fields, integer, key, require, string
 from .git import SHA
 from .policy_types import Operation
+from .project_validation_types import EvidenceGate
 
 MAX_EXECUTION_TASKS = 8
 MAX_ACTIONS = 32
@@ -139,7 +140,7 @@ def execution_schema(value, repository_id):
                         and (j["validation_stop"] == "CONFIRMED" or version == 2 and j["validation_stop"] == "NOT_STARTED"
                              and not j["checks"] and value["product_flows"].get(task_key, {}).get("review_job") == aid
                              and value["product_flows"][task_key]["gates"]
-                             and all(typed(__import__("adp.project_validation_types", fromlist=["EvidenceGate"]).EvidenceGate, g).qualified
+                             and all(typed(EvidenceGate, g).qualified
                                      for g in value["product_flows"][task_key]["gates"]))
                         and j["checks"] == task["review"]["checks"]
                         for aid, j in task["jobs"].items()), "Review must reference an actual completed independent Reviewer job")
@@ -180,7 +181,7 @@ def execution_schema(value, repository_id):
                 "Product-flow capacity exhausted")
         for task_key, flow in value["product_flows"].items():
             require(task_key in value["tasks"], "Product flow references unknown task")
-            fields(flow, "original preparation scope revision phase pull gates review_job delegation merge_result")
+            fields(flow, "original preparation scope revision phase pull gates review_job delegation merge_result acceptance")
             for name in ("original", "preparation"):
                 string(flow[name], 128)
             fingerprint(flow["scope"])
@@ -194,7 +195,6 @@ def execution_schema(value, repository_id):
                 for name in ("id", "repository_id", "url"):
                     string(flow["pull"][name], 512)
             require(type(flow["gates"]) is list and len(flow["gates"]) <= 2, "Invalid project gates")
-            from .project_validation_types import EvidenceGate
             phases = []
             for raw in flow["gates"]:
                 gate = typed(EvidenceGate, raw)
@@ -210,4 +210,13 @@ def execution_schema(value, repository_id):
                         "Product review must reference an actual completed independent Reviewer")
             if flow["merge_result"] is not None:
                 sha(flow["merge_result"])
+            if flow["acceptance"] is not None:
+                pending = flow["acceptance"]
+                fields(pending, "job review_job gates generation revision receipt")
+                require(pending["job"] in value["tasks"][task_key]["jobs"]
+                        and pending["review_job"] == flow["review_job"]
+                        and pending["revision"] == flow["revision"], "Invalid pending acceptance identity")
+                integer(pending["generation"], 1)
+                fingerprint(pending["gates"])
+                string(pending["receipt"], 128)
     encode(value)
