@@ -192,11 +192,19 @@ class ProductFlowTests(ProductFixture):
         self.assertEqual((gate.results[0].denominator, gate.results[0].counts), (7, self.counts))
 
     def test_checks_paginate_and_permission_rate_limit_stay_unknown(self):
-        self.review()
         for status in (403, 429):
-            self.server.failure = status
-            with self.assertRaises(ADPError):self.draft()
-        self.server.failure = None
+            with self.isolated() as other:
+                other.review()
+                other.server.failure = status
+                with self.assertRaises(ADPError):other.draft()
+                self.assertEqual([row for row in other.server.calls if row[0] == "POST"], [])
+                # SUBMITTED remains uncertain even when a later read succeeds.
+                # Exercise pagination in a distinct context, never by retrying it.
+                other.server.failure = None
+                with self.assertRaises(ADPError):other.draft()
+                self.assertEqual([row for row in other.server.calls if row[0] == "POST"], [])
+                actions = other.conductor.journal.inspect()["state"]["execution"]["actions"].values()
+                self.assertEqual([row["status"] for row in actions if row["operation"] == Operation.PR], ["SUBMITTED"])
         self.draft()
         self.server.review_rows = [{"id": i, "user": {"id": i}, "state": "APPROVED", "commit_id": self.conductor._task(self.admission)["revision"]} for i in range(1, 101)]
         self.assertIsNone(self.forge.reviews(self.flow._flow(self.admission)["pull"], self.initial))
