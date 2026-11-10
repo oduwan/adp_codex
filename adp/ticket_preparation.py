@@ -361,6 +361,22 @@ class TicketPreparer:
             return PreparationResult(Status.BLOCKED_OPERATOR, ("Independent exact-context preparation review is missing or stale",))
         current_reviews = tuple(r for r in candidate.reviews
             if self.planner._verified(track.snapshots, candidate.issue, r, now))
+        # Keep the authenticated disposition evidence for the entire prerequisite
+        # closure, not only the selected task's own readiness receipt.
+        prerequisite_reviews, visited, pending = [], set(), list(candidate.prerequisites)
+        candidates_by_id = {c.identity: c for c in track.candidates}
+        while pending:
+            identity = pending.pop()
+            if identity in visited:
+                continue
+            visited.add(identity)
+            prerequisite = candidates_by_id.get(identity)
+            if prerequisite is None or prerequisite.status != Status.DONE:
+                return PreparationResult(Status.BLOCKED_DEPENDENCY, ("Prerequisite disposition is unavailable",))
+            verified = tuple(r for r in prerequisite.reviews if r.completed
+                and self.planner._verified(track.snapshots, prerequisite.issue, r, now))
+            prerequisite_reviews.append(verified)
+            pending.extend(prerequisite.prerequisites)
         acceptance = tuple(c.text for c in clauses if c.kind == "ACCEPTANCE")
         # Discovery, policy inspection and external receipt verification can take
         # time. All validity intervals must still hold after those observations.
@@ -368,6 +384,21 @@ class TicketPreparer:
         integer(finished)
         if finished < now or any(not (s.observed_at <= finished <= s.observed_at + 3600) for s in track.snapshots):
             return PreparationResult(Status.UNKNOWN, ("Clock or discovery freshness changed during preparation",))
+        # Reapply accepted M4 semantics to the same frozen observations. This is
+        # no new discovery request and cannot silently change the reviewed DAG.
+        reassessed = DependencyPlanner(authority=self.planner.authority, clock=lambda: finished).plan(
+            track.snapshots, reviews=readiness_reviews, previous=previous)
+        if reassessed != track:
+            latest = next(c for c in reassessed.candidates if c.identity == candidate.identity)
+            return PreparationResult(latest.status if latest.status != Status.READY else Status.UNKNOWN,
+                ("Dependency/readiness evidence changed during preparation; independent reassessment required",))
+        finished = self.clock()
+        integer(finished)
+        if finished < now or any(not (s.observed_at <= finished <= s.observed_at + 3600) for s in track.snapshots):
+            return PreparationResult(Status.UNKNOWN, ("Clock or discovery freshness changed during reassessment",))
+        if any(not any(_fresh(r.observed_at, r.expires_at, finished) for r in group)
+               for group in prerequisite_reviews):
+            return PreparationResult(Status.BLOCKED_DEPENDENCY, ("Prerequisite disposition expired during observation",))
         if (not _fresh(review.observed_at, review.expires_at, finished)
                 or any(not _fresh(a.observed_at, a.expires_at, finished) for a in additions)
                 or any(not _fresh(s.observed_at, s.expires_at, finished) for s in inspection.sources)):

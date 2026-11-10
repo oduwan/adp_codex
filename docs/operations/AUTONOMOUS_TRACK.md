@@ -126,6 +126,10 @@ Preparation resamples its clock after discovery, policy and external evidence
 observations. Discovery, policy claims, the independent readiness/preparation
 reviews and any particular scope-addition approval must still be current before
 the packet is persisted; entry-time freshness alone is insufficient.
+The actual M4 planner rechecks the same frozen observations and reviews at that
+time. An expired prerequisite DONE disposition blocks the dependent task; a
+changed ordered track cannot reuse the preparation approval. The complete
+prerequisite closure remains subject to the final freshness check.
 
 Actual ticket submission is unavailable until accepted owner/generation-fenced,
 Progress-Guard-reserved, idempotent external-effect integration exists. It must
