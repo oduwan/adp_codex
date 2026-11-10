@@ -63,7 +63,10 @@ def track_schema(execution, repository_id):
     require(type(execution["lifecycles"]) is dict and len(execution["lifecycles"]) <= 8, "Lifecycle capacity exhausted")
     for task_key, life in execution["lifecycles"].items():
         require(task_key in execution["tasks"], "Lifecycle references an unadmitted task")
-        fields(life, "packet mode phase job candidate gate expires policy feedback failure journal")
+        fields(life, "packet mode phase job candidate gate expires policy feedback failure journal"
+               + (" workspace" if "workspace" in life else ""))
+        if life.get("workspace") is not None:
+            fingerprint(life["workspace"])
         string(life["packet"], 128)
         require(life["mode"] in ("CANDIDATE", "COMMITTED", "POST_PR") and life["phase"] in LIFE_PHASES,
                 "Invalid project development-check sequence")

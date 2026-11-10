@@ -417,8 +417,11 @@ class Conductor:
                 action = self.journal.inspect()["state"]["execution"]["actions"].get(action_id)
                 observed_commit = project.git_port.observe(action) if action else None
                 allowed_head = observed_commit is not None and observed_commit.status == "PRESENT" and observed_commit.revision == head
+            same_workspace = source_seal(project.root) == job["result_digest"]
+            if not same_workspace and job["role"] == Role.DEVELOPER and project.lifecycle is not None:
+                same_workspace = project.lifecycle.checked_worker_workspace(admission, assignment_id, job)
             require(allowed_head and value(project.root, "symbolic-ref", "HEAD") == job["source_ref"]
-                    and source_seal(project.root) == job["result_digest"], "Cached worker evidence differs from actual source")
+                    and same_workspace, "Cached worker evidence differs from actual source")
             if job["role"] != Role.DEVELOPER:
                 require(admin_seal(project.root) == job["admin_digest"], "Cached independent context has changed Git administration")
             return typed(WorkerResult, job["result"]), job
@@ -884,7 +887,7 @@ class Conductor:
         if project.product_flow is not None:
             if project.lifecycle is not None:
                 # Keep fresh #21/M3 evidence binding stable against sibling
-                # checkpoints. Worker dispatch/wait remains independently parallel.
+                # checkpoints. Worker execution/wait remains independently parallel.
                 with _MUTEX:
                     return project.product_flow.advance(admission, generation)
             return project.product_flow.advance(admission, generation)

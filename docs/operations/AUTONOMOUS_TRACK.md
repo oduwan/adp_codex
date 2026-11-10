@@ -236,6 +236,18 @@ also verifies every staged blob/mode, content, freshness and current project
 policy. Hidden index flags, unexpected files or content drift refuse execution,
 including the no-change review path.
 
+Candidate content is Git-visible committable source: tracked paths (including
+tracked paths now ignored) plus nonignored untracked paths. Staging a checked
+addition, deletion or rename does not change that content seal. Existing checks
+may produce project-ignored scratch without changing the candidate; force-adding
+such output changes the checked source and requires new qualification. The full
+worker outside/admin containment seals are unchanged. A separate full-workspace
+checkpoint is recorded after the actual #21 observation. Candidate crash recovery
+may reuse a stopped Developer result only for the exact assignment/candidate and
+that exact recorded workspace; later ignored drift remains unverified. Commit
+also requires this full workspace to remain unchanged. Existing 32 MiB/4096-entry
+worker inventory and M3 stage bounds still apply; no resource cap is enlarged.
+
 Project actions remain separately authorized through #21 `request_action` and
 the actual reserved M1/M2 context. A pending/lost action is reobserved using its
 retained request and original key/observation budget under a fresh independently
@@ -255,6 +267,15 @@ Legacy internal-v1/v2 readers/writers remain supported. Reads never migrate.
 #21 private request retention is explicitly selected v2 for lifecycle actions;
 legacy v1 bytes/subjects stay unchanged. Missing old intent payloads require
 external reconciliation, never an inferred successful migration.
+
+Internal execution-v3 recognizes two closed lifecycle-record layouts: historical
+draft records without `workspace`, and records with its optional full-workspace
+fingerprint. Reads do not add it. Only a new authorized observation records it;
+missing historical workspace evidence cannot enable alternate cached-result
+recovery. Candidate seals from the earlier draft's whole-filesystem algorithm
+remain historical and cannot be promoted into the Git-visible candidate domain.
+Finish or independently reconcile outstanding old candidate intents before using
+the corrected implementation; no old action is blindly resubmitted.
 
 A window binds one exact repository/configuration/generation, explicit issue
 identities and distinct existing workspaces. It lasts at most one hour, admits

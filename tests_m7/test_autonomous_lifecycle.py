@@ -67,6 +67,21 @@ class CandidateEvidenceTests(Cases):
         with self.assertRaises(ADPError):
             f.life._validator(f.admission, job, source)
         self.assertNotEqual(capture_candidate(f.root), source)
+        # Source identity is independent of legitimate staging of a deletion
+        # or rename. These are disposable unadmitted source observations, not
+        # authorization to edit paths outside a product packet.
+        root = f.base / "staging-source"
+        run(f.base, "clone", str(f.remote), str(root))
+        original = (root / "product.py").read_bytes()
+        (root / "product.py").unlink()
+        deleted = capture_candidate(root)
+        run(root, "add", "--", "product.py")
+        self.assertEqual(capture_candidate(root).content_digest, deleted.content_digest)
+        (root / "renamed.py").write_bytes(original)
+        renamed = capture_candidate(root)
+        run(root, "add", "--", "renamed.py")
+        self.assertEqual(capture_candidate(root).content_digest, renamed.content_digest)
+        self.assertNotEqual(capture_candidate(root).index_digest, renamed.index_digest)
 
     def test_candidate_results_cannot_satisfy_committed_sha_gates(self):
         f = self.fixture(attach=True)
@@ -120,10 +135,37 @@ class CandidateEvidenceTests(Cases):
         self.assertFalse(gate.qualified)
 
     def test_candidate_pass_requires_unchanged_source_through_staging(self):
-        f = self.fixture(attach=True)
+        f = self.fixture()
+        exclude = Path(run(f.root, "rev-parse", "--git-path", "info/exclude"))
+        if not exclude.is_absolute(): exclude = f.root / exclude
+        exclude.write_text(".project-cache/\n")
+        f.attach()
+        f.action_id = "project:existing-unit"
+        class ExistingProjectCheck:
+            def request(self, *args):
+                (f.root / ".project-cache").mkdir()
+                (f.root / ".project-cache/result").write_text("project-owned ignored output\n")
+        f.life.action = ExistingProjectCheck()
         _, job, _, gate = self.checked(f)
         self.assertTrue(gate.qualified)
+        # Exact parent-owned post-check full-workspace checkpoint permits
+        # interrupted delivery without relaxing the live worker outside seal.
+        aid = f.life.record(f.admission)["job"]
+        f.conductor._worker(f.admission, aid, job, f.generation)
         run(f.root, "add", "product.py")
+        f.life.before_commit(f.admission, job, f.generation)
+        cache = f.root / ".project-cache/result"
+        original_cache = cache.read_bytes()
+        cache.write_text("unobserved later ignored drift\n")
+        with self.assertRaises(ADPError):
+            f.conductor._worker(f.admission, aid, job, f.generation)
+        with self.assertRaises(ADPError):
+            f.life.before_commit(f.admission, job, f.generation)
+        cache.write_bytes(original_cache)
+        run(f.root, "add", "-f", "--", ".project-cache/result")
+        with self.assertRaises(ADPError):
+            f.life.before_commit(f.admission, job, f.generation)
+        run(f.root, "rm", "--cached", "--", ".project-cache/result")
         (f.root / "product.py").write_text("unchecked\n")
         with self.assertRaises(ADPError):
             f.life.before_commit(f.admission, job, f.generation)
@@ -178,6 +220,12 @@ class AutonomousLifecycleTests(Cases):
         self.assertIn("Use project-owned unit evidence", prompt)
         self.assertNotIn("Use python -B", prompt)
         self.assertIn("do not invent or execute a test runner", prompt)
+        self.assertIn("approved=false and criteria=[]", prompt)
+        self.assertIn("implementation activity only", prompt)
+        self.assertIn("Never claim a check ran or passed", prompt)
+        review = f.life.prompt(f.admission, Role.REVIEWER, f.initial)
+        self.assertIn("approved=true only", review)
+        self.assertIn("report only admitted acceptance_ids you independently verified", review)
         self.assertEqual(packet.execution_authority, "UNKNOWN")
 
     def test_unapproved_product_test_and_integration_scope_stops_before_dispatch(self):

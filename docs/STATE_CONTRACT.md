@@ -196,3 +196,12 @@ private artifact cannot be replaced by its digest alone. Current code supports
 legacy internal v1/v2 and v3, while an older binary must refuse v3. See the
 [track contract](operations/AUTONOMOUS_TRACK.md) for recovery, handoff limitations
 and independently authenticated original-scope/operation gates.
+
+The corrected candidate integration recognizes historical execution-v3 lifecycle
+records without `workspace` and the closed layout containing its optional
+post-observation full-workspace hash. Reads never invent that evidence. Legacy
+worker result/outside/admin hashes retain their meaning; candidate recovery may
+only use the exact separately recorded workspace and Git-visible source for the
+same assignment. Older candidate-algorithm evidence remains historical and must
+be completed with its pinned implementation or explicitly reconciled. It is not
+silently relabeled as a current qualified candidate.

@@ -114,11 +114,41 @@ def reobservation_subject(original, current, action_key):
 def capture_candidate(root: Path) -> CandidateSource:
     """Observe actual content and Git index without staging or executing checks."""
     import hashlib
-    from .execution_containment import source_seal
     from .git import git
     from .policy_adapters import working_tree_digest
-    return CandidateSource(source_seal(root), hashlib.sha256(git(root, "ls-files", "--stage", "-z")).hexdigest(),
+    return CandidateSource(candidate_content_seal(root), hashlib.sha256(git(root, "ls-files", "--stage", "-z")).hexdigest(),
                            working_tree_digest(root))
+
+
+def candidate_content_seal(root: Path) -> str:
+    """Seal committable source, independent of staging and ignored check output.
+
+    This is distinct from the unchanged full-filesystem worker containment seal.
+    Tracked files stay included even when ignored; force-adding an ignored file
+    makes it newly visible and invalidates a previously checked candidate.
+    """
+    import hashlib
+    from .git import git
+    from .policy_schema import product_path
+    names = sorted(set(filter(None, git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z").split(b"\0"))))
+    require(len(names) <= 4096, "Candidate source inventory exceeds bounds")
+    rows, total = [], 0
+    for name in names:
+        relative = os.fsdecode(name)
+        product_path(relative)
+        path = root / relative
+        safe_path(path.parent)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue  # A checked deletion stays absent after staging.
+        require(stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode), "Unsupported candidate source entry")
+        total += info.st_size
+        require(total <= 32 * 1024 * 1024, "Candidate source bytes exceed bounds")
+        content = os.fsencode(os.readlink(path)) if stat.S_ISLNK(info.st_mode) else path.read_bytes()
+        mode = "120000" if stat.S_ISLNK(info.st_mode) else "100755" if info.st_mode & stat.S_IXUSR else "100644"
+        rows.append((relative, mode, hashlib.sha256(content).hexdigest()))
+    return digest({"domain": "project-validation/git-visible-candidate-v1", "files": rows})
 
 
 class ReportedEvidence:
