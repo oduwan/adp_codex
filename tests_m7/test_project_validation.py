@@ -215,6 +215,8 @@ class ProjectValidationTests(PolicyFixture):
         self.assertTrue(all(call.startswith("/repos/disposable/two") for call in server.calls))
         self.assertEqual(sum(call == "/repos/disposable/two" for call in server.calls), 2)
         self.assertFalse(any("actions" in call or "dispatch" in call for call in server.calls))
+        server.runs = [server.run(started_at=None, completed_at=None)]
+        self.assertFalse(self.observe(Phase.AFTER_PR, pull=pull).qualified)
 
     def test_wrong_repository_ref_sha_and_pull_refuse(self):
         original = self.rows
@@ -430,6 +432,17 @@ class ProjectValidationTests(PolicyFixture):
         self.assertEqual(resumed.request_action(Phase.BEFORE_PR, authorization=self.auth(), evidence=evidence,
             action=action), "UNKNOWN_DELIVERY_REOBSERVE")
         self.assertEqual(action.calls, 1)
+        original = self.policy
+        plan = self.provider.plan(self.task, Request(Operation.VALIDATE))
+        changed = replace(self.policy, maximum_age=299, evidence=None)
+        self.validation.policy = replace(changed, evidence=self.attest("policy", policy_subject(plan, changed)))
+        new_request = self.validation.request(Phase.BEFORE_PR, authorization=self.auth())
+        new_key = self.validation.action_key(Phase.BEFORE_PR, authorization=self.auth())
+        new_evidence = self.attest("action", action_subject(new_request, changed.action_id, new_key))
+        self.assertEqual(self.validation.request_action(Phase.BEFORE_PR, authorization=self.auth(), evidence=new_evidence,
+            action=action), "UNKNOWN_DELIVERY_REOBSERVE")
+        self.assertEqual(action.calls, 1)  # Changed policy/context cannot bypass an unknown earlier delivery.
+        self.validation.policy = original
         self.assertFalse(self.observe().qualified)  # Old green cannot reconcile a lost trigger response.
         self.known_action_key = key  # Synthetic provider now authoritatively binds the actual requested run.
         self.assertTrue(self.observe().qualified)
@@ -441,6 +454,16 @@ class ProjectValidationTests(PolicyFixture):
         with self.assertRaises(ADPError):
             self.validation.request_action(Phase.BEFORE_PR, authorization=self.auth(), evidence=None, action=Never())
         self.assertFalse(any(json.loads(p.read_text())["trigger"] != "NOT_REQUESTED" for p in self.directory.glob("*.json")))
+        request = self.validation.request(Phase.BEFORE_PR, authorization=self.auth())
+        key = self.validation.action_key(Phase.BEFORE_PR, authorization=self.auth())
+        evidence = self.attest("action", action_subject(request, self.policy.action_id, key))
+        class Unreserved:
+            calls = 0
+            def request(self, *args):self.calls += 1
+        action = Unreserved()
+        with self.assertRaises(ADPError):
+            self.validation.request_action(Phase.BEFORE_PR, authorization=self.auth(), evidence=evidence, action=action)
+        self.assertEqual(action.calls, 0)
 
     def test_pre_pr_does_not_satisfy_post_pr_or_approve_review(self):
         self.assertTrue(self.observe().qualified)
@@ -486,6 +509,12 @@ class ProjectValidationTests(PolicyFixture):
         self.rows = (replace(self.rows[0], provider_status="token=" + "a" * 40), *self.rows[1:])
         self.assertEqual(self.observe().status, ResultStatus.UNKNOWN)
         self.assertNotIn("token=", "".join(p.read_text() for p in self.directory.glob("*.json")))
+        partial = self.result(self.rules.checks[0], denominator=7, counts=(OutcomeCount("PASS", 2), OutcomeCount("FAIL", 1)),
+                              quarantined=1, complete=False)
+        self.rows = (partial, *tuple(self.result(name) for name in self.rules.checks[1:]))
+        observed = self.observe()
+        self.assertEqual(observed.status, ResultStatus.UNKNOWN)
+        self.assertIn(partial, observed.results)
 
     def test_private_journal_paths_and_bounds(self):
         self.assertTrue(self.observe().qualified)
