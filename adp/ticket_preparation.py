@@ -193,6 +193,17 @@ class TicketArchive:
         with locked(self.directory):
             return PACKET + self._put("packet-", data(packet))
 
+    def packet(self, reference):
+        """Read an immutable packet; consumers must authenticate its preparation."""
+        require(type(reference) is str and reference.startswith(PACKET)
+                and KEY.fullmatch(reference[len(PACKET):]), "Invalid private packet reference")
+        fingerprint = reference[len(PACKET):]
+        value = json_value(self._read(self.directory / ("packet-" + fingerprint + ".json")), MAX_ARTIFACT)
+        require(_hash(value) == fingerprint, "Packet evidence hash mismatch")
+        packet = typed(CodexPacket, value)
+        require(packet.schema_version == 1 and packet.execution_authority == "UNKNOWN", "Unsupported preparation packet")
+        return packet
+
     def save_preparation(self, original, scope, proposal, review, additions, track):
         value = preparation_value(original, scope, proposal, review, additions, track)
         with locked(self.directory):

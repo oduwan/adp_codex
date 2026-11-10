@@ -71,6 +71,21 @@ class ExecutionJournal:
         require(observed["state"]["schema_version"] == 3, "Explicit execution upgrade is required")
         return observed
 
+    def upgrade_product_flow(self, *, authorized=False):
+        """Explicit internal v1→v2 migration; no read path upgrades memory."""
+        if not authorized:
+            raise AuthorityError("Product-flow migration requires explicit memory-write authorization")
+        with locked(self.memory.control):
+            head, state, tasks = self.memory._start()
+            require(state["schema_version"] == 3, "Upgrade execution explicitly first")
+            execution = state["execution"]
+            if execution["schema_version"] == 2:
+                return self.memory.inspect()
+            require(execution["schema_version"] == 1, "Unsupported execution migration")
+            execution["schema_version"] = 2
+            execution["product_flows"] = {}
+            return self.memory._checkpoint(head, state, tasks)
+
     def change(self, callback):
         with locked(self.memory.control):
             head, state, tasks = self.memory._start()

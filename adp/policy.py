@@ -14,7 +14,7 @@ from .policy_types import (Authorization, BranchPlan, Check, CommitPlan, Decisio
     DeploymentPlan, Effect, Inspection, MergePlan, Operation, OutcomeCount, Plan, PolicyAuthority,
     Protection, Provenance, PullRequestPlan, Qualifications, ReleasePlan, RepositoryAdapter,
     Request, Review, Rules, Safety, SafetyAdapter, SourceClaim, SourceKind, Task,
-    EditPlan, PushPlan, ReportPlan, StagePlan, ValidationPlan)
+    EditPlan, PushPlan, ReportPlan, StagePlan, ValidationPlan, ProjectCheck, ProjectQualifications)
 from .schema import integer, key, require, string
 
 RANK = {SourceKind.OPERATOR: 0, SourceKind.GOVERNANCE: 1,
@@ -429,8 +429,40 @@ class PolicyProvider:
 
     @staticmethod
     def authorization_subject(plan: Plan, qualifications: Qualifications = Qualifications()) -> str:
-        require(type(plan) is Plan and type(qualifications) is Qualifications, "Expected typed operation authorization")
+        require(type(plan) is Plan and type(qualifications) in (Qualifications, ProjectQualifications), "Expected typed operation authorization")
         return digest({"plan": data(plan), "qualifications": data(qualifications)})
+
+    def project_policy_subject(self, plan, qualifications):
+        require(type(qualifications) is ProjectQualifications, "Expected project qualifications")
+        require(type(qualifications.required) is tuple and 0 < len(qualifications.required) <= 32
+                and len(set(qualifications.required)) == len(qualifications.required), "Invalid project phase inventory")
+        for item in qualifications.required:
+            require(type(item) is tuple and len(item) == 2 and item[1] in ("BEFORE_PR", "AFTER_PR"), "Invalid project phase")
+            string(item[0], 128)
+        return digest({"scope": self._scope(plan), "required": qualifications.required})
+
+    def project_check_subject(self, plan, result):
+        require(type(result) is ProjectCheck and result.phase in ("BEFORE_PR", "AFTER_PR"), "Expected project check evidence")
+        for item in (result.name, result.provider, result.origin, result.run_id):
+            string(item, 256)
+        sha(result.revision)
+        fingerprint(result.request_digest)
+        fingerprint(result.observation_digest)
+        if result.attempt_id is not None:
+            string(result.attempt_id, 256)
+        require(result.status in STATUSES | {"PENDING", "CANCELLED"}, "Invalid project status")
+        integer(result.observed_at)
+        integer(result.expires_at)
+        integer(result.quarantined)
+        if result.denominator is None:
+            require(result.counts == () and result.quarantined == 0, "Unknown project counts must remain unavailable")
+        else:
+            self._validate_check(Check(result.name, result.revision, result.denominator, result.counts,
+                result.quarantined, result.observed_at, result.expires_at))
+            require({c.outcome for c in result.counts} == STATUSES, "Complete original project accounting required")
+        payload = data(result)
+        payload.pop("evidence")
+        return digest({"scope": self._scope(plan), "project_check": payload})
 
     def decide(self, plan: Plan, authorization: Authorization | None = None) -> Decision:
         require(type(plan) is Plan, "Expected a typed policy plan")
@@ -457,15 +489,22 @@ class PolicyProvider:
                 reasons.append("Mandatory M2 guard refuses this operation: " + safety.guard.reason)
         require(authorization is None or type(authorization) is Authorization, "Expected typed operation authorization")
         qualifications = authorization.qualifications if authorization is not None else Qualifications()
-        require(type(qualifications) is Qualifications, "Invalid operation qualifications")
+        require(type(qualifications) in (Qualifications, ProjectQualifications), "Invalid operation qualifications")
+        project_evidence = type(qualifications) is ProjectQualifications
         require(type(qualifications.checks) is tuple and len(qualifications.checks) <= 32
                 and type(qualifications.reviews) is tuple and len(qualifications.reviews) <= 16,
                 "Invalid bounded qualification lists")
         for check in qualifications.checks:
-            self._validate_check(check)
+            if project_evidence:
+                self.project_check_subject(current, check)
+            else:
+                self._validate_check(check)
         for review in qualifications.reviews:
             self.review_subject(current, review)
-        strings([c.name for c in qualifications.checks], 32, 128)
+        if project_evidence:
+            require(len({(c.name, c.phase) for c in qualifications.checks}) == len(qualifications.checks), "Duplicate project checks")
+        else:
+            strings([c.name for c in qualifications.checks], 32, 128)
         strings([r.reviewer for r in qualifications.reviews], 16, 128)
         if effect == Effect.ALLOW and current.gated:
             if safety.approval is None:
@@ -474,17 +513,27 @@ class PolicyProvider:
                 effect = Effect.DENY
                 reasons.append("M2 acceptance requirements remain unresolved")
             now = self._now()
-            checks = {c.name: c for c in qualifications.checks}
-            for name in current.required_checks:
-                result = checks.get(name)
+            if project_evidence:
+                subject = self.project_policy_subject(current, qualifications)
+                if (set(current.required_checks) != {name for name, _ in qualifications.required}
+                        or not self._verified(qualifications.policy_evidence, "project-validation", subject)):
+                    pending.append("Complete authenticated project phase/acceptance policy required")
+                required = qualifications.required
+                checks = {(c.name, c.phase): c for c in qualifications.checks}
+            else:
+                required = tuple((name, "") for name in current.required_checks)
+                checks = {(c.name, ""): c for c in qualifications.checks}
+            for name, phase in required:
+                result = checks.get((name, phase))
                 if result is None:
                     pending.append("Required check evidence missing: " + name)
                     continue
-                subject = self.check_subject(current, result)
+                subject = self.project_check_subject(current, result) if project_evidence else self.check_subject(current, result)
                 if (result.revision != current.task.revision or not fresh(result.observed_at, result.expires_at, now)
-                        or not self._verified(result.evidence, "check", subject)):
+                        or not self._verified(result.evidence, "project-check" if project_evidence else "check", subject)):
                     pending.append("Required check is stale or unverified: " + name)
-                elif result.quarantined or any(c.count and c.outcome != "PASS" for c in result.counts):
+                elif (project_evidence and result.status != "PASS" or result.quarantined
+                        or any(c.count and c.outcome != "PASS" for c in result.counts)):
                     effect = Effect.DENY
                     reasons.append("Non-PASS/quarantined coverage cannot qualify: " + name)
             reviewers = set()

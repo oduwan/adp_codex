@@ -79,7 +79,7 @@ class TokenScopeAuthority(Protocol):
     def verify(self, evidence: Attestation, *, purpose: str, subject: str) -> bool: ...
 
 
-def _scope_fields(value: ScopedInstallationToken) -> dict:
+def _scope_fields(value: ScopedInstallationToken, permissions=REQUIRED_PERMISSIONS) -> dict:
     require(type(value) is ScopedInstallationToken, "Unsupported credential type")
     require(type(value.kind) is str and value.kind == "installation"
             and type(value.token) is str and 0 < len(value.token) <= 4096
@@ -90,7 +90,7 @@ def _scope_fields(value: ScopedInstallationToken) -> dict:
             "One immutable installation repository is required")
     require(type(value.repository_node_id) is str and 0 < len(value.repository_node_id) <= 256
             and all(32 <= ord(c) != 127 for c in value.repository_node_id), "Pinned repository node is required")
-    require(type(value.permissions) is tuple and value.permissions == REQUIRED_PERMISSIONS
+    require(type(value.permissions) is tuple and value.permissions == permissions
             and all(type(p) is tuple for p in value.permissions), "Narrow installation permissions are required")
     require(type(value.issued_at) is int and type(value.expires_at) is int
             and 0 <= value.issued_at < value.expires_at < 10**18
@@ -106,9 +106,9 @@ def _scope_fields(value: ScopedInstallationToken) -> dict:
             "kind": value.kind}
 
 
-def installation_scope_subject(value: ScopedInstallationToken) -> str:
+def installation_scope_subject(value: ScopedInstallationToken, *, permissions=REQUIRED_PERMISSIONS) -> str:
     """Private issuer-verification digest; not a portable evidence reference."""
-    fields = _scope_fields(value)
+    fields = _scope_fields(value, permissions)
     raw = json.dumps({"purpose": SCOPE_PURPOSE, "scope": fields}, sort_keys=True,
                      separators=(",", ":"), allow_nan=False).encode()
     return hashlib.sha256(raw).hexdigest()
@@ -131,9 +131,9 @@ def _supported() -> bool:
         return False
 
 
-def _child_argv() -> tuple[str, ...]:
+def _child_argv(filename="network_http_child.py") -> tuple[str, ...]:
     # Nonce binds the private receipt to this particular launch, not its token.
-    return (sys.executable, "-I", "-B", str(Path(__file__).with_name("network_http_child.py")), uuid.uuid4().hex)
+    return (sys.executable, "-I", "-B", str(Path(__file__).with_name(filename)), uuid.uuid4().hex)
 
 
 def _stop(process, path, subject):
@@ -166,6 +166,10 @@ class GitHubHTTPTransport:
     at most five seconds plus bounded cancellation/reaping, with no retry. A lost
     stop receipt is UnconfirmedValidation and retains private forensic evidence.
     """
+    permissions = REQUIRED_PERMISSIONS
+    validator = staticmethod(validate_request)
+    child = "network_http_child.py"
+
     def __init__(self, token: ScopedInstallationToken, *, authority: TokenScopeAuthority,
                  clock: Callable[[], int] | None = None):
         self._credential = token
@@ -179,7 +183,7 @@ class GitHubHTTPTransport:
     def _verified_scope(self) -> ScopedInstallationToken:
         try:
             value = self._credential
-            subject = installation_scope_subject(value)
+            subject = installation_scope_subject(value, permissions=self.permissions)
             require(self._scope_subject is None or subject == self._scope_subject,
                     "Pinned credential cannot be changed")
             now = self._clock()
@@ -208,7 +212,7 @@ class GitHubHTTPTransport:
 
     def request(self, method: str, path: str, body: dict | None, *, seconds: float) -> Response:
         try:
-            raw_body = validate_request(method, path, body, seconds)
+            raw_body = self.validator(method, path, body, seconds)
         except (TypeError, ValueError, RecursionError, UnicodeError):
             raise NetworkTransportError("UNSUPPORTED_ATOMIC_REF: invalid bounded HTTP request") from None
         if not _supported():
@@ -228,7 +232,8 @@ class GitHubHTTPTransport:
             require(len(payload) <= MAX_INPUT_BYTES, "Private request exceeds bound")
         except Exception:
             raise NetworkTransportError("UNSUPPORTED_ATOMIC_REF: operator credential unavailable") from None
-        with supervised_validation(_child_argv(), max(1, math.ceil(seconds))) as (argv, stop_path, subject):
+        child = _child_argv() if self.child == "network_http_child.py" else _child_argv(self.child)
+        with supervised_validation(child, max(1, math.ceil(seconds))) as (argv, stop_path, subject):
             try:
                 process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL, env=_environment(), start_new_session=True)

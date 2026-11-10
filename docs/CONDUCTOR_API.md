@@ -238,3 +238,14 @@ launch also has private write-ahead stop fencing. Unconfirmed transport liveness
 is retained across restart, included in Conductor unconfirmed contexts and blocks
 later HTTP and handoff, even if the target ref happens to equal the intended SHA.
 No canonical schema, guard threshold, forced update or automatic retry is added.
+
+## Opt-in M7 GitHub product transitions
+
+Issue #16 adds an explicitly selected `Project.product_flow` using the actual
+Conductor journal/owner/guard, accepted #22 preparation and #21 project evidence.
+It supports one Draft PR, exact-SHA project gates, independently authenticated
+review acceptance, explicit project-delegated native merge and one product report.
+Legacy execution remains unchanged. See [GitHub product flow](operations/GITHUB_PRODUCT_FLOW.md)
+for the explicit internal execution-v2 migration, unknown-count representation,
+manual merge wait, native merge race envelope, durable recovery and NOTRUN limits.
+The complete #22 autonomous lifecycle and live M8 qualification are not supplied.

@@ -120,7 +120,7 @@ class GitHubForgeBackend:
             return ExternalObservation("UNKNOWN")
         return ExternalObservation("PRESENT", reference, revision, digest(payload["body"]))
 
-    def submit(self, key, operation, payload, *, authorization=None, plan_digest=None):
+    def submit(self, key, operation, payload, *, authorization=None, plan_digest=None, before_mutation=None):
         subject = digest({"id": key, "plan": plan_digest, "payload": payload})
         require(authorization is not None and self.authority is not None
                 and self.authority.verify(authorization, purpose="execution/effect", subject=subject) is True,
@@ -133,6 +133,8 @@ class GitHubForgeBackend:
                 "base": payload["base_ref"].removeprefix("refs/heads/"), "title": payload["title"], "draft": payload["draft"], "body": body}
         else:
             request = {"body": body}
+        if before_mutation is not None:
+            before_mutation()
         response = self.transport.request("POST", route, request)
         # A response alone is not sufficient: observe actual source/body/HEAD.
         return self.observe(key, operation, payload, attempted=True)

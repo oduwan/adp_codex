@@ -161,3 +161,14 @@ v2 fields and unchanged M1 task/M2 guard schemas. Explicit owner-authorized
 refuse v3. The accepted transaction/CAS/ownership protocol transports this
 extension. See [Conductor migration and journal](CONDUCTOR_API.md) for schemas,
 capacities, recovery semantics, runtime observations and handoff restrictions.
+
+## Explicit M7 internal execution version 2
+
+`ExecutionJournal.upgrade_product_flow(authorized=True)` is a separate owning
+Conductor opt-in from internal execution v1 to v2. Outer state v3, M1 task and M2
+guard schemas and their 64 KiB bound remain unchanged. V2 adds bounded product-flow
+records, original/preparation references, exact project gate provenance, one PR
+identity and a compact pending acceptance subject; only v2 permits MERGE journal
+actions. Legacy v1/default serialization is unchanged. Reads never migrate and
+old writers refuse v2. See [GitHub product flow](operations/GITHUB_PRODUCT_FLOW.md)
+for capacities, evidence, recovery and authority boundaries.

@@ -8,6 +8,7 @@ from .guard_types import Outcome
 from .schema import JOB, KEY, encode, fields, integer, key, require, string
 from .git import SHA
 from .policy_types import Operation
+from .project_validation_types import EvidenceGate
 
 MAX_EXECUTION_TASKS = 8
 MAX_ACTIONS = 32
@@ -84,8 +85,9 @@ def worker_result(result: WorkerResult):
 
 
 def execution_schema(value, repository_id):
-    fields(value, "schema_version repository_id tasks actions publications")
-    require(type(value["schema_version"]) is int and value["schema_version"] == 1
+    version = value.get("schema_version") if type(value) is dict else None
+    fields(value, "schema_version repository_id tasks actions publications" + (" product_flows" if version == 2 else ""))
+    require(type(version) is int and version in (1, 2)
             and value["repository_id"] == repository_id, "Unsupported execution schema/repository")
     require(type(value["tasks"]) is dict and len(value["tasks"]) <= MAX_EXECUTION_TASKS, "Execution task capacity exhausted")
     all_contexts = []
@@ -135,8 +137,13 @@ def execution_schema(value, repository_id):
                         and j["result"]["approved"] and j["context"] == task["review"]["context"]
                         and "worker:" + j["request_id"] == task["review"]["reviewer"]
                         and j["receipt"] == task["review"]["receipt"] and j["revision"] == task["review"]["revision"]
-                        and j["validation_stop"] == "CONFIRMED" and j["checks"] == task["review"]["checks"]
-                        for j in task["jobs"].values()), "Review must reference an actual completed independent Reviewer job")
+                        and (j["validation_stop"] == "CONFIRMED" or version == 2 and j["validation_stop"] == "NOT_STARTED"
+                             and not j["checks"] and value["product_flows"].get(task_key, {}).get("review_job") == aid
+                             and value["product_flows"][task_key]["gates"]
+                             and all(typed(EvidenceGate, g).qualified
+                                     for g in value["product_flows"][task_key]["gates"]))
+                        and j["checks"] == task["review"]["checks"]
+                        for aid, j in task["jobs"].items()), "Review must reference an actual completed independent Reviewer job")
     require(len(all_contexts) == len(set(all_contexts)), "Context reuse across tasks/roles is forbidden")
     require(type(value["actions"]) is dict and len(value["actions"]) <= MAX_ACTIONS, "External action capacity exhausted")
     for action_id, action in value["actions"].items():
@@ -147,7 +154,8 @@ def execution_schema(value, repository_id):
         integer(action["generation"], 1)
         sha(action["revision"])
         string(action["source_ref"])
-        require(action["operation"] in (Operation.STAGE, Operation.COMMIT, Operation.BRANCH, Operation.PUSH, Operation.PR, Operation.REPORT),
+        require(action["operation"] in (Operation.STAGE, Operation.COMMIT, Operation.BRANCH, Operation.PUSH, Operation.PR, Operation.REPORT)
+                or version == 2 and action["operation"] == Operation.MERGE,
                 "Unsupported external execution operation")
         string(action["target"], 512)
         if action["expected_target"] is not None:
@@ -168,4 +176,47 @@ def execution_schema(value, repository_id):
                 and value["actions"][publication["action"]]["status"] == "OBSERVED", "Publication must reference an observed product report")
         fingerprint(publication["body_digest"])
         string(publication["reference"], 512)
+    if version == 2:
+        require(type(value["product_flows"]) is dict and len(value["product_flows"]) <= MAX_EXECUTION_TASKS,
+                "Product-flow capacity exhausted")
+        for task_key, flow in value["product_flows"].items():
+            require(task_key in value["tasks"], "Product flow references unknown task")
+            fields(flow, "original preparation scope revision phase pull gates review_job delegation merge_result acceptance")
+            for name in ("original", "preparation"):
+                string(flow[name], 128)
+            fingerprint(flow["scope"])
+            sha(flow["revision"])
+            fingerprint(flow["delegation"])
+            require(flow["phase"] in {"PREPARED", "PENDING_VALIDATION", "REQUIRES_CORRECTION", "WAITING_HUMAN_APPROVAL",
+                "VALIDATED", "MERGED", "COMPLETE", "UNKNOWN", "UNSUPPORTED"}, "Invalid product-flow stage")
+            if flow["pull"] is not None:
+                fields(flow["pull"], "id number repository_id url")
+                integer(flow["pull"]["number"], 1)
+                for name in ("id", "repository_id", "url"):
+                    string(flow["pull"][name], 512)
+            require(type(flow["gates"]) is list and len(flow["gates"]) <= 2, "Invalid project gates")
+            phases = []
+            for raw in flow["gates"]:
+                gate = typed(EvidenceGate, raw)
+                require(gate.request.revision == flow["revision"] and gate.request.task_id == value["tasks"][task_key]["task_id"]
+                        and gate.request.repository_id == repository_id, "Foreign project gate")
+                phases.append(gate.request.phase)
+            require(len(set(phases)) == len(phases), "Duplicate project phases")
+            if flow["review_job"] is not None:
+                job = value["tasks"][task_key]["jobs"].get(flow["review_job"])
+                require(job is not None and job["role"] == Role.REVIEWER and job["status"] == "COMPLETE"
+                        and job["revision"] == flow["revision"] and job["result"] is not None
+                        and job["result"]["approved"] and job["context"] is not None,
+                        "Product review must reference an actual completed independent Reviewer")
+            if flow["merge_result"] is not None:
+                sha(flow["merge_result"])
+            if flow["acceptance"] is not None:
+                pending = flow["acceptance"]
+                fields(pending, "job review_job gates generation revision receipt")
+                require(pending["job"] in value["tasks"][task_key]["jobs"]
+                        and pending["review_job"] == flow["review_job"]
+                        and pending["revision"] == flow["revision"], "Invalid pending acceptance identity")
+                integer(pending["generation"], 1)
+                fingerprint(pending["gates"])
+                string(pending["receipt"], 128)
     encode(value)
