@@ -35,6 +35,7 @@ class Project:
     git_port: GitEffectPort
     forge: object
     validation: object
+    product_flow: object = None
 
 
 class UnsupportedRuntime(ADPError):
@@ -115,6 +116,9 @@ class Conductor:
         require(len(candidates) == 1, "Admitted issue identity is not in the current track")
         candidate = candidates[0]
         self._specification(admission, track, candidate)
+        if project.product_flow is not None:
+            project.product_flow.authorize_scope(admission, candidate,
+                value(project.root, "rev-parse", "HEAD"), initial=key(admission.task_id) not in self.journal.inspect()["state"]["execution"]["tasks"])
         require(candidate.repository.memory_id == self.memory.config.identity, "Provider/memory identity binding differs")
         existing = self.journal.inspect()["state"]["execution"]["tasks"].get(key(admission.task_id))
         if existing:
@@ -239,6 +243,8 @@ class Conductor:
             try:
                 if hasattr(project.git_port, "unconfirmed_contexts"):
                     unconfirmed.update(project.git_port.unconfirmed_contexts())
+                if hasattr(project.forge, "unconfirmed_contexts"):
+                    unconfirmed.update(project.forge.unconfirmed_contexts())
             except Exception:
                 # Unreadable private effect state is UNKNOWN. It must not
                 # prevent cancellation of independently tracked worker handles.
@@ -510,24 +516,27 @@ class Conductor:
         return self.guard.observe(admission.task_id, self._requirement(admission), permit, observation, evidence=evidence)
 
     def _action(self, admission, job, request, generation, *, payload_extra=None, qualifications=Qualifications()):
-        self._refresh_issue(admission, report=request.operation == Operation.REPORT)
+        candidate = self._refresh_issue(admission, report=request.operation == Operation.REPORT)
         project = self._project(admission)
+        if project.product_flow is not None:
+            project.product_flow.authorize_scope(admission, candidate, self._task(admission)["revision"])
         permit = typed(Permit, job["permit"])
         task_key = key(admission.task_id)
         action_id = digest({"repository": self.memory.config.identity, "task": admission.task_id,
-            "iteration": self._task(admission)["product_iteration"], "attempt": "publication" if request.operation in (Operation.PR, Operation.REPORT) else job["request_id"],
+            "iteration": self._task(admission)["product_iteration"], "attempt": "publication" if request.operation in (Operation.PR, Operation.REPORT, Operation.MERGE) else job["request_id"],
             "operation": request.operation})
         existing = self.journal.inspect()["state"]["execution"]["actions"].get(action_id)
         if existing is not None and existing["status"] == "OBSERVED":
-            if existing["operation"] in (Operation.PR, Operation.PUSH, Operation.REPORT):
+            if existing["operation"] in (Operation.PR, Operation.PUSH, Operation.REPORT, Operation.MERGE):
                 current = self._observe_action(project, action_id, existing)
-                require(current.status == "PRESENT" and current.revision == existing["revision"], "Previously observed external HEAD/result changed")
+                expected = existing["observation"]["revision"] if existing["operation"] == Operation.MERGE else existing["revision"]
+                require(current.status == "PRESENT" and current.revision == expected, "Previously observed external HEAD/result changed")
                 return current
             return typed(ExternalObservation, existing["observation"])
         if existing is not None:
             observation = self._observe_action(project, action_id, existing)
             if observation.status == "PRESENT":
-                require(observation.revision == existing["revision"] or existing["operation"] == Operation.COMMIT, "External source/PR HEAD drift")
+                require(observation.revision == existing["revision"] or existing["operation"] in (Operation.COMMIT, Operation.MERGE), "External source/PR HEAD drift")
                 self._save_action(action_id, observation)
                 return observation
             require(observation.status == "ABSENT", "External delivery is uncertain; never blindly retry")
@@ -543,8 +552,9 @@ class Conductor:
         if existing:
             require(all(existing[k] == action[k] for k in ("task_key", "operation", "revision", "source_ref", "target", "expected_target", "payload")), "Reserved external effect changed")
         self.journal.change(lambda execution, state, tasks: execution["actions"].update({action_id: action}))
-        dispatch = (project.git_port.prepare_dispatch(action_id, action)
-                    if hasattr(project.git_port, "prepare_dispatch") else None)
+        forge_operation = request.operation in (Operation.PR, Operation.REPORT, Operation.MERGE)
+        port = project.forge if forge_operation else project.git_port
+        dispatch = port.prepare_dispatch(action_id, action) if hasattr(port, "prepare_dispatch") else None
         self.journal.change(lambda execution, state, tasks: execution["actions"][action_id].update(status="SUBMITTED"))
         # Every checkpoint changes M3's safety binding. Authorize again after
         # the durable reservation, immediately before the actual effect.
@@ -554,10 +564,12 @@ class Conductor:
             effect_authorization = self._grant("execution/effect", digest({"id": action_id, "plan": digest(plan), "payload": payload}))
             self._ownership(generation)
             try:
-                if request.operation in (Operation.PR, Operation.REPORT):
+                if forge_operation:
                     require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Policy changed before forge mutation")
+                    if project.product_flow is not None:
+                        project.product_flow.authorize_effect(admission, job, generation, provider, plan)
                     observation = project.forge.submit(action_id, request.operation, payload,
-                        authorization=effect_authorization, plan_digest=digest(plan))
+                        authorization=effect_authorization, plan_digest=digest(plan), **({"dispatch": dispatch} if dispatch is not None else {}))
                 else:
                     if dispatch is not None:
                         observation = project.git_port.submit(action, provider, plan, authorization, dispatch=dispatch)
@@ -570,7 +582,7 @@ class Conductor:
         return observation
 
     def _observe_action(self, project, action_id, action):
-        if action["operation"] in (Operation.PR, Operation.REPORT):
+        if action["operation"] in (Operation.PR, Operation.REPORT, Operation.MERGE):
             return project.forge.observe(action_id, action["operation"], action["payload"], attempted=action["status"] != "PREPARED")
         return project.git_port.observe(action)
 
@@ -602,7 +614,10 @@ class Conductor:
             self._review(admission, generation)
         if self._task(admission)["stage"] == "PUBLISH":
             self._publish(admission, generation)
-        return {"status": self._task(admission)["stage"], "revision": self._task(admission)["revision"]}
+        project = self._project(admission)
+        flow = self.journal.inspect()["state"]["execution"].get("product_flows", {}).get(key(admission.task_id))
+        return {"status": flow["phase"] if project.product_flow is not None and flow is not None else self._task(admission)["stage"],
+                "revision": self._task(admission)["revision"]}
 
     def _reconcile_forensic(self, admission):
         """Finish immutable delivery after a report was already accepted by M2."""
@@ -680,6 +695,25 @@ class Conductor:
         result, job = self._worker(admission, assignment_id, job, generation)
         permit = typed(Permit, job["permit"])
         project = self._project(admission)
+        if project.product_flow is not None:
+            # A code verdict is not project acceptance. No ADP validation process
+            # was launched, so retain NOT_STARTED and leave every M2 criterion.
+            approved = result.approved and result.outcome == Outcome.PASS
+            self._deliver(admission, assignment_id, job, result.outcome)
+            def code_review(execution, state, tasks):
+                current = execution["tasks"][key(admission.task_id)]
+                current["jobs"][assignment_id]["status"] = "COMPLETE"
+                current.update(review=None, stage="PUBLISH" if approved else "DEVELOP")
+            self.journal.change(code_review)
+            if approved:
+                project.product_flow.bind(admission, job, generation)
+                project.product_flow._save(admission, review_job=assignment_id)
+            # Exact independent code approval is real progress, while every
+            # acceptance criterion remains unresolved until project evidence.
+            proof = Progress(ProgressKind.CORRECTION_APPROVED, "exact-source-code-reviewed", (job["receipt"],)) if approved else None
+            self._measured(admission, job, result.outcome, proof=proof,
+                principal="worker:" + job["request_id"] if approved else None)
+            return
         state, memory_task, item = self.guard._snapshot(admission.task_id, self._requirement(admission))
         interrupted_criterion = item["active"] is not None and item["active"]["id"] != permit.token
         current_permit = permit
@@ -766,8 +800,10 @@ class Conductor:
 
     def _publish(self, admission, generation):
         task = self._task(admission)
-        require(task["review"] is not None and task["review"]["revision"] == task["revision"], "Current independent review is required")
         project = self._project(admission)
+        if project.product_flow is not None:
+            return project.product_flow.advance(admission, generation)
+        require(task["review"] is not None and task["review"]["revision"] == task["revision"], "Current independent review is required")
         require(value(project.root, "rev-parse", "HEAD") == task["revision"]
                 and value(project.root, "symbolic-ref", "HEAD") == task["source_ref"]
                 and not value(project.root, "status", "--porcelain", "--untracked-files=all"),
@@ -836,8 +872,15 @@ class Conductor:
         self._privacy_preflight()
         require(not any(project.git_port.unconfirmed_contexts() for project in self.projects.values()
                         if hasattr(project.git_port, "unconfirmed_contexts")), "Unconfirmed network transport stop refuses handoff")
+        require(not any(project.forge.unconfirmed_contexts() for project in self.projects.values()
+                        if hasattr(project.forge, "unconfirmed_contexts")), "Unconfirmed forge transport stop refuses handoff")
         observed = self.journal.inspect()
         require(observed["local_owner"], "Only the owning Conductor may hand off")
+        if observed["state"]["execution"]["schema_version"] == 2:
+            require(not any(a["operation"] in (Operation.PR, Operation.MERGE, Operation.REPORT)
+                            and a["status"] in ("SUBMITTED", "UNKNOWN")
+                            for a in observed["state"]["execution"]["actions"].values()),
+                    "Unreconciled forge delivery refuses handoff")
         for task in observed["state"]["execution"]["tasks"].values():
             for assignment_id, job in task["jobs"].items():
                 require(job["validation_stop"] not in ("RUNNING", "UNKNOWN"), "Unconfirmed validation descendants refuse handoff")

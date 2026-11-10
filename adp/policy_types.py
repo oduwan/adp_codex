@@ -334,9 +334,43 @@ class Qualifications:
 
 
 @dataclass(frozen=True)
+class ProjectCheck:
+    """Authenticated #21 evidence; unknown case counts remain unknown."""
+    name: str
+    revision: str
+    phase: str
+    request_digest: str
+    observation_digest: str
+    provider: str
+    origin: str
+    run_id: str
+    attempt_id: str | None
+    status: str
+    denominator: int | None
+    counts: tuple[OutcomeCount, ...]
+    quarantined: int
+    observed_at: int
+    expires_at: int
+    evidence: Attestation | None = None
+
+
+@dataclass(frozen=True)
+class ProjectQualifications:
+    """Separate opt-in representation; legacy authorization bytes are unchanged.
+
+    policy_evidence authenticates the complete phase inventory and the project's
+    acceptance of job-only evidence. Each check also needs its own provenance.
+    """
+    checks: tuple[ProjectCheck, ...]
+    reviews: tuple[Review, ...]
+    required: tuple[tuple[str, str], ...]
+    policy_evidence: Attestation | None = None
+
+
+@dataclass(frozen=True)
 class Authorization:
     evidence: Attestation
-    qualifications: Qualifications = Qualifications()
+    qualifications: Qualifications | ProjectQualifications = Qualifications()
 
 
 @dataclass(frozen=True)

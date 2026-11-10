@@ -94,11 +94,11 @@ def validate_request(method: object, path: object, body: object, seconds: object
     raise ValueError("Unsupported API operation")
 
 
-def exchange(value: object) -> dict:
+def exchange(value: object, validator=validate_request) -> dict:
     """One HTTPS request, no retries, redirects, proxy environment or helper."""
     if type(value) is not dict or set(value) != {"method", "path", "body", "seconds", "token"}:
         raise ValueError("Invalid private request")
-    body = validate_request(value["method"], value["path"], value["body"], value["seconds"])
+    body = validator(value["method"], value["path"], value["body"], value["seconds"])
     token = value["token"]
     if type(token) is not str or not 0 < len(token) <= 4096 or not all(33 <= ord(c) < 127 for c in token):
         raise ValueError("Invalid credential")
@@ -106,7 +106,7 @@ def exchange(value: object) -> dict:
         timeout=value["seconds"], context=ssl.create_default_context())
     try:
         connection.request(value["method"], value["path"],
-            body=body if value["method"] == "POST" else None,
+            body=body if value["method"] != "GET" else None,
             headers={"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
                      "X-GitHub-Api-Version": "2026-03-10", "Content-Type": "application/json",
                      "User-Agent": "adp-codex-network-cas"})
