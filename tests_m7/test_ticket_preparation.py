@@ -379,3 +379,53 @@ class TicketPreparationTests(unittest.TestCase):
                 result = p.preparer.prepare(p.scope, proposal, review, readiness_reviews=reviews, additions=additions)
                 self.assertNotEqual(result.status, Status.READY)
                 self.assertEqual(set(p.archive.directory.iterdir()), before)
+
+        # Dependency disposition can expire after M4 planning while the target's
+        # own scope, policy and preparation receipts remain valid.
+        from adp.discovery_github import Response
+        from ticket_fixtures import discover, issue
+        folder = self.root / "freshness-dependency"
+        folder.mkdir()
+        p = Project(folder)
+        repository = p.snapshot.repository
+        dependency = issue(2, name=repository.name, state="closed")
+        route = f"/repos/{repository.name}/issues/1/dependencies/blocked_by?per_page=100&page=1"
+        snapshot, _ = discover([issue(name=repository.name), dependency], name=repository.name,
+            rid=repository.id, changed={route: Response(200, [dependency])})
+        p.snapshot = replace(snapshot, repository=repository)
+        p.adapter.snapshot = p.snapshot
+        p.archive = TicketArchive(folder / "original-with-dependency", protected_roots=(p.product,))
+        p.reference = p.archive.freeze(p.snapshot, p.snapshot.issues[0].identity)
+        p.original = p.archive.original(p.reference)
+        dependency_id = p.snapshot.issues[1].identity
+        p.scope = replace(p.scope, original_reference=p.reference, dependencies=(dependency_id,), evidence=None)
+        p.scope = replace(p.scope, evidence=p.authority.receipt(original_scope_subject(p.scope), "ticket/original-scope"))
+        p.preparer.archive = p.archive
+        claim = replace(p.policy.sources[0], expires_at=400, evidence=None)
+        claim = replace(claim, evidence=p.authority.receipt(p.policy.source_subject(claim), "policy/profile"))
+        p.policy.sources = (claim,)
+        proposal = replace(p.proposal, original_reference=p.reference,
+            expected_issue_revision=p.original.issue.revision, policy_digest=p.policy.inspect_repository().digest)
+        reviews = list(p.ready_reviews(expires_at=400))
+        completed = replace(reviews[1], completed=True, expires_at=200, evidence=None)
+        reviews[1] = replace(completed, evidence=p.authority.receipt(
+            review_subject((p.adapter.snapshot,), completed), "discovery/readiness", "independent-disposition"))
+        reviews = tuple(reviews)
+        track = p.preparer.observe(reviews=reviews)
+        baseline = {c.identity: c.status for c in track.candidates}
+        self.assertEqual(baseline[p.original.issue.identity], Status.READY)
+        self.assertEqual(baseline[dependency_id], Status.DONE)
+        review = PreparationReview("ticket-preparer", 90, 400)
+        review = replace(review, evidence=p.authority.receipt(
+            preparation_subject(p.original, p.scope, proposal, review, track), "ticket/preparation"))
+        original_inspect = p.policy.inspect_repository
+        def inspect_then_advance():
+            inspection = original_inspect()
+            p.now = 201
+            return inspection
+        p.policy.inspect_repository = inspect_then_advance
+        before = set(p.archive.directory.iterdir())
+        with self.subTest(expiring="dependency"):
+            result = p.preparer.prepare(p.scope, proposal, review, readiness_reviews=reviews)
+            self.assertNotEqual(result.status, Status.READY)
+            self.assertEqual(set(p.archive.directory.iterdir()), before)
