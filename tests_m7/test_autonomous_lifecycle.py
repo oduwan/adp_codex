@@ -610,6 +610,15 @@ class TicketPublicationTests(Cases):
         invalid = replace(inputs, review=replace(inputs.review, evidence=None))
         with self.assertRaises(ADPError):
             publisher.publish(invalid, track=track, preparer=f.scope.preparer)
+        class NotTheAcceptedProvider:
+            def plan(self, *args):
+                raise AssertionError("An unqualified provider must never evaluate an effect")
+            def decide(self, *args):
+                raise AssertionError("A stub ALLOW is not accepted M3 authority")
+        f.conductor.projects["one"] = replace(f.conductor.projects["one"],
+            policy_factory=lambda *args: NotTheAcceptedProvider())
+        with self.assertRaisesRegex(ADPError, "Actual accepted M3 policy provider"):
+            publisher.publish(inputs, track=track, preparer=f.scope.preparer)
         self.assertFalse(any(method == "PATCH" for method, _, _ in f.server.calls))
 
     def test_ticket_missing_edit_or_observed_version_assent_prevents_write(self):

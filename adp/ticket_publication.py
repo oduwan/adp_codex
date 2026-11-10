@@ -18,6 +18,7 @@ from .guard_schema import requirement_id
 from .guard_types import Action, ActionKind, Observation, Outcome, Permit, Requirement, data
 from .network_git import GitHubCAS
 from .network_http import GitHubHTTPTransport
+from .policy import PolicyProvider
 from .policy_types import Effect, Operation, Qualifications, TicketEditRequest
 from .schema import encode, key, require
 from .storage import locked, sync_directory
@@ -63,6 +64,7 @@ class TicketPublisher:
         safety = ReservedSafety(c.guard, permit)
         project = c._project(admission)
         provider = project.policy_factory(admission, safety)
+        require(type(provider) is PolicyProvider, "Actual accepted M3 policy provider required for ticket effects")
         provider.safety = safety
         from .git import value
         task = policy_task(c.memory, admission, permit.decision.baseline.requirement_id,

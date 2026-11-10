@@ -215,6 +215,13 @@ including mandatory M2 forensic reassessment when its unchanged thresholds fire.
 Optional correction progress requires independently authenticated M2 cause-chain
 proof; changed bytes or PASS alone do not reset counters.
 
+In the opt-in prompt, Developer PASS means the admitted implementation activity
+is complete; it is not a project-check or acceptance PASS. The Developer is
+instructed to return approval false and an empty criteria list. The controller requests
+actual project evidence separately. Only the independent Reviewer may approve
+its actual exact-SHA code review and independently verified acceptance IDs.
+Neither role may invent unperformed check results.
+
 ## Project validation timing and candidate evidence
 
 The project explicitly chooses one sequence:
