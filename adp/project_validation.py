@@ -75,20 +75,18 @@ def observation_subject(query: ObservationQuery, observation: ProjectObservation
         if result.attempt_id is not None:
             _public(result.attempt_id)
         require(result.status in set(ResultStatus), "Invalid check status")
-        integer(result.reported_at)
+        if result.reported_at is not None:
+            integer(result.reported_at)
         require(type(result.complete) is bool and type(result.current) is bool, "Invalid result completeness/current marker")
         integer(result.quarantined)
-        require(type(result.counts) is tuple, "Invalid outcome counts")
-        if result.denominator is None:
-            require(not result.counts and result.quarantined == 0, "Counts need the provider's original denominator")
-        else:
+        require(type(result.counts) is tuple and len(result.counts) <= len(COUNTS)
+                and all(type(c) is OutcomeCount and c.outcome in COUNTS for c in result.counts)
+                and len({c.outcome for c in result.counts}) == len(result.counts), "Invalid outcome counts")
+        for count in result.counts:
+            integer(count.count)
+        if result.denominator is not None:
             integer(result.denominator, 1)
-            require(len(result.counts) == len(COUNTS) and all(type(c) is OutcomeCount for c in result.counts)
-                    and {c.outcome for c in result.counts} == COUNTS,
-                    "Complete original outcome accounting is required")
-            for count in result.counts:
-                integer(count.count)
-            require(sum(c.count for c in result.counts) == result.denominator
+            require(sum(c.count for c in result.counts) <= result.denominator
                     and result.quarantined <= result.denominator, "Original denominator/counts differ")
     payload = data(observation)
     payload.pop("evidence")
@@ -126,7 +124,14 @@ class ProjectValidation:
         info = self.directory.stat()
         require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077,
                 "Private evidence directory must be owned mode0700")
+        self._directory_identity = (info.st_dev, info.st_ino)
         self.maximum_observations = maximum_observations
+
+    def _check_directory(self):
+        info = safe_path(self.directory).stat()
+        require((info.st_dev, info.st_ino) == self._directory_identity and stat.S_ISDIR(info.st_mode)
+                and info.st_uid == os.getuid() and not info.st_mode & 0o077,
+                "Private journal was replaced or its security state changed")
 
     def _verify(self, evidence, purpose, subject):
         require(type(evidence) is Attestation and evidence.subject == subject
@@ -163,20 +168,13 @@ class ProjectValidation:
         return safe_path(self.directory / (digest(request) + ".json"))
 
     def _state(self, request):
+        self._check_directory()
         path = self._path(request)
         if path.exists():
             state = load_json(path)
-            fields(state, "schema_version request maximum_observations session observations inflight last_observed last_digest trigger")
-            require(type(state["schema_version"]) is int and state["schema_version"] == 1 and state["request"] == digest(request)
+            self._validate_state(state)
+            require(state["request"] == digest(request)
                     and state["maximum_observations"] == self.maximum_observations, "Resume context or budget differs")
-            fingerprint(state["session"])
-            integer(state["observations"])
-            integer(state["last_observed"])
-            require(state["observations"] <= self.maximum_observations and type(state["inflight"]) is bool
-                    and state["trigger"] in ("NOT_REQUESTED", "SUBMITTED", "RETURNED")
-                    and (state["last_digest"] is None or type(state["last_digest"]) is str), "Invalid private observation journal")
-            if state["last_digest"] is not None:
-                fingerprint(state["last_digest"])
             return state
         count = 0
         with os.scandir(self.directory) as entries:
@@ -187,9 +185,69 @@ class ProjectValidation:
                     require(count < 32, "Private evidence capacity exhausted")
         return {"schema_version": 1, "request": digest(request), "maximum_observations": self.maximum_observations,
             "session": secrets.token_hex(32), "observations": 0, "inflight": False,
-            "last_observed": 0, "last_digest": None, "trigger": "NOT_REQUESTED"}
+            "last_observed": 0, "last_digest": None, "trigger": "NOT_REQUESTED", "action_key": None, "reconciliation": None}
+
+    @staticmethod
+    def _validate_state(state):
+        fields(state, "schema_version request maximum_observations session observations inflight last_observed last_digest trigger action_key reconciliation")
+        require(type(state["schema_version"]) is int and state["schema_version"] == 1, "Unsupported private evidence journal")
+        fingerprint(state["request"])
+        fingerprint(state["session"])
+        integer(state["observations"])
+        integer(state["last_observed"])
+        require(type(state["maximum_observations"]) is int and 1 <= state["maximum_observations"] <= 32
+                and state["observations"] <= state["maximum_observations"] and type(state["inflight"]) is bool
+                and state["trigger"] in ("NOT_REQUESTED", "SUBMITTED", "RETURNED", "RECONCILED"), "Invalid private observation journal")
+        if state["last_digest"] is not None:
+            fingerprint(state["last_digest"])
+        if state["trigger"] == "NOT_REQUESTED":
+            require(state["action_key"] is None and state["reconciliation"] is None, "Unrequested action has unexpected receipt")
+        else:
+            fingerprint(state["action_key"])
+            if state["trigger"] == "RECONCILED":
+                proof = state["reconciliation"]
+                fields(proof, "request action_key observation observed_at")
+                require(proof["request"] == state["request"] and proof["action_key"] == state["action_key"],
+                        "Action reconciliation differs from durable request")
+                fingerprint(proof["observation"])
+                integer(proof["observed_at"])
+            else:
+                require(state["reconciliation"] is None, "Unconfirmed action has unexpected reconciliation")
+
+    def _unknown_action_exists(self):
+        # The same retained private directory fences every context, not just the
+        # current SHA/policy/generation filename. Never infer absent delivery by
+        # selecting a different context or silently ignoring malformed history.
+        self._check_directory()
+        found, count = False, 0
+        with os.scandir(self.directory) as entries:
+            for index, entry in enumerate(entries):
+                require(index < 65, "Private action history exceeds bounds")
+                if not entry.name.endswith(".json"):
+                    continue
+                count += 1
+                require(count <= 32, "Private action history capacity exhausted")
+                fingerprint(entry.name[:-5])
+                state = load_json(safe_path(self.directory / entry.name))
+                self._validate_state(state)
+                require(state["request"] == entry.name[:-5], "Private action history identity differs")
+                found |= state["trigger"] in ("SUBMITTED", "RETURNED")
+        return found
+
+    def _reserved_action(self):
+        from .execution_policy import ReservedSafety
+        from .guard import ProgressGuard
+        from .memory import Memory
+        safety = self.provider.safety
+        require(type(safety) is ReservedSafety and type(safety.guard) is ProgressGuard
+                and type(safety.guard.memory) is Memory and safety.permit is not None
+                and safety.forensic_request is None, "Actual current M2 action reservation is required")
+        # Accepted _active/context/deadline/current ownership checks are reused;
+        # generic inspect(ALLOW) and a forged Decision are insufficient.
+        require(safety.observe(self.task).owns_memory, "Current reserved M1 ownership is required")
 
     def _write(self, request, state):
+        self._check_directory()
         atomic(self._path(request), encode(state))
 
     def _unknown(self, request, reason):
@@ -217,12 +275,15 @@ class ProjectValidation:
             result = candidates[0]
             if (result.provider != check.provider or result.origin != check.origin
                     or result.repository_id != request.repository_id or result.revision != request.revision
-                    or not result.complete or result.reported_at > observation.observed_at
+                    or not result.complete or result.reported_at is None or result.reported_at > observation.observed_at
                     or self.policy.result_maximum_age is not None and now - result.reported_at > self.policy.result_maximum_age
                     or result.attempt_id is None and not check.native_record_is_attempt
                     or check.denominator is not None and result.denominator != check.denominator):
                 missing.append(check.name)
                 complete = False
+            if (result.denominator is None and result.counts or result.denominator is not None
+                    and (len(result.counts) != len(COUNTS) or sum(c.count for c in result.counts) != result.denominator)):
+                complete = False  # Preserve partial counts without inventing missing outcomes.
             results.append(result)
         statuses = {r.status for r in results}
         if not complete:
@@ -262,6 +323,11 @@ class ProjectValidation:
                 require(self.request(phase, authorization=authorization, pull=pull) == request,
                         "Validation source or policy changed during observation")
                 state["last_observed"], state["last_digest"] = observed.observed_at, gate.evidence.split(":", 1)[1]
+                if (state["trigger"] in ("SUBMITTED", "RETURNED") and gate.complete
+                        and observed.action_key == state["action_key"]):
+                    state["trigger"] = "RECONCILED"
+                    state["reconciliation"] = {"request": state["request"], "action_key": state["action_key"],
+                        "observation": state["last_digest"], "observed_at": observed.observed_at}
             except (ADPError, OSError, ValueError, TypeError, KeyError, AttributeError):
                 gate = self._unknown(request, "UNVERIFIED_OR_UNAVAILABLE_PROJECT_EVIDENCE")
             state["inflight"] = False
@@ -295,11 +361,16 @@ class ProjectValidation:
             self._verify(evidence, "action", action_subject(request, self.policy.action_id, key))
             if state["trigger"] != "NOT_REQUESTED":
                 return "UNKNOWN_DELIVERY_REOBSERVE" if state["trigger"] == "SUBMITTED" else "REQUEST_ALREADY_RETURNED_REOBSERVE"
+            if self._unknown_action_exists():
+                return "UNKNOWN_DELIVERY_REOBSERVE"
+            self._reserved_action()
             state["trigger"] = "SUBMITTED"
+            state["action_key"] = key
             self._write(request, state)  # No retry even after a lost response or process interruption.
             try:
                 require(self.request(phase, authorization=authorization, pull=pull) == request,
                         "Source or authority changed before requesting project action")
+                self._reserved_action()
                 action.request(request, self.policy.action_id, key)
             except (ADPError, OSError):
                 return "UNKNOWN_DELIVERY_REOBSERVE"

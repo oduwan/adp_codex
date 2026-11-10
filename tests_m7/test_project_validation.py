@@ -141,6 +141,37 @@ class ProjectValidationTests(PolicyFixture):
             repository_id=self.task.repository_id, revision=self.task.revision)
         self.safety.value = replace(self.safety.value, guard=replace(self.safety.value.guard, baseline=baseline), approval=baseline)
 
+    def reserved_action_policy(self, *, checks=None, action_id="project:prescribed-check"):
+        # Reuse accepted actual M1 fixture and actual M2 implementation, not a
+        # fabricated ALLOW or a new test infrastructure/runner.
+        from adp.execution_policy import ReservedSafety
+        from adp.guard import ProgressGuard
+        from adp.guard_types import Action, ActionKind, Requirement
+        from adp.schema import key
+        from test_guard import SyntheticAuthority
+        from test_memory import MemoryFixture
+        fixture = MemoryFixture()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.initialize()
+        fixture.memory.upgrade_guard(authorized=True)
+        fixture.memory.add_task(self.task.task_id, self.task.revision)
+        authority = SyntheticAuthority()
+        guard = ProgressGuard(fixture.memory, authority=authority, clock=lambda: self.now)
+        specification = Requirement("fixture:original-project-validation", "gate:project-evidence", ("criterion:project-check",))
+        subject = guard.admission_subject(self.task.task_id, specification)
+        requirement = guard.register(self.task.task_id, specification, authority.attest(subject, "admission"))
+        permit = guard.begin(self.task.task_id, requirement,
+            Action("project:action-adapter", ActionKind.CHECK, "one project-prescribed request", "bounded project receipt"))
+        self.bind(repository_id=fixture.memory.config.identity)
+        state = fixture.memory.inspect()["state"]
+        self.task = replace(self.task, requirement_id=requirement, generation=state["generation"],
+            task_epoch=state["progress_guard"]["task_epochs"][key(self.task.task_id)], iteration=1,
+            authors=("project:action-adapter",))
+        self.safety = ReservedSafety(guard, permit)
+        self.configure(checks=checks, action_id=action_id)
+        return guard, permit
+
     def observer(self, query):
         observed = ProjectObservation(digest(query), self.observed_at, self.complete, self.rows, self.coverage,
                                       action_key=self.known_action_key)
@@ -184,7 +215,7 @@ class ProjectValidationTests(PolicyFixture):
         git("commit", "-m", "Original disposable project checks")
         self.bind(revision=git("rev-parse", "HEAD"))
         checks = (RequiredCheck("shell-contract", "project", "project:fixture", Phase.BEFORE_PR, 3),)
-        self.configure(checks=checks, action_id="project:existing-shell-check")
+        self.reserved_action_policy(checks=checks, action_id="project:existing-shell-check")
         before = self.files(self.product)
         owner = self
         class ProjectAction:
@@ -216,7 +247,9 @@ class ProjectValidationTests(PolicyFixture):
         self.assertEqual(sum(call == "/repos/disposable/two" for call in server.calls), 2)
         self.assertFalse(any("actions" in call or "dispatch" in call for call in server.calls))
         server.runs = [server.run(started_at=None, completed_at=None)]
-        self.assertFalse(self.observe(Phase.AFTER_PR, pull=pull).qualified)
+        missing = self.observe(Phase.AFTER_PR, pull=pull)
+        self.assertFalse(missing.qualified)
+        self.assertIsNone(next(r for r in missing.results if r.name == "build").reported_at)
 
     def test_wrong_repository_ref_sha_and_pull_refuse(self):
         original = self.rows
@@ -415,7 +448,7 @@ class ProjectValidationTests(PolicyFixture):
         self.assertEqual(self.observe().status, ResultStatus.FAIL)
 
     def test_lost_trigger_response_no_blind_resubmit(self):
-        self.configure(action_id="project:prescribed-check")
+        guard, permit = self.reserved_action_policy()
         request = self.validation.request(Phase.BEFORE_PR, authorization=self.auth())
         key = self.validation.action_key(Phase.BEFORE_PR, authorization=self.auth())
         evidence = self.attest("action", action_subject(request, self.policy.action_id, key))
@@ -445,6 +478,13 @@ class ProjectValidationTests(PolicyFixture):
         self.validation.policy = original
         self.assertFalse(self.observe().qualified)  # Old green cannot reconcile a lost trigger response.
         self.known_action_key = key  # Synthetic provider now authoritatively binds the actual requested run.
+        self.rows = tuple(replace(r, status=ResultStatus.FAIL) for r in self.rows)
+        self.assertEqual(self.observe().status, ResultStatus.FAIL)
+        old = json.loads(self.validation._path(request).read_text())
+        self.assertEqual(old["trigger"], "RECONCILED")
+        self.assertEqual(old["action_key"], key)
+        self.assertEqual(old["reconciliation"]["request"], digest(request))
+        self.rows = tuple(replace(r, status=ResultStatus.PASS) for r in self.rows)
         self.assertTrue(self.observe().qualified)
 
     def test_trigger_without_separate_authority_refused(self):

@@ -87,7 +87,7 @@ class ProjectResult:
     run_id: str
     attempt_id: str | None
     status: ResultStatus
-    reported_at: int
+    reported_at: int | None
     complete: bool = True
     current: bool = True
     denominator: int | None = None

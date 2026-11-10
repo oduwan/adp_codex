@@ -94,9 +94,11 @@ are SKIP; stale is UNKNOWN; action-required is ERROR. Neither cancellation nor
 skip/neutral yields PASS. Pending records without provider start/completion time
 use the actual observation time; this does not invent a run start timestamp.
 
-Where supplied, the original positive denominator, all seven original outcome
-counts and quarantine count must agree exactly. All-PASS and no quarantines are
-required for PASS. Job-only success retains `denominator=None` and empty counts;
+Where supplied, the original denominator, actual outcome counts and quarantine
+count are retained, including partial reports. Missing count fields are not
+invented as zero. Complete original accounting, all-PASS and no quarantines are
+required for per-case PASS; partial accounting remains UNKNOWN. Job-only success
+retains `denominator=None` and empty counts;
 it is never rewritten as one passing test. Only a project policy accepting that
 job-level evidence can qualify it. Observation attestation freshness is bounded
 separately from the optional project-owned `result_maximum_age`: freshly
@@ -145,17 +147,36 @@ timeout is not a process-level hard preemption guarantee for slow reads or host
 resolver behavior; the result deadline is checked on return. Deployments needing
 hard request preemption must supply an appropriately bounded trusted transport.
 
-`request_action` is optional and requires both current exact M3 authorization
-and a separate exact project-action attestation. The controller supplies the
+`request_action` is optional and requires current exact M3 authorization, a
+separate exact project-action attestation and the accepted actual `ReservedSafety`
+backed by a real `ProgressGuard`, `Memory` and current non-forensic permit.
+The accepted reservation/context/deadline/ownership validators execute again
+immediately before the project callback. An inspect-only ALLOW is insufficient.
+The controller supplies the
 project-owned action adapter; ADP never invents argv or prepares its environment.
 `action_key` prepares its durable subject. The journal records SUBMITTED before
 the callback. A returned request is only an acknowledgment, not job completion.
 Lost/unknown delivery never causes automatic resubmission, including after
-restart. Results must authoritatively bind the submitted action key before they
-can reconcile it; an unrelated earlier green run is insufficient. Generic
+restart. A bounded scan of **all** retained context journals refuses another
+request while any SUBMITTED or RETURNED action is unreconciled. A new SHA,
+generation, policy or task alias does not erase that uncertainty. Malformed
+history fails closed. Results must authoritatively bind the persisted exact
+request/action key with complete current required-result provenance before they
+can mark delivery RECONCILED; an unrelated earlier green run is insufficient.
+FAIL/ERROR can reconcile a delivered request while remaining actionable failures.
+The original key/request and observation proof hash remain; reconciliation never
+resets to NOT_REQUESTED or permits resubmission of the same request. Generic
 GitHub records do not provide this binding automatically. No API claims to stop,
 cancel, kill or reap externally managed jobs. Operator recovery uses the actual
 project/provider receipt; it never clears uncertainty by claiming cessation.
+
+The same fixed private journal directory and every action record must be retained
+across restarts. Lost, replaced or selectively removed history is not absence
+proof and cannot authorize retry. The standalone port does not qualify
+cross-clone action handoff or canonical Conductor action reconciliation; these
+remain blocked on #16. Operators must stop action submission after journal loss
+and reconcile the actual provider before approving any recovery. Earlier
+unmerged candidate journal formats are refused, not silently migrated or cleared.
 
 ## Qualification
 

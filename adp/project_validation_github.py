@@ -248,9 +248,11 @@ class GitHubEvidenceSource:
                     # adapter may authenticate authoritative supersession instead.
                     unique = identities[(row["name"], row["app"]["id"])] == 1
                     reported = row.get("completed_at") or row.get("started_at")
+                    if reported is None and status != ResultStatus.PENDING:
+                        status, unique = ResultStatus.UNKNOWN, False
                     results.append(ProjectResult(row["name"], "github-check", "github-app:" + str(row["app"]["id"]),
                         self.repository_id, request.revision, str(row["id"]), None, status,
-                        _time(reported) if reported is not None else now, complete=unique,
+                        _time(reported) if reported is not None else now if status == ResultStatus.PENDING else None, complete=unique,
                         provider_status=state + ":" + (conclusion or "unavailable")))
             for suffix, field, query_string, previous in inventories:
                 if digest({"items": self._pages(prefix + suffix, field, query_string)}) != previous:
