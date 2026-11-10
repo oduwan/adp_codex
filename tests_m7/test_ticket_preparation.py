@@ -319,3 +319,63 @@ class TicketPreparationTests(unittest.TestCase):
         first, second = self.project.prepare(), self.project.prepare()
         self.assertEqual(first, second)
         self.assertEqual(data(first.packet)["original_reference"], self.project.reference)
+
+    def test_atomic_freeze_preflights_both_original_and_baseline_capacity(self):
+        import adp.ticket_preparation as module
+        from adp.schema import encode
+        from adp.ticket_types import OriginalTicket
+        from unittest.mock import patch
+        for bound in ("files", "bytes"):
+            folder = self.root / ("capacity-" + bound)
+            folder.mkdir()
+            p = Project(folder)
+            new = replace(p.original.issue, identity=Identity(p.snapshot.repository.id, "second-issue"),
+                number=2, url=p.snapshot.repository.url + "/issues/2", revision="a" * 64)
+            snapshot = replace(p.snapshot, issues=(new,))
+            value = data(OriginalTicket(snapshot.repository, new, snapshot.observed_at))
+            before = {path.name: path.read_bytes() for path in p.archive.directory.iterdir()}
+            if bound == "files":
+                parameter, maximum = "MAX_ARTIFACTS", 3  # Two originals already; both new copies need two slots.
+            else:
+                parameter = "MAX_ARCHIVE"
+                maximum = sum(len(raw) for name, raw in before.items() if name != "lock") + len(encode(value, module.MAX_ARTIFACT))
+            with self.subTest(bound=bound), patch.object(module, parameter, maximum):
+                with self.assertRaisesRegex(ADPError, "capacity"):
+                    p.archive.freeze(snapshot, new.identity)
+                self.assertEqual({path.name: path.read_bytes() for path in p.archive.directory.iterdir()}, before)
+
+    def test_observation_elapsed_time_rechecks_all_final_evidence_lifetimes(self):
+        for expiring in ("preparation", "readiness", "policy", "addition"):
+            folder = self.root / ("freshness-" + expiring)
+            folder.mkdir()
+            p = Project(folder)
+            if expiring != "policy":
+                claim = replace(p.policy.sources[0], expires_at=400, evidence=None)
+                claim = replace(claim, evidence=p.authority.receipt(p.policy.source_subject(claim), "policy/profile"))
+                p.policy.sources = (claim,)
+            proposal = replace(p.proposal, policy_digest=p.policy.inspect_repository().digest)
+            additions = ()
+            if expiring == "addition":
+                change = TicketChange("extra", ChangeKind.ADDITION, "SCOPE", "Original", "Specific extra behavior",
+                    added_clauses=(Clause("extra", "OBJECTIVE", "Specific additional behavior"),))
+                proposal = replace(proposal, changes=(change,), parts=(Part("whole", ("goal", "accept", "interface", "check", "extra")),))
+                approval = ScopeAdditionApproval("extra", p.reference, change_digest(change), 90, 200)
+                additions = (replace(approval, evidence=p.authority.receipt(addition_subject(approval), "ticket/scope-addition", "external-operator")),)
+            reviews = p.ready_reviews(expires_at=200 if expiring == "readiness" else 400)
+            track = p.preparer.observe(reviews=reviews)
+            review = PreparationReview("ticket-preparer", 90, 200 if expiring == "preparation" else 400)
+            review = replace(review, evidence=p.authority.receipt(
+                preparation_subject(p.original, p.scope, proposal, review, track), "ticket/preparation"))
+            now = [100]
+            p.preparer.clock = lambda: now[0]
+            original_discover = p.adapter.discover
+            def advance():
+                snapshot = original_discover()
+                now[0] = 201
+                return snapshot
+            p.adapter.discover = advance
+            before = set(p.archive.directory.iterdir())
+            with self.subTest(expiring=expiring):
+                result = p.preparer.prepare(p.scope, proposal, review, readiness_reviews=reviews, additions=additions)
+                self.assertNotEqual(result.status, Status.READY)
+                self.assertEqual(set(p.archive.directory.iterdir()), before)
