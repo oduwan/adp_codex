@@ -108,7 +108,9 @@ the scope interpretation, full proposed changes, specific operator approvals,
 independent preparation review and current track observations; a hash alone is
 not used as a replacement for this evidence.
 
-Artifacts are at most 1 MiB each; an archive holds at most 64 files and 16 MiB.
+Artifacts are at most 1 MiB each; an archive holds at most 64 artifact files
+(plus its lock) and 16 MiB. Freeze preflights both original copies together before
+writing either; repeat calls account only for missing files.
 Capacity or unsafe paths/links cause refusal, never truncation or deletion of the
 authority baseline. Protect and retain the private archive across handoff when its
 references are needed. No raw ticket body, credential or diagnostic evidence is
@@ -119,6 +121,11 @@ effect journal or migration. Accepted M1/M2/M3/M4/M5/M6 and #14 source/contracts
 remain unchanged. Restart reads the original and proof but must obtain fresh
 observations and verify all current context again. A saved packet is historical
 evidence, not reusable execution approval.
+
+Preparation resamples its clock after discovery, policy and external evidence
+observations. Discovery, policy claims, the independent readiness/preparation
+reviews and any particular scope-addition approval must still be current before
+the packet is persisted; entry-time freshness alone is insufficient.
 
 Actual ticket submission is unavailable until accepted owner/generation-fenced,
 Progress-Guard-reserved, idempotent external-effect integration exists. It must

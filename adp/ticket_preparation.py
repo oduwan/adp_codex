@@ -135,21 +135,21 @@ class TicketArchive:
         raw = encode(value, MAX_ARTIFACT)
         fingerprint = _hash(value)
         path = self.directory / (prefix + fingerprint + ".json")
-        existing = tuple(self.directory.iterdir())
-        require(len(existing) <= MAX_ARTIFACTS + 1, "Ticket evidence capacity exhausted")
-        size = 0
-        for item in existing:
-            if item.name == "lock":
-                continue
-            size += len(self._read(item))
-        require(size + (0 if path.exists() else len(raw)) <= MAX_ARCHIVE,
-                "Ticket evidence byte capacity exhausted")
+        self._preflight({path: raw})
         if path.exists():
             require(self._read(path) == raw, "Immutable ticket evidence differs")
         else:
-            require(len(existing) < MAX_ARTIFACTS + 1, "Ticket evidence capacity exhausted")
             atomic(path, raw, replace=False)
         return fingerprint
+
+    def _preflight(self, additions):
+        """Caller holds the archive lock; account for the complete write set."""
+        existing = tuple(path for path in self.directory.iterdir() if path.name != "lock")
+        missing = {path: raw for path, raw in additions.items() if not path.exists()}
+        require(len(existing) + len(missing) <= MAX_ARTIFACTS, "Ticket evidence file capacity exhausted")
+        size = sum(len(self._read(path)) for path in existing)
+        require(size + sum(len(raw) for raw in missing.values()) <= MAX_ARCHIVE,
+                "Ticket evidence byte capacity exhausted")
 
     def freeze(self, snapshot, identity: Identity) -> str:
         validate_snapshot(snapshot)
@@ -163,10 +163,15 @@ class TicketArchive:
             if baseline.exists():
                 saved = json_value(self._read(baseline), MAX_ARTIFACT)
                 require(saved == value, "Original ticket already frozen; edited scope cannot replace it")
-            fingerprint = self._put("original-", value)
+            raw = encode(value, MAX_ARTIFACT)
+            fingerprint = _hash(value)
+            content = self.directory / ("original-" + fingerprint + ".json")
+            self._preflight({baseline: raw, content: raw})
             if not baseline.exists():
                 # Immutable identity index, not a mutable task/run journal.
-                atomic(baseline, encode(value, MAX_ARTIFACT), replace=False)
+                # Bind the first version even if its content-copy write stops.
+                atomic(baseline, raw, replace=False)
+            self._put("original-", value)
         return ORIGINAL + fingerprint
 
     def original(self, reference: str) -> OriginalTicket:
@@ -357,7 +362,18 @@ class TicketPreparer:
         current_reviews = tuple(r for r in candidate.reviews
             if self.planner._verified(track.snapshots, candidate.issue, r, now))
         acceptance = tuple(c.text for c in clauses if c.kind == "ACCEPTANCE")
-        if not any(r.scope == scope.goal and r.acceptance == acceptance for r in current_reviews):
+        # Discovery, policy inspection and external receipt verification can take
+        # time. All validity intervals must still hold after those observations.
+        finished = self.clock()
+        integer(finished)
+        if finished < now or any(not (s.observed_at <= finished <= s.observed_at + 3600) for s in track.snapshots):
+            return PreparationResult(Status.UNKNOWN, ("Clock or discovery freshness changed during preparation",))
+        if (not _fresh(review.observed_at, review.expires_at, finished)
+                or any(not _fresh(a.observed_at, a.expires_at, finished) for a in additions)
+                or any(not _fresh(s.observed_at, s.expires_at, finished) for s in inspection.sources)):
+            return PreparationResult(Status.BLOCKED_OPERATOR, ("Preparation, scope approval or project policy expired during observation",))
+        if not any(r.scope == scope.goal and r.acceptance == acceptance
+                   and _fresh(r.observed_at, r.expires_at, finished) for r in current_reviews):
             return PreparationResult(Status.BLOCKED_OPERATOR, ("READY assessment does not preserve the approved original acceptance",))
         require(candidate.identity in track.order and not track.cycles, "Ready task is not in a complete dependency DAG")
         exact(source.revision, False)
