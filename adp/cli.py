@@ -30,6 +30,11 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--authorize-memory-write", action="store_true")
     for command in ("doctor", "status", "recover", "handoff", "release", "cleanup-inbox"):
         subcommand = commands.add_parser(command, parents=[common])
+        if command in ('doctor','status','handoff'):
+            from .operator_cli import selectors
+            selectors(subcommand)
+        if command=='doctor':
+            subcommand.add_argument('--check-runtime',action='store_true',help='Observe installed CLI capabilities only; never launch a model worker')
         if command in ("status", "handoff"):
             subcommand.add_argument("--controller", type=Path)
             if command == "handoff":
@@ -64,6 +69,8 @@ def parser() -> argparse.ArgumentParser:
     add_commands(commands, common)
     from .execution_cli import add_commands as add_execution_commands
     add_execution_commands(commands, common)
+    from .operator_cli import add_commands as add_operator_commands
+    add_operator_commands(commands, common)
     return root
 
 
@@ -84,6 +91,11 @@ def check_product_worktrees(config: Config) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
+        if args.command in ('setup','preview') or getattr(args,'operator_profile',None) is not None or getattr(args,'operator_trust',None) is not None:
+            from .operator_cli import run as operator_run
+            report,code=operator_run(args)
+            emit(report)
+            return code
         if args.command in ("run", "resume") or args.command in ("status", "handoff") and args.controller is not None:
             from .execution_cli import run
             report, code = run(args)

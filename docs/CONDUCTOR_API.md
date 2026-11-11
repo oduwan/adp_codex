@@ -255,3 +255,21 @@ keeps its behavior. See [finite autonomous track](operations/AUTONOMOUS_TRACK.md
 for execution-v3 migration, candidate evidence, native issue-edit limitations and
 durable window/recovery contracts. Integration acceptance is pending on this
 branch. Live M8 qualification is not supplied.
+
+## Installed operator entry (#17)
+
+[Operator setup](operations/OPERATOR_SETUP.md) defines the protected signed data
+profile/trust root and existing project-provider prerequisites. `setup`, `doctor`,
+`preview`, `status`, `run`, `resume`, `handoff` select `--operator-profile` plus
+`--operator-trust`; advanced `--controller` and the M1 CLI remain available.
+The installed composition uses the actual accepted ports, preserves exact-SHA
+review and finite M1/M2/window state, and never supplies a universal test runner.
+Read-only commands do not build archives or mutate memory. Optional doctor
+capability inspection is distinct from genuine runtime qualification, still
+NOTRUN for the full #22 lifecycle until separately authorized M8 work.
+
+ExecutionAuthority grant contexts now additionally expose typed admission,
+request, plan/effect and window/run facts for the installed verifier. Existing
+subject bytes, serialized memory and authority method signatures are unchanged.
+A grant remains an independently verified approval request, never a permission
+inferred from the additional context.

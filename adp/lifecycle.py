@@ -121,6 +121,7 @@ class TaskLifecycle:
         packet = project.product_flow.authorize_scope(admission, self.c._refresh_issue(admission), request.revision)
         self.c._grant("track/worker-scope", digest({"packet": self.scope.packet_reference, "request": data(request)}),
             context={"packet": data(packet), "feedback": self.record(admission)["feedback"],
+                     "packet_reference": self.scope.packet_reference, "request": data(request),
                      "diff": git(project.root, "diff", "--no-ext-diff", "--no-textconv", "HEAD", limit=1048576).decode("utf-8", "replace")})
 
     def resolve_dependencies(self, admission, generation):

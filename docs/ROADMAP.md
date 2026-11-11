@@ -73,10 +73,19 @@ qualification, CI and review cannot supply it.
 - Never count `SKIP`, `NOTRUN`, `ERROR`, `TEST_CORRUPTED` or `UNCLASSIFIED` as an accepted PASS.
 - No automatic merges, deployment or release permissions without an explicit external policy.
 
-## M7 remaining Issue #22 lifecycle
+## M7 accepted Issue #22 lifecycle
 
 Accepted #14, #21, #16 and preparation PR #23 are composed by the opt-in
 [finite track](operations/AUTONOMOUS_TRACK.md). This branch implements the
-remaining original Issue #22 scope and awaits independent integration acceptance.
+remaining original Issue #22 scope, now accepted on main.
 Its controlled project qualification is separate from the unstarted M8 pilot;
 no live project, issue closure, release or deployment is authorized here.
+
+## Issue #17 operator interface
+
+The accepted #22 code is merged; genuine full lifecycle qualification remains
+NOTRUN and is explicitly deferred to M8. Issue #17 adds installed operator data
+profiles, read-only enrollment/preview, finite explicit delegation and safe CLI
+composition of the accepted ports. See [Operator setup](operations/OPERATOR_SETUP.md).
+It adds no CI, sandbox, language-specific runner, project environment or M8 pilot.
+Its code and focused qualification await independent integration acceptance.

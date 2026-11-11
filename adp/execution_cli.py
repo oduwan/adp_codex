@@ -25,11 +25,15 @@ class Controller:
 def add_commands(commands, common):
     for name in ("run", "resume"):
         command = commands.add_parser(name, parents=[common], help="One explicitly authorized finite Conductor invocation")
-        command.add_argument("--controller", type=Path, required=True)
+        command.add_argument("--controller", type=Path)
+        from .operator_cli import selectors
+        selectors(command)
         command.add_argument("--authorize-execution", action="store_true")
         command.add_argument("--maximum-parallel", type=int)
         command.add_argument("--rounds", type=int, default=1)
         command.add_argument("--test-runtime", action="store_true", help="Explicit synthetic runtime qualification only")
+        if name=='resume':
+            command.add_argument('--adopt-generation',action='store_true',help='Explicitly adopt the existing finite profile window after confirmed M1 handoff')
     upgrade = commands.add_parser("execution-upgrade", parents=[common], help="Explicit owned v2 to v3 execution-journal upgrade")
     upgrade.add_argument("--authorize-memory-write", action="store_true")
     upgrade.add_argument("--track-lifecycle", action="store_true", help="Explicitly select product-flow v2 and finite track v3")
@@ -57,6 +61,8 @@ def load_controller(path, config):
 def run(args):
     if args.command != "status" and not getattr(args, "authorize_execution", False):
         raise AuthorityError("Execution/resume/handoff requires explicit --authorize-execution")
+    require(getattr(args,'controller',None) is not None,'Select an explicit --controller or installed operator profile')
+    require(not getattr(args,'adopt_generation',False),'Use the installed profile adoption entry or advanced typed controller method')
     config = Config.discover(args.repo, remote=args.remote, repository_id=args.repository_id,
         branch=args.branch, storage=args.storage, config=args.config)
     config.require_storage()
