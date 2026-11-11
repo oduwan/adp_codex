@@ -135,7 +135,11 @@ def main(argv: list[str] | None = None) -> int:
             result = memory.upgrade_guard(authorized=args.authorize_memory_write)
         elif command == "execution-upgrade":
             from .execution_memory import ExecutionJournal
-            result = ExecutionJournal(memory).upgrade(authorized=args.authorize_memory_write)
+            journal = ExecutionJournal(memory)
+            result = journal.upgrade(authorized=args.authorize_memory_write)
+            if args.track_lifecycle:
+                journal.upgrade_product_flow(authorized=args.authorize_memory_write)
+                result = journal.upgrade_track(authorized=args.authorize_memory_write)
         elif command == "claim":
             result = memory.claim(args.owner, takeover=args.takeover,
                                   confirmed_stopped_owner=args.confirm_stopped_owner)

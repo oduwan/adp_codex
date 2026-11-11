@@ -248,4 +248,10 @@ review acceptance, explicit project-delegated native merge and one product repor
 Legacy execution remains unchanged. See [GitHub product flow](operations/GITHUB_PRODUCT_FLOW.md)
 for the explicit internal execution-v2 migration, unknown-count representation,
 manual merge wait, native merge race envelope, durable recovery and NOTRUN limits.
-The complete #22 autonomous lifecycle and live M8 qualification are not supplied.
+The opt-in #22 `AutonomousTrack` composes these ports with the original preparation
+engine, actual workers, project checks, correction and exact-SHA re-review.
+`Controller.track` selects it explicitly; the existing admissions-only controller
+keeps its behavior. See [finite autonomous track](operations/AUTONOMOUS_TRACK.md)
+for execution-v3 migration, candidate evidence, native issue-edit limitations and
+durable window/recovery contracts. Integration acceptance is pending on this
+branch. Live M8 qualification is not supplied.

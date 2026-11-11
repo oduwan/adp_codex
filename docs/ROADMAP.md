@@ -72,3 +72,11 @@ qualification, CI and review cannot supply it.
 - No raw diagnostic log streams or test-infrastructure work in product Issues/PR status comments.
 - Never count `SKIP`, `NOTRUN`, `ERROR`, `TEST_CORRUPTED` or `UNCLASSIFIED` as an accepted PASS.
 - No automatic merges, deployment or release permissions without an explicit external policy.
+
+## M7 remaining Issue #22 lifecycle
+
+Accepted #14, #21, #16 and preparation PR #23 are composed by the opt-in
+[finite track](operations/AUTONOMOUS_TRACK.md). This branch implements the
+remaining original Issue #22 scope and awaits independent integration acceptance.
+Its controlled project qualification is separate from the unstarted M8 pilot;
+no live project, issue closure, release or deployment is authorized here.

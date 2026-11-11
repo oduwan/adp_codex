@@ -200,6 +200,9 @@ class GitHubEvidenceSource:
 
     def _observe(self, query):
         request = query.request
+        from .project_validation_types import CandidateEvidenceRequest
+        require(type(request) is not CandidateEvidenceRequest,
+                "UNSUPPORTED_CANDIDATE_EVIDENCE: native GitHub checks bind committed SHAs only")
         self._deadline = time.monotonic() + query.budget_ms / 1000
         self._coverage = "UNKNOWN"
         now = self.clock()

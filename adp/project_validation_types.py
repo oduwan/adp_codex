@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from .guard_types import Attestation
-from .policy_types import OutcomeCount
+from .policy_types import CandidateSource, OutcomeCount
 
 
 class Phase(StrEnum):
@@ -69,12 +69,22 @@ class EvidenceRequest:
     pull: PullIdentity | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class CandidateEvidenceRequest(EvidenceRequest):
+    candidate: CandidateSource
+
+
 @dataclass(frozen=True)
 class ObservationQuery:
     request: EvidenceRequest
     observation_id: str
     budget_ms: int = 1000
     action_key: str | None = None
+
+
+@dataclass(frozen=True)
+class CandidateObservationQuery(ObservationQuery):
+    request: CandidateEvidenceRequest
 
 
 @dataclass(frozen=True)
@@ -96,6 +106,11 @@ class ProjectResult:
     provider_status: str = "unavailable"
 
 
+@dataclass(frozen=True, kw_only=True)
+class CandidateProjectResult(ProjectResult):
+    candidate_digest: str
+
+
 @dataclass(frozen=True)
 class ProjectObservation:
     query_digest: str
@@ -105,6 +120,11 @@ class ProjectObservation:
     coverage: str = "COMPLETE"
     evidence: Attestation | None = None
     action_key: str | None = None
+
+
+@dataclass(frozen=True)
+class CandidateProjectObservation(ProjectObservation):
+    results: tuple[CandidateProjectResult, ...]
 
 
 @dataclass(frozen=True)
@@ -121,6 +141,13 @@ class EvidenceGate:
     def qualified(self) -> bool:
         """Qualifies this phase only, never independent review or final acceptance."""
         return self.status == ResultStatus.PASS and self.complete and not self.missing
+
+
+@dataclass(frozen=True)
+class CandidateEvidenceGate(EvidenceGate):
+    """Qualifies uncommitted content only; never a committed-SHA gate."""
+    request: CandidateEvidenceRequest
+    results: tuple[CandidateProjectResult, ...]
 
 
 class ProjectEvidenceSource(Protocol):

@@ -64,12 +64,18 @@ Real Codex execution additionally requires Linux `/proc`, child-subreaper suppor
 a supported authenticated CLI and trusted OS/authentication installation. Missing
 capabilities produce UNSUPPORTED_RUNTIME. A missing stop receipt remains UNKNOWN.
 
-The supplied Git push backend supports explicitly allowlisted local bare remotes
-with exact CAS; network push is UNSUPPORTED_ATOMIC_REF. Production validation
-needs a separately qualified read-only/network-denied sandbox or port.
-`trusted_disposable=True` is limited to owned synthetic projects. Uncertain
+Explicitly selected [#14 GitHub network CAS](docs/operations/NETWORK_CAS.md)
+and [#16 product flow](docs/operations/GITHUB_PRODUCT_FLOW.md) extend the original
+local bare-remote backend. The target project owns check execution and security;
+[#21](docs/operations/PROJECT_VALIDATION.md) verifies its evidence and supplies no
+test runner or sandbox. `trusted_disposable=True` remains limited to owned
+synthetic projects. Uncertain
 external delivery and unfinished old-generation approvals require explicit
-reconciliation. No merge, deployment or release execution backend is supplied.
+reconciliation. #16 supports explicitly delegated native merge within its stated
+limits; credentials alone grant no permission. No deployment or release backend
+is supplied. This branch's [#22 finite lifecycle](docs/operations/AUTONOMOUS_TRACK.md)
+adds explicit track preparation/selection, correction, independent re-review and
+next-task refresh; integration acceptance remains pending.
 
 ## Qualification and contribution
 

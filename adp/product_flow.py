@@ -144,7 +144,7 @@ class GitHubProductFlow:
         if reserved:
             ReservedSafety(c.guard, permit).observe(context)  # actual reservation, owner and deadline
         state = c.journal.inspect()["state"]["execution"]
-        require(state["schema_version"] == 2, "Explicit product-flow upgrade required")
+        require(state["schema_version"] in (2, 3), "Explicit product-flow upgrade required")
         return task, project, packet, provider, context, permit
 
     def _flow(self, admission):

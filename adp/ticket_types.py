@@ -140,3 +140,10 @@ class PreparationResult:
 class TrackObserver(Protocol):
     """Accepted GET-only M4 adapters supply independently refreshed snapshots."""
     def discover(self) -> Snapshot: ...
+
+
+@dataclass(frozen=True)
+class DependencyEdit:
+    dependency: Identity
+    database_id: int
+    add: bool

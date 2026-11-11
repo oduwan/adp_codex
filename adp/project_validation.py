@@ -14,13 +14,16 @@ from dataclasses import replace
 from pathlib import Path
 
 from .config import load_json, safe_path
+from .discovery_schema import typed
 from .errors import ADPError
 from .execution_privacy import credential_shaped
 from .guard_types import Attestation, data
 from .policy_schema import digest, fingerprint, fresh, ref, sha
-from .policy_types import Authorization, Effect, Operation, OutcomeCount, Request
+from .policy_types import Authorization, Effect, Operation, OutcomeCount, Request, CandidateSource, CandidateValidationRequest
 from .project_validation_types import (EvidenceGate, EvidencePolicy, EvidenceRequest,
-    ObservationQuery, Phase, ProjectObservation, ProjectResult, RequiredCheck, ResultStatus)
+    ObservationQuery, Phase, ProjectObservation, ProjectResult, RequiredCheck, ResultStatus,
+    CandidateEvidenceRequest, CandidateObservationQuery, CandidateProjectResult,
+    CandidateProjectObservation, CandidateEvidenceGate)
 from .schema import encode, fields, integer, require, string
 from .storage import atomic, locked
 
@@ -60,7 +63,8 @@ def policy_subject(plan, policy: EvidencePolicy) -> str:
 
 
 def observation_subject(query: ObservationQuery, observation: ProjectObservation) -> str:
-    require(type(observation) is ProjectObservation, "Expected typed project observation")
+    candidate = type(query) is CandidateObservationQuery
+    require(type(observation) is (CandidateProjectObservation if candidate else ProjectObservation), "Expected typed project observation")
     require(observation.query_digest == digest(query), "Observation query binding differs")
     integer(observation.observed_at)
     require(type(observation.complete) is bool and observation.coverage in COVERAGE, "Invalid observation completeness")
@@ -68,7 +72,9 @@ def observation_subject(query: ObservationQuery, observation: ProjectObservation
         fingerprint(observation.action_key)
     require(type(observation.results) is tuple and len(observation.results) <= 256, "Observation inventory exceeds bounds")
     for result in observation.results:
-        require(type(result) is ProjectResult, "Expected typed check result")
+        require(type(result) is (CandidateProjectResult if candidate else ProjectResult), "Expected typed check result")
+        if candidate:
+            fingerprint(result.candidate_digest)
         for text in (result.name, result.provider, result.origin, result.repository_id, result.run_id, result.provider_status):
             _public(text)
         sha(result.revision)
@@ -90,11 +96,59 @@ def observation_subject(query: ObservationQuery, observation: ProjectObservation
                     and result.quarantined <= result.denominator, "Original denominator/counts differ")
     payload = data(observation)
     payload.pop("evidence")
-    return digest({"query": data(query), "observation": payload})
+    subject = {"query": data(query), "observation": payload}
+    if candidate:
+        subject["domain"] = "project-validation/candidate-observation"
+    return digest(subject)
 
 
 def action_subject(request: EvidenceRequest, action_id: str, key: str) -> str:
     return digest({"request": data(request), "action_id": action_id, "key": key})
+
+
+def reobservation_subject(original, current, action_key):
+    return digest({"domain": "project-validation/reobserve", "original": data(original),
+                   "current": data(current), "action_key": action_key})
+
+
+def capture_candidate(root: Path) -> CandidateSource:
+    """Observe actual content and Git index without staging or executing checks."""
+    import hashlib
+    from .git import git
+    from .policy_adapters import working_tree_digest
+    return CandidateSource(candidate_content_seal(root), hashlib.sha256(git(root, "ls-files", "--stage", "-z")).hexdigest(),
+                           working_tree_digest(root))
+
+
+def candidate_content_seal(root: Path) -> str:
+    """Seal committable source, independent of staging and ignored check output.
+
+    This is distinct from the unchanged full-filesystem worker containment seal.
+    Tracked files stay included even when ignored; force-adding an ignored file
+    makes it newly visible and invalidates a previously checked candidate.
+    """
+    import hashlib
+    from .git import git
+    from .policy_schema import product_path
+    names = sorted(set(filter(None, git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z").split(b"\0"))))
+    require(len(names) <= 4096, "Candidate source inventory exceeds bounds")
+    rows, total = [], 0
+    for name in names:
+        relative = os.fsdecode(name)
+        product_path(relative)
+        path = root / relative
+        safe_path(path.parent)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue  # A checked deletion stays absent after staging.
+        require(stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode), "Unsupported candidate source entry")
+        total += info.st_size
+        require(total <= 32 * 1024 * 1024, "Candidate source bytes exceed bounds")
+        content = os.fsencode(os.readlink(path)) if stat.S_ISLNK(info.st_mode) else path.read_bytes()
+        mode = "120000" if stat.S_ISLNK(info.st_mode) else "100755" if info.st_mode & stat.S_IXUSR else "100644"
+        rows.append((relative, mode, hashlib.sha256(content).hexdigest()))
+    return digest({"domain": "project-validation/git-visible-candidate-v1", "files": rows})
 
 
 class ReportedEvidence:
@@ -112,10 +166,19 @@ class ReportedEvidence:
 
 class ProjectValidation:
     def __init__(self, provider, task, policy: EvidencePolicy, source, *, directory: Path,
-                 protected_roots: tuple[Path, ...], maximum_observations: int = 8, clock=None):
+                 protected_roots: tuple[Path, ...], maximum_observations: int = 8, clock=None,
+                 candidate: CandidateSource | None = None, candidate_root: Path | None = None,
+                 retain_requests: bool = False):
         require(type(maximum_observations) is int and 1 <= maximum_observations <= 32,
                 "Invalid finite observation limit")
         self.provider, self.task, self.policy, self.source = provider, task, policy, source
+        self.candidate, self.candidate_root = candidate, candidate_root
+        if candidate is not None:
+            require(type(candidate) is CandidateSource and candidate_root is not None
+                    and getattr(getattr(provider.adapter, "config", None), "root", None) == candidate_root,
+                    "Candidate evidence requires the actual configured project root")
+            for item in (candidate.content_digest, candidate.index_digest, candidate.worktree_digest):
+                fingerprint(item)
         self.clock = clock or (lambda: int(time.time()))
         self.directory = safe_path(directory)
         require(protected_roots and all(not self.directory.is_relative_to(safe_path(p))
@@ -126,6 +189,8 @@ class ProjectValidation:
                 "Private evidence directory must be owned mode0700")
         self._directory_identity = (info.st_dev, info.st_ino)
         self.maximum_observations = maximum_observations
+        require(type(retain_requests) is bool, "Explicit request-retention selection required")
+        self.retain_requests = retain_requests
 
     def _check_directory(self):
         info = safe_path(self.directory).stat()
@@ -143,11 +208,18 @@ class ProjectValidation:
 
     def request(self, phase: Phase, *, authorization: Authorization, pull=None) -> EvidenceRequest:
         require(phase in set(Phase), "Unknown validation phase")
-        plan = self.provider.plan(self.task, Request(Operation.VALIDATE))
+        if self.candidate is not None:
+            from .git import value
+            require(phase == Phase.BEFORE_PR and pull is None and capture_candidate(self.candidate_root) == self.candidate
+                    and value(self.candidate_root, "rev-parse", "HEAD") == self.task.revision
+                    and value(self.candidate_root, "symbolic-ref", "HEAD") == self.task.source_ref,
+                    "Candidate source changed or phase is not precommit")
+        request = CandidateValidationRequest(Operation.VALIDATE, candidate=self.candidate) if self.candidate else Request(Operation.VALIDATE)
+        plan = self.provider.plan(self.task, request)
         require(self.provider.decide(plan, authorization).effect == Effect.ALLOW,
                 "Current exact M3 validation authorization is required")
         subject = policy_subject(plan, self.policy)
-        self._verify(self.policy.evidence, "policy", subject)
+        self._verify(self.policy.evidence, "candidate-policy" if self.candidate else "policy", subject)
         require(self.policy.policy_digest == plan.policy_digest
                 and {c.name for c in self.policy.checks} == set(plan.required_checks),
                 "Project evidence policy differs from current M3 requirements")
@@ -160,9 +232,10 @@ class ProjectValidation:
             _public(pull.id)
             integer(pull.number, 1)
             require(pull.repository_id == self.task.repository_id, "PR repository differs")
-        return EvidenceRequest(self.task.repository_id, self.task.source_ref, self.task.revision,
+        values = (self.task.repository_id, self.task.source_ref, self.task.revision,
             digest({"m3": plan.policy_digest, "project": subject}), phase, self.task.task_id,
             self.task.generation, self.task.task_epoch, self.task.iteration, pull)
+        return CandidateEvidenceRequest(*values, candidate=self.candidate) if self.candidate else EvidenceRequest(*values)
 
     def _path(self, request):
         return safe_path(self.directory / (digest(request) + ".json"))
@@ -183,14 +256,22 @@ class ProjectValidation:
                 if entry.name.endswith(".json"):
                     count += 1
                     require(count < 32, "Private evidence capacity exhausted")
-        return {"schema_version": 1, "request": digest(request), "maximum_observations": self.maximum_observations,
+        state = {"schema_version": 2 if self.retain_requests else 1, "request": digest(request), "maximum_observations": self.maximum_observations,
             "session": secrets.token_hex(32), "observations": 0, "inflight": False,
             "last_observed": 0, "last_digest": None, "trigger": "NOT_REQUESTED", "action_key": None, "reconciliation": None}
+        if self.retain_requests:
+            state["original_request"] = data(request)
+        return state
 
     @staticmethod
     def _validate_state(state):
-        fields(state, "schema_version request maximum_observations session observations inflight last_observed last_digest trigger action_key reconciliation")
-        require(type(state["schema_version"]) is int and state["schema_version"] == 1, "Unsupported private evidence journal")
+        version = state.get("schema_version") if type(state) is dict else None
+        fields(state, "schema_version request maximum_observations session observations inflight last_observed last_digest trigger action_key reconciliation"
+               + (" original_request" if version == 2 else ""))
+        require(type(state["schema_version"]) is int and state["schema_version"] in (1, 2), "Unsupported private evidence journal")
+        if state["schema_version"] == 2:
+            original = typed(CandidateEvidenceRequest | EvidenceRequest, state["original_request"])
+            require(digest(original) == state["request"], "Retained original request identity differs")
         fingerprint(state["request"])
         fingerprint(state["session"])
         integer(state["observations"])
@@ -234,13 +315,33 @@ class ProjectValidation:
                 found |= state["trigger"] in ("SUBMITTED", "RETURNED")
         return found
 
+    def retained_request(self, current):
+        """Find one exact, retained unfinished intent; never infer a lost payload."""
+        matches = []
+        expected = data(current); expected.pop("policy_digest")
+        self._unknown_action_exists()  # bounded whole-history schema validation
+        for path in self.directory.glob("*.json"):
+            state = load_json(safe_path(path))
+            if state["trigger"] not in ("SUBMITTED", "RETURNED"):
+                continue
+            require(state["schema_version"] == 2, "Original action request is unavailable; external reconciliation required")
+            original = typed(CandidateEvidenceRequest | EvidenceRequest, state["original_request"])
+            proposed = data(original); proposed.pop("policy_digest")
+            if proposed == expected:
+                matches.append(original)
+        require(len(matches) <= 1, "Multiple unfinished project actions need authoritative reconciliation")
+        return matches[0] if matches else None
+
     def _reserved_action(self):
         from .execution_policy import ReservedSafety
         from .guard import ProgressGuard
         from .memory import Memory
+        from .execution_memory import QueuedMemory
         safety = self.provider.safety
+        memory = getattr(getattr(safety, "guard", None), "memory", None)
+        actual = memory._memory if type(memory) is QueuedMemory else memory
         require(type(safety) is ReservedSafety and type(safety.guard) is ProgressGuard
-                and type(safety.guard.memory) is Memory and safety.permit is not None
+                and type(actual) is Memory and safety.permit is not None
                 and safety.forensic_request is None, "Actual current M2 action reservation is required")
         # Accepted _active/context/deadline/current ownership checks are reused;
         # generic inspect(ALLOW) and a forged Decision are insufficient.
@@ -252,11 +353,13 @@ class ProjectValidation:
 
     def _unknown(self, request, reason):
         names = tuple(c.name for c in self.policy.checks if c.phase == request.phase)
-        return EvidenceGate(request, ResultStatus.UNKNOWN, (), names, False, reason, "project-validation:unknown")
+        cls = CandidateEvidenceGate if type(request) is CandidateEvidenceRequest else EvidenceGate
+        return cls(request, ResultStatus.UNKNOWN, (), names, False, reason, "project-validation:unknown")
 
     def _evaluate(self, query: ObservationQuery, observation: ProjectObservation, *, last_observed=0) -> EvidenceGate:
         subject = observation_subject(query, observation)
-        self._verify(observation.evidence, "observation", subject)
+        candidate = type(query) is CandidateObservationQuery
+        self._verify(observation.evidence, "candidate-observation" if candidate else "observation", subject)
         now = self.clock()
         require(last_observed <= observation.observed_at <= now
                 and now - observation.observed_at <= self.policy.maximum_age, "Stale/replayed project observation")
@@ -273,6 +376,9 @@ class ProjectValidation:
                 complete = False
                 continue
             result = candidates[0]
+            if candidate and result.candidate_digest != digest(request.candidate):
+                missing.append(check.name)
+                complete = False
             if (result.provider != check.provider or result.origin != check.origin
                     or result.repository_id != request.repository_id or result.revision != request.revision
                     or not result.complete or result.reported_at is None or result.reported_at > observation.observed_at
@@ -298,12 +404,33 @@ class ProjectValidation:
         else:
             status = next(r.status for r in results if r.status != ResultStatus.PASS)
         reason = "PROJECT_CHECKS_QUALIFIED" if status == ResultStatus.PASS else "PENDING_PROJECT_CHECKS" if status == ResultStatus.PENDING else "ACTIONABLE_PROJECT_FAILURE" if status in (ResultStatus.FAIL, ResultStatus.ERROR, ResultStatus.TIMEOUT, ResultStatus.CANCELLED) else "INCOMPLETE_PROJECT_EVIDENCE"
-        return EvidenceGate(request, status, tuple(results), tuple(missing), complete, reason,
+        cls = CandidateEvidenceGate if candidate else EvidenceGate
+        return cls(request, status, tuple(results), tuple(missing), complete, reason,
                             "project-validation:" + subject)
 
     def observe(self, phase: Phase, *, authorization: Authorization, pull=None, budget_ms=1000) -> EvidenceGate:
         require(type(budget_ms) is int and 1 <= budget_ms <= 300000, "Invalid observation deadline")
         request = self.request(phase, authorization=authorization, pull=pull)
+        return self._observe_request(request, authorization, budget_ms, current=request)
+
+    def reobserve(self, original, *, authorization: Authorization, evidence: Attestation, budget_ms=1000):
+        """Read the same retained project action under fresh exact authority.
+
+        No action is submitted, context budget reset, or old result promoted.
+        The external verifier authenticates the old/current policy mapping.
+        """
+        require(type(original) in (EvidenceRequest, CandidateEvidenceRequest), "Actual retained check request required")
+        require(type(budget_ms) is int and 1 <= budget_ms <= 300000, "Invalid observation deadline")
+        current = self.request(original.phase, authorization=authorization, pull=original.pull)
+        old, new = data(original), data(current)
+        old.pop("policy_digest"); new.pop("policy_digest")
+        require(type(original) is type(current) and old == new, "Reobservation source/owner/task context changed")
+        state = self._state(original)
+        require(self._path(original).is_file(), "Original observation history is missing")
+        self._verify(evidence, "reobserve", reobservation_subject(original, current, state["action_key"]))
+        return self._observe_request(original, authorization, budget_ms, current=current)
+
+    def _observe_request(self, request, authorization, budget_ms, *, current):
         with locked(self.directory):
             state = self._state(request)
             if state["observations"] >= self.maximum_observations:
@@ -312,7 +439,8 @@ class ProjectValidation:
             state["inflight"] = True
             self._write(request, state)  # A crash consumes this observation; restart never trusts cached PASS.
             action_key = self._action_key(request, state) if state["trigger"] != "NOT_REQUESTED" else None
-            query = ObservationQuery(request, digest({"session": state["session"], "sequence": state["observations"]}),
+            cls = CandidateObservationQuery if self.candidate else ObservationQuery
+            query = cls(request, digest({"session": state["session"], "sequence": state["observations"]}),
                                      budget_ms, action_key)
             deadline = time.monotonic() + budget_ms / 1000
             try:
@@ -320,7 +448,7 @@ class ProjectValidation:
                 require(time.monotonic() <= deadline, "Project observation deadline exceeded")
                 gate = self._evaluate(query, observed, last_observed=state["last_observed"])
                 # Source/policy/guard may have changed during the external observation.
-                require(self.request(phase, authorization=authorization, pull=pull) == request,
+                require(self.request(current.phase, authorization=authorization, pull=current.pull) == current,
                         "Validation source or policy changed during observation")
                 state["last_observed"], state["last_digest"] = observed.observed_at, gate.evidence.split(":", 1)[1]
                 if (state["trigger"] in ("SUBMITTED", "RETURNED") and gate.complete
@@ -358,7 +486,7 @@ class ProjectValidation:
         with locked(self.directory):
             state = self._state(request)
             key = self._action_key(request, state)
-            self._verify(evidence, "action", action_subject(request, self.policy.action_id, key))
+            self._verify(evidence, "candidate-action" if self.candidate else "action", action_subject(request, self.policy.action_id, key))
             if state["trigger"] != "NOT_REQUESTED":
                 return "UNKNOWN_DELIVERY_REOBSERVE" if state["trigger"] == "SUBMITTED" else "REQUEST_ALREADY_RETURNED_REOBSERVE"
             if self._unknown_action_exists():
