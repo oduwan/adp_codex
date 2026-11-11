@@ -29,6 +29,7 @@ SUPPORTED = {Operation.INSPECT, Operation.EDIT, Operation.STAGE, Operation.COMMI
 
 
 def private_file(path, *, limit=1048576):
+    string(str(path),4096)
     path = safe_path(Path(path).absolute())
     info = path.lstat()
     require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077
@@ -195,14 +196,14 @@ class OperatorProfile:
         return cfg
 
 
-def load_profile(path, trust_path, *, clock=None, retain_revocation=False):
+def load_profile(path, trust_path, *, clock=None, retain_revocation=False, recover_initial_setup=False):
     try:
-        return _load_profile(path,trust_path,clock=clock,retain_revocation=retain_revocation)
+        return _load_profile(path,trust_path,clock=clock,retain_revocation=retain_revocation,recover_initial_setup=recover_initial_setup)
     except (TypeError,ValueError,KeyError,AttributeError,OverflowError):
         raise AuthorityError('Malformed protected operator configuration; inspect the closed schema') from None
 
 
-def _load_profile(path, trust_path, *, clock=None, retain_revocation=False):
+def _load_profile(path, trust_path, *, clock=None, retain_revocation=False,recover_initial_setup=False):
     trust = Trust(trust_path, clock=clock)
     path = safe_path(Path(path).absolute()); raw = private_file(path, limit=65536)
     rid = raw.get('payload', {}).get('repository_id')
@@ -247,6 +248,7 @@ def _load_profile(path, trust_path, *, clock=None, retain_revocation=False):
     for item in p['tasks']:
         fields(item, 'issue_id number task_id slug workspace expected_revision')
         for k in ('issue_id','task_id','slug'): string(item[k],128)
+        string(item['workspace'],4096)
         require(type(item['number']) is int and item['number'] > 0 and item['issue_id'] in d['issues'], 'Task is outside delegated issue scope')
         branch(item['slug']); sha(item['expected_revision'])
         tasks.append(TaskProfile(item['issue_id'],item['number'],item['task_id'],item['slug'],safe_path(Path(item['workspace']).absolute()),item['expected_revision']))
@@ -268,6 +270,7 @@ def _load_profile(path, trust_path, *, clock=None, retain_revocation=False):
                 'Native GitHub evidence requires a published PR; pre-PR checks need the project evidence source')
     fields(providers['credentials'], 'read cas forge ticket')
     for k in ('repo','storage','private_state'):
+        string(m[k],4096)
         candidate=Path(m[k])
         require(candidate.is_absolute() and safe_path(candidate)==candidate,'Absolute normalized memory paths required')
     files_to_protect = [Path(providers[k]) for k in ('policy','assessment','decisions','revocations')]
@@ -277,10 +280,14 @@ def _load_profile(path, trust_path, *, clock=None, retain_revocation=False):
     for row,_ in trust._root().values(): files_to_protect.append(Path(row['key_file']))
     roots = [t.workspace for t in tasks] + [Path(m['repo']),Path(m['storage'])]
     for configured in [t.workspace for t in tasks]+[Path(m['repo'])]:
-        for entry in git(configured,'worktree','list','--porcelain','-z',limit=65536).split(b'\0'):
+        for entry in git(configured,'-c','core.quotePath=false','worktree','list','--porcelain',limit=65536).splitlines():
             if entry.startswith(b'worktree '):
-                roots.append(safe_path(Path(os.fsdecode(entry[9:]))))
+                raw=os.fsdecode(entry[9:])
+                require(raw.startswith('/'),'Quoted or noncanonical linked worktree paths require operator reconciliation')
+                string(raw,4096)
+                roots.append(safe_path(Path(raw)))
     for candidate in [path, trust.path, *files_to_protect, Path(m['private_state'])]:
+        string(str(candidate),4096)
         require(candidate.is_absolute() and safe_path(candidate)==candidate, 'Absolute protected operator paths required')
         require(all(not candidate.is_relative_to(root) and not root.is_relative_to(candidate) for root in roots),
                 'Operator configuration/secrets must be outside product and memory roots')
@@ -297,7 +304,11 @@ def _load_profile(path, trust_path, *, clock=None, retain_revocation=False):
     for task in tasks: profile.project_config(task)
     require(not credential_shaped({k:v for k,v in p.items() if k not in ('providers','memory','tasks')}), 'Private credentials do not belong in profile payloads')
     if retain_revocation and (profile.state/'enrollment.json').exists():
-        require((profile.state/'revocation.json').exists(),'Retained revocation history is missing')
-        profile.live(retain=True)
+        if (profile.state/'revocation.json').exists(): profile.live(retain=True)
+        else:
+            from .memory import Memory
+            require(recover_initial_setup and Memory(profile.memory_config()).inspect()['health']=='UNINITIALIZED',
+                'Retained revocation history is missing')
+            profile.live()
     else: profile.live()
     return profile

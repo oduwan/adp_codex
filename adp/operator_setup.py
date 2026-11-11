@@ -95,13 +95,16 @@ def preview(profile, *, installed=None):
 
 def setup(profile, *, authorized=False):
     require(authorized and profile.delegation['allow_setup'],'Explicit memory-write authority and project setup delegation required')
-    profile.live(retain=(profile.state/'enrollment.json').exists())
-    preflight=preview(profile)
-    require(preflight['status']=='CONFIGURATION_VERIFIED','UNKNOWN: complete independently verified enrollment is required before memory writes')
     cfg=profile.memory_config(); memory=Memory(cfg)
     observed=memory.inspect()
     path=profile.state/'enrollment.json'
     initial=observed['health']=='UNINITIALIZED'
+    if path.exists() and not initial:
+        require(private_file(path)==manifest(profile) and (profile.state/'revocation.json').exists()
+            and (profile.state/'authority').is_dir(),'Retained enrollment/authority history is missing or changed')
+    profile.live(retain=path.exists() and (profile.state/'revocation.json').exists())
+    preflight=preview(profile)
+    require(preflight['status']=='CONFIGURATION_VERIFIED','UNKNOWN: complete independently verified enrollment is required before memory writes')
     def initial_layout():
         if not profile.state.exists(): return
         info=safe_path(profile.state).stat()

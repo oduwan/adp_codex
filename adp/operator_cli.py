@@ -35,7 +35,8 @@ def run(args):
         'Memory/remote overrides cannot modify an installed delegation')
     p=load_profile(args.operator_profile,args.operator_trust,retain_revocation=(
         args.command in ('run','resume','handoff') and getattr(args,'authorize_execution',False)
-        or args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False)))
+        or args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False)),
+        recover_initial_setup=(args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False)))
     command=args.command
     if command=='status': return status(p),0
     if command=='setup' and args.apply:
@@ -51,6 +52,11 @@ def run(args):
                     'version':capabilities.version,'independent_contexts':capabilities.independent_contexts,
                     'workspace_write':capabilities.workspace_write,'observe':capabilities.observe,'cancel':capabilities.cancel,
                     'maximum_parallel':capabilities.maximum_parallel}
+                if not capabilities.independent_contexts:
+                    report['configuration_status']=report['status']
+                    report['status']='UNSUPPORTED_RUNTIME'
+                    report['next_action']='Install a supported authenticated Codex CLI and qualified Linux supervision; no worker was launched'
+                    return report,7
             return report,0 if report['status']=='CONFIGURATION_VERIFIED' else 4
         except (ADPError,OSError,ValueError,TypeError,KeyError):
             return {'mode':'READ_ONLY','status':'UNKNOWN','repository_id':p.repository_id,
@@ -72,4 +78,39 @@ def run(args):
     else:
         method=selected.resume if command=='resume' else selected.run
         result=method(rounds=rounds,maximum_parallel=parallel,authorized=True)
-    return result,0 if result.get('status')=='COMPLETE' else 7 if result.get('status') in ('UNSUPPORTED','UNSUPPORTED_RUNTIME') else 4
+    report=exit_report(p,controller,result,command)
+    return report,0 if report['status'] in ('COMPLETE','HANDOFF_RECORDED') else 7 if report['status'] in ('UNSUPPORTED','UNSUPPORTED_RUNTIME') else 4
+
+
+def exit_report(profile,controller,result,command):
+    """Observe all enrolled dispositions without dispatch or implied execution."""
+    from .discovery_schema import digest
+    from .discovery_types import Identity
+    observed=controller.conductor.journal.inspect()
+    track=observed['state']['execution'].get('track')
+    rows=[]
+    for task in profile.tasks:
+        slot=(track or {}).get('slots',{}).get(digest(Identity(profile.repository_id,task.issue_id)))
+        attempted=result.get('tasks',{}).get(task.task_id)
+        rows.append({'issue_id':task.issue_id,'task_id':task.task_id,
+            'status':attempted.get('status','UNKNOWN') if attempted else slot['status'] if slot else 'NOT_ADMITTED',
+            'reason':attempted.get('reason') if attempted else 'No execution receipt; refresh current admission' if not slot else None})
+    outcome=result.get('status','UNKNOWN')
+    if command=='handoff' and observed['health']=='SYNCED' and observed['state']['owner'] is None:
+        outcome='HANDOFF_RECORDED'
+    actions={'COMPLETE':'Review completed product outcomes; no background work is implied',
+        'HANDOFF_RECORDED':'Preserve private evidence; the next confirmed M1 owner must explicitly adopt the same finite window',
+        'PENDING_VALIDATION':'Wait for current exact-SHA prescribed project evidence, then resume the same finite window',
+        'WAITING_HUMAN_APPROVAL':'Obtain the project-required PR readiness or human merge decision with fresh exact-SHA gates',
+        'UNKNOWN':'Reconcile retained worker stops and external effects; never repeat an uncertain write',
+        'UNSUPPORTED':'Install the missing qualified runtime/project provider; no successful execution is claimed',
+        'UNSUPPORTED_RUNTIME':'Install the qualified Codex CLI/supervisor; no successful runtime execution is claimed'}
+    pending=[row['status'] for row in rows if row['status'] in actions]
+    action=actions.get(outcome) or (actions[pending[0]] if pending else
+        'Inspect the specific task blocker; supply required authority/provider evidence or correct within original scope and remaining M2 budget')
+    if track and track['used_rounds']>=track['maximum_rounds'] and outcome!='COMPLETE':
+        action='Finite track budget exhausted; obtain operator disposition without resetting counters or silently renewing the window'
+    return {'status':outcome,'tasks':rows,'next_action':action,'generation':observed['state']['generation'],
+        'window':{'id':track['id'],'used_rounds':track['used_rounds'],'maximum_rounds':track['maximum_rounds'],
+            'expires_at':track['expires']} if track else None,
+        'background_work':result.get('background_work','UNKNOWN'),'unconfirmed_contexts':result.get('unconfirmed_contexts',[])}

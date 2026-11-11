@@ -101,6 +101,8 @@ class OperatorEnrollmentTests(OperatorFixture):
     def test_two_project_policies_preview_distinct_rules(self):
         first=preview(self.profile)
         self.assertEqual(first['status'],'CONFIGURATION_VERIFIED')
+        setup(self.profile,authorized=True)
+        self.assertTrue(status(self.profile)['local_owner'])
         run(self.product,'branch','-m','change/one')
         self.body['delegation'].update(branches=['refs/heads/change/one'],merge_mode='DELEGATED',merge_methods=['squash'])
         self.rules=replace(self.rules,base_branch='stable',branch_template='change/{slug}',subject_template='repair: {summary}',merge_method='squash')
@@ -132,6 +134,9 @@ class OperatorEnrollmentTests(OperatorFixture):
             self.assertEqual(report['repository_id'],'18');self.assertNotEqual(other.head,self.head)
             self.assertEqual(report['checks'][0]['name'],'smoke')
             self.assertEqual(report['merge_mode'],'MANUAL')
+            setup(other.profile,authorized=True)
+            self.assertTrue(status(other.profile)['local_owner'])
+            self.assertEqual(status(other.profile)['generation'],1)
         finally: other.doCleanups()
 
     def test_preview_and_doctor_preserve_files_refs_and_memory(self):
@@ -192,9 +197,15 @@ class OperatorEnrollmentTests(OperatorFixture):
         self.assertEqual(after['state']['progress_guard'],before['state']['progress_guard'])
 
     def test_interrupted_setup_reobserves_without_reset_or_duplicate_claim(self):
+        from adp.operator_evidence import OperatorEvidence
+        with patch.object(OperatorEvidence,'prepare',side_effect=OSError('fixture before private preparation')):
+            with self.assertRaises(OSError): setup(self.profile,authorized=True)
+        self.assertFalse((self.profile.state/'revocation.json').exists())
+        recovered=load_profile(self.profile_path,self.trust,clock=lambda:self.now,
+            retain_revocation=True,recover_initial_setup=True)
         from adp.execution_memory import ExecutionJournal
         with patch.object(ExecutionJournal,'upgrade_product_flow',side_effect=OSError('fixture interrupted')):
-            with self.assertRaises(OSError): setup(self.profile,authorized=True)
+            with self.assertRaises(OSError): setup(recovered,authorized=True)
         generation=status(self.profile)['generation'];setup(self.profile,authorized=True)
         self.assertEqual(status(self.profile)['generation'],generation)
 
@@ -221,6 +232,8 @@ class OperatorEnrollmentTests(OperatorFixture):
         setup(self.profile,authorized=True)
         (self.profile.state/'revocation.json').unlink()
         with self.assertRaises(ADPError): verify_enrollment(self.profile)
+        with self.assertRaises(ADPError): setup(self.profile,authorized=True)
+        self.assertFalse((self.profile.state/'revocation.json').exists())
 
 
 class OperatorAuthorityTests(OperatorFixture):
@@ -408,6 +421,8 @@ class OperatorCLITests(OperatorFixture):
             report,code=entry(self.args('run','--authorize-execution','--rounds','2'))
         self.assertEqual(method.call_args.kwargs,{'rounds':2,'maximum_parallel':1,'authorized':True})
         self.assertEqual(code,4);self.assertEqual(report['status'],'PENDING_VALIDATION')
+        self.assertEqual(len(report['tasks']),1);self.assertEqual(report['tasks'][0]['status'],'NOT_ADMITTED')
+        self.assertIn('exact-SHA',report['next_action'])
 
     def test_missing_execution_flag_and_excessive_bounds_refuse(self):
         from adp.operator_cli import run as entry
