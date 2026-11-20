@@ -162,7 +162,8 @@ class Conductor:
             task = observed["tasks"][key(admission.task_id)]
             require(task["source_revision"] == admission.expected_revision and not any(j["status"] == "pending" for j in task["assignments"].values()),
                     "Existing task/source or live assignments require reconciliation")
-        evidence = self._grant("admission", self.guard.admission_subject(admission.task_id, admission.requirement))
+        evidence = self._grant("admission", self.guard.admission_subject(admission.task_id, admission.requirement),
+            context={"task_id": admission.task_id, "requirement": data(admission.requirement)})
         self.guard.register(admission.task_id, admission.requirement, evidence)
         source_ref = value(project.root, "symbolic-ref", "HEAD")
         def save(execution, state, tasks):
@@ -223,9 +224,10 @@ class Conductor:
         observed = self.journal.inspect()
         require(observed["local_owner"], "Current M1 Conductor ownership is required")
         generation = observed["state"]["generation"]
-        self._grant("execution/run", digest({"repository": self.memory.config.identity, "generation": generation,
+        run_scope = {"repository": self.memory.config.identity, "generation": generation,
             "admissions": [data(a) for a in admissions], "track": digest(track), "parallel": maximum_parallel,
-            "rounds": rounds, "runtime": data(capabilities)}))
+            "rounds": rounds, "runtime": data(capabilities)}
+        self._grant("execution/run", digest(run_scope), context=run_scope)
         for admission in admissions:
             self._admit(admission, track, generation)
         outcomes = {}
@@ -442,7 +444,7 @@ class Conductor:
                 self._authorize_policy(admission, permit, operation, forensic=forensic["id"] if forensic else None)
                 if project.lifecycle is not None:
                     project.lifecycle.authorize_worker(admission, request)
-                self._grant("execution/dispatch", digest(request), context={"role": request.role, "host": job["host"]})
+                self._grant("execution/dispatch", digest(request), context={"role": request.role, "host": job["host"], "request": data(request)})
                 self._launched.add(request.id)
                 observed = self.runtime.dispatch(request)
         if observed.status == RuntimeStatus.RUNNING:
@@ -595,7 +597,8 @@ class Conductor:
         with _MUTEX:
             provider, plan, authorization = self._authorize_policy(admission, permit, request, qualifications=qualifications)
             require(data(plan.payload) == {k: v for k, v in payload.items() if not payload_extra or k not in payload_extra}, "Execution payload changed before effect")
-            effect_authorization = self._grant("execution/effect", digest({"id": action_id, "plan": digest(plan), "payload": payload}))
+            effect_authorization = self._grant("execution/effect", digest({"id": action_id, "plan": digest(plan), "payload": payload}),
+                context={"id": action_id, "plan": data(plan), "payload": payload})
             self._ownership(generation)
             try:
                 if forge_operation:
@@ -612,7 +615,8 @@ class Conductor:
                                 and fresh_plan.remote_fingerprint == plan.remote_fingerprint,
                                 "Policy/source/base changed during forge observation")
                         project.product_flow.authorize_effect(admission, job, generation, fresh_provider, fresh_plan)
-                        self._grant("execution/effect", digest({"id": action_id, "plan": digest(fresh_plan), "payload": payload}))
+                        self._grant("execution/effect", digest({"id": action_id, "plan": digest(fresh_plan), "payload": payload}),
+                            context={"id": action_id, "plan": data(fresh_plan), "payload": payload})
                         self._ownership(generation)
                     observation = project.forge.submit(action_id, request.operation, payload,
                         authorization=effect_authorization, plan_digest=digest(plan),

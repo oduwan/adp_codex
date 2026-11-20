@@ -52,9 +52,10 @@ metadata/authority remains UNKNOWN; issue prose never becomes instructions.
 | [Conductor](docs/CONDUCTOR_API.md) | finite run, status, resume, handoff | Explicit trusted controller/operator evidence, qualified runtime/ports |
 
 Execution first requires separately authorized v1→v2→v3 memory migrations. An
-operator supplies independently verified readiness/policy/evidence services and a
-trusted controller outside product/memory roots. No permissive controller is
-included. Developer, Reviewer and Forensic contexts are separate; source changes
+operator supplies independently verified readiness/policy/evidence services.
+The [installed operator profile](docs/operations/OPERATOR_SETUP.md) wires standard
+ports without a custom Python controller; the advanced trusted controller remains
+available. Developer, Reviewer and Forensic contexts are separate; source changes
 invalidate review. Bounded concurrency does not imply a daemon or unattended work.
 
 ## Supported-host and backend limits
@@ -74,8 +75,9 @@ external delivery and unfinished old-generation approvals require explicit
 reconciliation. #16 supports explicitly delegated native merge within its stated
 limits; credentials alone grant no permission. No deployment or release backend
 is supplied. This branch's [#22 finite lifecycle](docs/operations/AUTONOMOUS_TRACK.md)
-adds explicit track preparation/selection, correction, independent re-review and
-next-task refresh; integration acceptance remains pending.
+adds accepted track preparation/selection, correction, independent re-review and
+next-task refresh. Genuine full lifecycle proof remains NOTRUN, deferred to M8.
+Issue #17's installed operator interface on this branch awaits integration acceptance.
 
 ## Qualification and contribution
 

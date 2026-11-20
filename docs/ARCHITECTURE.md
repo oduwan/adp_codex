@@ -85,3 +85,15 @@ single-writer M1 checkpoint. Project-owned environments execute checks; ADP does
 not provision CI or a sandbox. Original-scope proofs and separately authenticated
 operation grants remain mandatory at every execution boundary. This branch's
 implementation awaits independent integration acceptance; it is not an M8 pilot.
+
+## Installed operator composition (#17)
+
+The [operator interface](operations/OPERATOR_SETUP.md) selects signed protected
+profiles and authenticated project data providers, then constructs the accepted
+finite #22 track and M1/M2/M3/M4/#14/#21/#16 ports. It is a standard installed
+composition, with no project Python import, daemon, CI provisioning or test
+executor. Original semantic scope, project policy, independent review, current
+check provenance and explicit operator delegation remain separate gates. Missing
+mandatory provider capabilities remain UNKNOWN/blocked. This branch awaits
+independent integration acceptance; genuine full-cycle runtime proof is deferred
+to M8 and remains NOTRUN.

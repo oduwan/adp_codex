@@ -136,7 +136,8 @@ class AutonomousTrack:
                 "issued_at": w.issued_at, "expires": w.expires_at, "maximum_rounds": w.maximum_rounds,
                 "used_rounds": 0, "maximum_tasks": w.maximum_tasks, "maximum_parallel": w.maximum_parallel,
                 "status": "READY", "slots": {}}
-            c._grant("track/window", digest({"repository": c.memory.config.identity, "generation": generation, "window": row}))
+            window_scope = {"repository": c.memory.config.identity, "generation": generation, "window": row}
+            c._grant("track/window", digest(window_scope), context=window_scope)
             c.journal.change(lambda execution, state, tasks: execution.update(track=row))
         require(row["id"] == w.id and row["config"] == self.configuration and row["generation"] == generation,
                 "Track configuration/generation changed; no implicit budget renewal")
@@ -248,8 +249,9 @@ class AutonomousTrack:
                     track = c.readiness.observe()
                     validate_track(track)
                     require(all(complete_snapshot(s) for s in track.snapshots), "Incomplete track cannot authorize execution")
-                    c._grant("track/refresh", digest({"window": row["id"], "generation": row["generation"],
-                        "round": row["used_rounds"], "track": digest(track)}))
+                    refresh_scope = {"window": row["id"], "generation": row["generation"],
+                        "round": row["used_rounds"], "track": digest(track)}
+                    c._grant("track/refresh", digest(refresh_scope), context=refresh_scope)
                     c.journal.change(lambda execution, state, tasks: execution["track"].update(
                         used_rounds=execution["track"]["used_rounds"] + 1))
                     selected = []

@@ -142,7 +142,8 @@ class TicketPublisher:
         if key(admission.task_id) not in c.memory.inspect()["tasks"]:
             c.memory.add_task(admission.task_id, admission.expected_revision)
         if rid not in c.journal.inspect()["state"]["progress_guard"]["requirements"]:
-            receipt = c._grant("admission", c.guard.admission_subject(admission.task_id, requirement))
+            receipt = c._grant("admission", c.guard.admission_subject(admission.task_id, requirement),
+                context={"task_id": admission.task_id, "requirement": data(requirement)})
             c.guard.register(admission.task_id, requirement, receipt)
         expected = inputs.proposal.expected_issue_revision
         for index, (method, path, body, effect) in enumerate(operations):
