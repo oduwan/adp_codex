@@ -99,8 +99,11 @@ class OperatorProfileTests(OperatorFixture):
 
 class OperatorEnrollmentTests(OperatorFixture):
     def test_two_project_policies_preview_distinct_rules(self):
+        self.body['delegation']['merge_mode']='DELEGATED'
+        self.refresh_profile()
         first=preview(self.profile)
         self.assertEqual(first['status'],'CONFIGURATION_VERIFIED')
+        self.assertEqual(first['merge_mode'],'DELEGATED')
         setup(self.profile,authorized=True)
         self.assertTrue(status(self.profile)['local_owner'])
         run(self.product,'branch','-m','change/one')
