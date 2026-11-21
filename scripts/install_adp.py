@@ -43,6 +43,10 @@ class Refusal(Exception):
     pass
 
 
+class UnknownCodexState(Refusal):
+    pass
+
+
 def require(condition: object, message: str) -> None:
     if not condition:
         raise Refusal(message)
@@ -172,12 +176,19 @@ def installed_files(root: Path, expected: dict[str, str]) -> bool:
 
 
 def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
-            env: dict[str, str] | None = None) -> bytes:
+            env: dict[str, str] | None = None, mutation_lock: int | None = None) -> bytes:
     deadline = time.monotonic() + seconds
     output = bytearray()
+    inherited = ()
+    if mutation_lock is not None:
+        # Hold the same flock across abrupt installer exit, including when
+        # Codex's CLI shim closes inherited descriptors in its own child.
+        program = "import subprocess, sys; raise SystemExit(subprocess.call(sys.argv[1:]))"
+        argv = [sys.executable, "-I", "-c", program, *argv]
+        inherited = (mutation_lock,)
     with subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                          start_new_session=True) as process:
+                          start_new_session=True, pass_fds=inherited) as process:
         try:
             with selectors.DefaultSelector() as readable:
                 readable.register(process.stdout, selectors.EVENT_READ)
@@ -217,10 +228,15 @@ class Codex:
         self.executable = executable
         self.home = home
         self.cwd = cwd
+        self.mutation_lock = None
+
+    def environment(self) -> dict[str, str]:
+        return dict(os.environ, CODEX_HOME=str(self.home))
 
     def cli(self, *args: str) -> dict:
         return json.loads(command([self.executable, "plugin", *args, "--json"], self.cwd,
-                                  "Codex plugin " + " ".join(args[:2])))
+                                  "Codex plugin " + " ".join(args[:2]), env=self.environment(),
+                                  mutation_lock=self.mutation_lock))
 
     def probe(self) -> None:
         for args, markers in (
@@ -248,7 +264,8 @@ class Codex:
         return config
 
     def require_plugins_enabled(self) -> None:
-        output = command([self.executable, "features", "list"], self.cwd, "Inspect effective Codex plugin support")
+        output = command([self.executable, "features", "list"], self.cwd,
+                         "Inspect effective Codex plugin support", env=self.environment())
         values = [line.split()[-1] for line in output.splitlines() if line.split()[:1] == [b"plugins"]]
         require(values == [b"true"],
                 "Codex plugins are disabled or unsupported. Enable plugin support in Codex before installing ADP.")
@@ -279,15 +296,67 @@ class Codex:
         enabled = configured and plugins[selector].get("enabled", True) is True
         return PluginState(registered, configured, cached, enabled)
 
-    def skills(self, *, probe: bool = False) -> list[dict]:
+    def add(self, name: str, catalog: Path, version: str) -> None:
+        selector = f"{NAME}@{name}"
+        expected_path = self.home / "plugins/cache" / name / NAME / version
+        try:
+            registration = self.cli("marketplace", "add", str(catalog))
+            if (registration["marketplaceName"] != name or registration["alreadyAdded"] is not False
+                    or registration["installedRoot"] != str(catalog) or not self.observe(name, catalog).registered):
+                raise UnknownCodexState("Codex marketplace registration or persistence is unconfirmed.")
+            result = self.cli("add", selector)
+            if (result["pluginId"] != selector or result["version"] != version
+                    or result["installedPath"] != str(expected_path)
+                    or self.observe(name, catalog) != PluginState(True, True, True, True)):
+                raise UnknownCodexState("Codex plugin installation or persistence is unconfirmed.")
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise UnknownCodexState("Codex changed its mutation response or persistence format.") from exc
+
+    def remove(self, name: str, catalog: Path) -> None:
+        state = self.observe(name, catalog)
+        selector = f"{NAME}@{name}"
+        if state.configured or state.cached:
+            result = self.cli("remove", selector)
+            if result["pluginId"] != selector:
+                raise UnknownCodexState("Codex plugin removal identity is unconfirmed.")
+            remaining = self.observe(name, catalog)
+            require(not remaining.configured and not remaining.cached, "Codex plugin removal is unconfirmed.")
+        if state.registered:
+            result = self.cli("marketplace", "remove", name)
+            if result["marketplaceName"] != name:
+                raise UnknownCodexState("Codex marketplace removal identity is unconfirmed.")
+        require(self.observe(name, catalog) == PluginState(False, False, False, False),
+                "Codex cleanup is unconfirmed.")
+
+    def probe_lifecycle(self) -> None:
+        name, version = "adp-managed-probe", "0.0.1"
+        catalog = self.cwd / "probe-catalog"
+        plugin = catalog / CATALOG_PLUGIN
+        skill = plugin / SKILL
+        skill.parent.mkdir(parents=True)
+        (plugin / "plugin.json").write_text(json.dumps({
+            "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+            "name": NAME, "version": version,
+            "description": "ADP installer capability check",
+            "repository": "https://github.com/oduwan/adp_codex",
+        }))
+        skill.write_text("---\nname: adp-codex\ndescription: ADP installer capability check\n---\n")
+        marketplace = catalog / ".agents/plugins/marketplace.json"
+        marketplace.parent.mkdir(parents=True)
+        marketplace.write_text(json.dumps(marketplace_payload(name)))
+        probe = Codex(self.executable, self.cwd / "probe-codex-home", self.cwd)
+        probe.home.mkdir()
+        probe.add(name, catalog, version)
+        expected = probe.home / "plugins/cache" / name / NAME / version / SKILL
+        require(any(entry.get("path") == str(expected) and entry.get("enabled") is True for entry in probe.skills()),
+                "The disposable Codex skill could not be discovered and enabled.")
+        probe.remove(name, catalog)
+
+    def skills(self) -> list[dict]:
         # A new stdio session, with only initialize and skills/list. No thread or model turn.
         argv = [self.executable, "app-server", "--listen", "stdio://"]
-        env = None
-        if probe:
-            env = dict(os.environ, CODEX_HOME=str(self.cwd / "capability-probe"))
-            Path(env["CODEX_HOME"]).mkdir()
         with subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                              stderr=subprocess.DEVNULL, start_new_session=True, env=env) as process:
+                              stderr=subprocess.DEVNULL, start_new_session=True, env=self.environment()) as process:
             with selectors.DefaultSelector() as readable:
                 readable.register(process.stdout, selectors.EVENT_READ)
                 buffer = bytearray()
@@ -353,10 +422,14 @@ class Installation:
         fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             fcntl.flock(fd, (fcntl.LOCK_EX if write else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            if write:
+                self.codex.mutation_lock = fd
             yield
         except BlockingIOError:
             raise Refusal("Another ADP installer is operating on this directory. Retry when it finishes.") from None
         finally:
+            if write:
+                self.codex.mutation_lock = None
             os.close(fd)
 
     def load(self) -> tuple[dict, str | None]:
@@ -418,15 +491,14 @@ class Installation:
         return self.codex.observe(name, self.catalog(name))
 
     def cleanup(self, records: dict, name: str) -> None:
-        state = self.observe(name)
-        if state.configured or state.cached:
-            self.codex.cli("remove", f"{NAME}@{name}")
-            remaining = self.observe(name)
-            require(not remaining.configured and not remaining.cached, "Codex plugin removal is unconfirmed.")
-        if state.registered:
-            self.codex.cli("marketplace", "remove", name)
-        require(self.observe(name) == PluginState(False, False, False, False),
-                "Codex cleanup is unconfirmed.")
+        require(not records[name].get("codex_format_unknown"),
+                "PARTIAL: Codex mutation format changed. Inspect the retained namespace and receipt before cleanup.")
+        self.observe(name)
+        try:
+            self.codex.remove(name, self.catalog(name))
+        except (UnknownCodexState, ValueError, KeyError, TypeError, AttributeError) as exc:
+            self.retain_unknown(records, name)
+            raise UnknownCodexState("Codex removal response changed. Ownership was retained.") from exc
         cache = self.codex.home / "plugins/cache" / name
         if os.path.lexists(cache):
             safe_directory(cache, os.getuid(), home=self.codex.home)
@@ -438,6 +510,10 @@ class Installation:
             shutil.rmtree(generation)
         self.save({key: value for key, value in records.items() if key != name})
         del records[name]
+
+    def retain_unknown(self, records: dict, name: str) -> None:
+        records[name] = dict(records[name], codex_format_unknown=True)
+        self.save(records)
 
     def report(self, name: str, receipt: dict) -> bool:
         plugin = self.observe(name)
@@ -525,21 +601,16 @@ class Installation:
             pip_env["PIP_CONFIG_FILE"] = os.devnull
             pip_env["TMPDIR"] = scratch
             command([sys.executable, "-I", "-m", "venv", str(engine)], self.codex.cwd,
-                    "Create isolated Python environment", seconds=90, env=pip_env)
+                    "Create isolated Python environment", seconds=90, env=pip_env,
+                    mutation_lock=self.codex.mutation_lock)
             command([str(engine / "bin/python"), "-I", "-m", "pip", "install", "--no-input",
                      "--disable-pip-version-check", "--no-cache-dir", "--no-deps", str(build)],
                     self.codex.cwd, "Build and install ADP (build dependency download may have failed)",
-                    seconds=180, env=pip_env)
+                    seconds=180, env=pip_env, mutation_lock=self.codex.mutation_lock)
         marketplace = catalog / ".agents/plugins/marketplace.json"
         marketplace.parent.mkdir(parents=True)
         marketplace.write_text(json.dumps(marketplace_payload(name)))
-        registration = self.codex.cli("marketplace", "add", str(catalog))
-        require(registration["marketplaceName"] == name and registration["alreadyAdded"] is False
-                and registration["installedRoot"] == str(catalog), "Codex marketplace registration is unconfirmed.")
-        result = self.codex.cli("add", f"{NAME}@{name}")
-        expected_path = self.codex.home / "plugins/cache" / name / NAME / source.receipt["version"]
-        require(result["pluginId"] == f"{NAME}@{name}" and result["version"] == source.receipt["version"]
-                and result["installedPath"] == str(expected_path), "Codex plugin install identity is unconfirmed.")
+        self.codex.add(name, catalog, source.receipt["version"])
 
     def apply(self, action: str, records: dict, current: str | None, source: Source | None) -> None:
         for name in set(records) - {current}:
@@ -576,6 +647,9 @@ class Installation:
             pending.symlink_to(name)
             pending.replace(self.link)
             self.sync_root()
+        except UnknownCodexState:
+            self.retain_unknown(records, name)
+            raise
         except (Refusal, OSError, ValueError, KeyError, TypeError, AttributeError, KeyboardInterrupt):
             if self.load()[1] != name:
                 self.cleanup(records, name)
@@ -665,9 +739,10 @@ def run(args: argparse.Namespace) -> None:
                              "user", "--jq", ".login"], codex.cwd,
                             "Read-only GitHub authentication check (authenticate gh for github.com)")
             require(re.fullmatch(rb"[a-zA-Z0-9_-]+\s*", login), "GitHub authentication could not be confirmed.")
-            codex.skills(probe=True)
             print(f"Source {source.receipt['revision']} SHA-256 {source.receipt['sha256']} "
                   f"version {source.receipt['version']}")
+        if source or records:
+            codex.probe_lifecycle()
         print(f"Plan for UID {uid}: {args.action} managed engine files under {root} and owned "
               f"ADP plugin entries in {codex_home}. Install/upgrade enables the selected skill. "
               "Any inactive owned generations will be reconciled.", flush=True)
@@ -696,6 +771,10 @@ def run(args: argparse.Namespace) -> None:
             print(f"Engine launcher: {root / 'current/bin/adp'}")
 
 
+def interrupt_on_term(signum: int, frame: object) -> None:
+    raise KeyboardInterrupt
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="action", required=True)
@@ -709,6 +788,7 @@ def main() -> int:
             consent = sub.add_mutually_exclusive_group()
             consent.add_argument("--dry-run", action="store_true", help="Inspect the plan without applying it")
             consent.add_argument("--yes", action="store_true", help="Authorize the printed plan without a prompt")
+    signal.signal(signal.SIGTERM, interrupt_on_term)
     try:
         run(parser.parse_args())
     except Refusal as exc:

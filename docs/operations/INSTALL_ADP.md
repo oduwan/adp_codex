@@ -19,8 +19,8 @@ python3.11 -I /path/to/install_adp.py install --source /path/to/adp.tar --revisi
 The installer prints the selected identity, existing installation state and
 planned effects before prompting. Add `--dry-run` to see the plan without applying
 it. Use `--yes` for an explicitly authorized noninteractive install. Preflight
-queries `GET /user` through `gh` and probes Codex's local marketplace, plugin and
-`skills/list` capabilities. Package building may download the build dependencies
+queries `GET /user` through `gh` and checks native marketplace and plugin
+registration, discovery and removal in a disposable Codex home. Package building may download the build dependencies
 declared in `pyproject.toml`. The engine has no third-party runtime dependencies.
 
 After installation, open a fresh Codex session and select the ADP skill from
@@ -90,9 +90,11 @@ managed Codex namespace. The catalog uses the user's existing `CODEX_HOME`
   the requested operation to reconcile receipt-owned entries. If a marketplace
   was repointed or Codex cannot confirm removal, inspect the reported
   namespace before retrying. Missing managed catalog or cache files can be
-  reconciled from the receipt and the remaining Codex state. Keep the receipt for
-  diagnosis. Use `install` to recover an interrupted first install with no
-  active launcher.
+  reconciled from the receipt and the remaining Codex state. Wait for an active
+  mutation to release its lock before retrying. When a changed Codex format
+  leaves ownership uncertain, the installer retains the receipt and refuses
+  cleanup. Use `install` to recover an interrupted first install with no active
+  launcher.
 
 ## Prepare the local development distribution
 

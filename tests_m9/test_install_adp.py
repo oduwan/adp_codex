@@ -4,9 +4,12 @@ import argparse
 import io
 import json
 import os
+import signal
+import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -116,7 +119,7 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(installer.Refusal, "GitHub authentication"):
                 installer.run(args)
         self.assertFalse((self.home / installer.MANAGED).exists())
-        self.codex.skills.assert_not_called()
+        self.codex.probe_lifecycle.assert_not_called()
 
     def test_concurrent_conflicting_plugin_is_detected_after_confirmation(self):
         args = argparse.Namespace(action="install", source=self.archive, revision=REVISION,
@@ -133,7 +136,7 @@ class InstallerTests(unittest.TestCase):
             self.codex.independent_plugins.side_effect = [[], [{"enabled": True}]]
             with self.assertRaisesRegex(installer.Refusal, "became enabled"):
                 installer.run(args)
-        self.codex.skills.assert_called_once_with(probe=True)
+        self.codex.probe_lifecycle.assert_called_once_with()
         self.codex.cli.assert_not_called()
         apply.assert_not_called()
 
@@ -173,12 +176,12 @@ class InstallerTests(unittest.TestCase):
         (self.install.root / NEW).mkdir(mode=0o700)
         records, current = self.install.load()
         self.codex.observe.return_value = installer.PluginState(True, True, True, True)
-        self.codex.cli.side_effect = installer.Refusal("Codex temporarily unavailable")
+        self.codex.remove.side_effect = installer.Refusal("Codex temporarily unavailable")
         with self.assertRaisesRegex(installer.Refusal, "temporarily unavailable"):
             self.install.apply("uninstall", records, current, None)
         self.assertEqual(set(self.install.load()[0]), {OLD, NEW})
         self.codex.observe.return_value = installer.PluginState(False, False, False, False)
-        self.codex.cli.side_effect = None
+        self.codex.remove.side_effect = None
         self.install.apply("uninstall", *self.install.load(), None)
         self.assertEqual(self.install.load(), ({}, None))
 
@@ -218,8 +221,10 @@ class InstallerTests(unittest.TestCase):
                         config["plugins"].pop(selector, None)
                         if cached:
                             plugin_dir.rmdir()
+                        return {"pluginId": selector}
                     elif args == ("marketplace", "remove", OLD):
                         del config["marketplaces"][OLD]
+                        return {"marketplaceName": OLD}
                     else:
                         self.fail(f"Unexpected Codex command {args}")
 
@@ -328,6 +333,73 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(installer.Refusal, "exceeded the output limit"):
                 installer.command([sys.executable, "-c", "while True: print('x' * 1024)"],
                                   self.home, "Test overflow")
+
+    def test_changed_codex_response_retains_candidate_ownership(self):
+        self.install.root.mkdir(mode=0o700)
+        with patch.object(self.install, "stage", side_effect=installer.UnknownCodexState("changed")):
+            with self.assertRaisesRegex(installer.UnknownCodexState, "changed"):
+                self.install.apply("install", {}, None, self.source())
+        records, current = self.install.load()
+        self.assertIsNone(current)
+        name, = records
+        self.assertTrue(records[name]["codex_format_unknown"])
+        with self.assertRaisesRegex(installer.Refusal, "PARTIAL"):
+            self.install.cleanup(records, name)
+        self.codex.remove.assert_not_called()
+
+    def test_interrupted_mutation_is_stopped_or_fenced_until_exit(self):
+        import fcntl
+
+        program = """import fcntl, os, signal, sys
+from pathlib import Path
+from scripts import install_adp
+root, ready, changed = map(Path, sys.argv[1:])
+signal.signal(signal.SIGTERM, install_adp.interrupt_on_term)
+fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+fcntl.flock(fd, fcntl.LOCK_EX)
+child = 'import time; from pathlib import Path; Path(%r).touch(); time.sleep(1); Path(%r).touch()' % (str(ready), str(changed))
+try:
+    install_adp.command([sys.executable, '-c', child], root, 'mutation', mutation_lock=fd)
+except KeyboardInterrupt:
+    sys.exit(2)
+"""
+        for interruption in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=interruption):
+                ready = self.home / f"ready-{interruption}"
+                changed = self.home / f"changed-{interruption}"
+                with subprocess.Popen([sys.executable, "-c", program, str(self.home), str(ready), str(changed)],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
+                    try:
+                        deadline = time.monotonic() + 10
+                        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(ready.exists())
+                        process.send_signal(interruption)
+                        process.wait(timeout=5)
+                        fd = os.open(self.home, os.O_RDONLY | os.O_DIRECTORY)
+                        try:
+                            if interruption == signal.SIGKILL:
+                                with self.assertRaises(BlockingIOError):
+                                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                                deadline = time.monotonic() + 5
+                                while True:
+                                    try:
+                                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                                        break
+                                    except BlockingIOError:
+                                        if time.monotonic() >= deadline:
+                                            self.fail("Mutation guard failed to release its lock")
+                                        time.sleep(0.01)
+                                self.assertTrue(changed.exists())
+                            else:
+                                self.assertEqual(process.returncode, 2)
+                                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                                self.assertFalse(changed.exists())
+                        finally:
+                            os.close(fd)
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
 
     def test_verify_requires_receipt_to_own_launcher(self):
         self.install.root.mkdir(mode=0o700)
