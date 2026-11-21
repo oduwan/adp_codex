@@ -31,7 +31,7 @@ def add_commands(commands) -> None:
             stage.add_argument("--operator-socket", type=Path, help="Protected local proposal service")
             stage.add_argument("--issue", type=int, help="Select one open issue on this feature checkout")
         if name in ("status", "doctor", "preview", "reconnect"):
-            stage.add_argument("--operator-profile", type=Path, help="Existing #17 profile for read-only reconnection")
+            stage.add_argument("--operator-profile", type=Path, help="Guided profile with its retained enrollment record")
         if name == "apply":
             stage.add_argument("--approve", help="Exact approved plan digest")
             stage.add_argument("--authorize-memory-write", action="store_true")
@@ -110,7 +110,7 @@ def _run(args, report: dict) -> None:
         if args.operator_trust is None:
             raise Blocked("TRUST_ROOT_REQUIRED", "Select the already provisioned protected operator trust root.")
         require(directory is None or args.operator_profile is None,
-                "Choose a guided enrollment directory or a legacy profile explicitly")
+                "Choose a guided enrollment directory or its retained guided profile")
         trust = selected_authority(args.operator_trust, checkout)
         profile = selected_authority(args.operator_profile, checkout) if args.operator_profile else None
         result = read_enrollment(directory, profile, trust, checkout, command, GitHubHTTPTransport)

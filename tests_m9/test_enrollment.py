@@ -231,6 +231,21 @@ class GuidedEnrollmentTests(OperatorFixture):
         self.assertEqual(code, 4)
         self.assert_blocked(report, "PROJECT_CHECK_PROVIDER_REQUIRED")
 
+    def test_old_and_future_signed_check_observations_refuse(self):
+        path = self.auth / "results.json"
+        body = json.loads(path.read_text())["payload"]
+        self.body["providers"]["validation"]["maximum_age"] = 15
+        self.reply = self.signed("profile", copy.deepcopy(self.body))
+        for timestamp in (self.now - 30, self.now + 120):
+            with self.subTest(timestamp=timestamp):
+                body["observed_at"] = timestamp
+                self.write(path, self.signed("project-evidence", body, issued=self.now - 60))
+                with patch("adp.enrollment.exchange", return_value=self.reply):
+                    code, report = self.call("plan")
+                self.assertEqual(code, 4, report)
+                self.assert_blocked(report, "PROJECT_CHECK_PROVIDER_REQUIRED")
+        self.assertFalse(self.directory.exists())
+
     def test_moved_head_during_apply_stops_before_memory_setup(self):
         from adp.operator_setup import setup
 
@@ -546,6 +561,16 @@ class GuidedEnrollmentTests(OperatorFixture):
         code, report = self.call("reconnect", *renamed, configured=False, proposal=False)
         self.assertEqual(code, 4, report)
         self.assertNotEqual(report["status"], "RECONNECTED")
+        downgraded = {key: value for key, value in retained.items() if key != "guided_directory"}
+        self.write(record, dict(downgraded, schema_version=1))
+        for command in ("reconnect", "doctor", "preview"):
+            with self.subTest(command=command):
+                code, report = self.call(command, *renamed, configured=False, proposal=False)
+                self.assertEqual(code, 4, report)
+                self.assert_blocked(report, "GUIDED_RECORD_REQUIRED")
+        code, report = self.call("reconnect", proposal=False)
+        self.assertEqual(code, 4, report)
+        self.assert_blocked(report, "GUIDED_RECORD_REQUIRED")
 
     def test_guided_diagnostics_report_missing_check_provider_as_unknown(self):
         plan, _ = self.proposed()

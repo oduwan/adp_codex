@@ -4,8 +4,8 @@ Use `adp enroll` from the managed [ADP installation](INSTALL_ADP.md), or use
 its absolute launcher path. Enrollment supports explicitly selected GitHub.com
 projects with canonical HTTPS remotes. First-use setup selects one open issue
 and one existing feature checkout. The native discovery inventory may contain
-many issues and their dependency edges. An existing multi-task profile can be
-reconnected through the accepted operator interface.
+many issues and their dependency edges. Use the accepted operator interface
+for earlier M7 operator profiles, including multi-task profiles.
 
 ## Inspect and propose
 
@@ -108,13 +108,15 @@ If an incomplete enrollment already has an unowned memory checkpoint, confirm
 its provenance and use the separately authorized M1 ownership procedure before
 resuming setup.
 Use `reconnect`, `doctor`, or `preview` with the same selectors. Read-only
-commands also accept `--operator-profile` in place of `--directory` for an
-existing installed profile. Reconnect verifies locally retained enrollment and
+commands also accept `--operator-profile` in place of `--directory` for a
+guided profile with its retained record. Reconnect verifies retained enrollment and
 the canonical remote identity with the accepted scoped read credential. Guided
 reconnection also checks the original local coordination destination, including
 when selected through `--operator-profile`. The protected `enrollment.json`
-record binds guided setup to the original enrollment intent. Doctor and preview
-also check current independent provider inputs, including signed check data.
+record binds guided setup to the original enrollment intent. Earlier M7
+profiles use the [installed operator commands](OPERATOR_SETUP.md). Guided
+doctor and preview check current independent provider inputs, including
+signed check data within the configured freshness budget.
 
 All command results have version `schema_version: 1`, `command`, `mode`,
 `status`, optional structured `facts`, `plan`, `approval` and `result`

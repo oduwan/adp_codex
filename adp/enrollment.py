@@ -339,11 +339,13 @@ def provider_inputs(profile: OperatorProfile) -> tuple[InstalledProject, dict]:
                     "results": body["results"], "observed_at": body["observed_at"],
                     "complete": body["complete"], "coverage": body["coverage"],
                     "evidence": None, "action_key": None})
+                age = profile.trust.clock() - observation.observed_at
                 require(request.repository_id == rid and request.revision == task.expected_revision
                         and request.source_ref in profile.delegation["branches"] and request.task_id == task.task_id
                         and request.phase in {check.phase for check in profile.checks}
-                        and source.issued_at <= observation.observed_at < source.expires_at,
-                        "Signed check bootstrap does not identify the selected checkout and check phase")
+                        and source.issued_at <= observation.observed_at < source.expires_at
+                        and 0 <= age <= providers["validation"]["maximum_age"],
+                        "Signed check bootstrap does not match the selected checkout, check phase, or freshness budget")
             bindings[kind] = source.fingerprint
         except FAILURES as exc:
             raise Blocked(code, f"Supply current repository-bound signed data from the independent {kind} provider.") from exc
@@ -616,36 +618,36 @@ def apply_plan(plan: Plan, *, approved: str, authorized: bool) -> dict:
 
 def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Path, checkout: dict,
                     command: str, discovery_factory) -> dict:
+    explicit = profile_path is not None
     intent = read_intent(directory) if directory is not None else None
     if profile_path is None:
         require(directory is not None, "Select an enrollment directory or an existing protected profile")
         profile_path = directory / PROFILE
         if not profile_path.exists():
             return {"status": "PENDING" if intent else "NOT_ENROLLED", "next_action": "Use the original approved plan to apply setup."}
-        require(intent is not None, "Select the existing legacy profile explicitly to reconnect")
+        require(intent is not None, "Restore the original protected guided enrollment intent")
     profile = load_profile(profile_path, trust)
     match_checkout(profile, checkout)
     binding = guided_binding(profile)
-    if binding is None and directory is None and profile_path.name == PROFILE and safe_path(profile_path.parent / INTENT).exists():
-        directory = selected_directory(profile_path.parent, checkout)
-        intent = read_intent(directory)
+    if binding is None and (explicit or safe_path(profile.state / ENROLLMENT_RECORD).exists()):
+        raise Blocked("GUIDED_RECORD_REQUIRED",
+                      "Restore the original guided enrollment record. Use the installed operator commands for an earlier M7 profile.")
     if binding is not None:
         original = selected_directory(Path(binding), checkout)
         require(directory is None or directory == original, "Reconnect through the original guided enrollment")
         directory = original
         intent = read_intent(directory)
         require(intent is not None, "Restore the original protected enrollment intent before reconnecting")
-    writer = None
-    if intent:
-        require(profile.fingerprint == intent["profile_digest"] and profile.trust.fingerprint == intent["trust_digest"],
-                "Persisted profile or trust does not match the enrollment intent")
-        effects, writer = local_effects(profile, directory, checkout)
-        require(effects == intent["effects"], "Local coordination no longer matches the retained enrollment destination")
+    require(directory is not None and intent is not None, "Restore the original guided enrollment intent")
+    require(profile.fingerprint == intent["profile_digest"] and profile.trust.fingerprint == intent["trust_digest"],
+            "Persisted profile or trust does not match the enrollment intent")
+    effects, writer = local_effects(profile, directory, checkout)
+    require(effects == intent["effects"], "Local coordination no longer matches the retained enrollment destination")
     observed = status(profile, bound_memory=writer)
     report = {key: observed[key] for key in ("repository_id", "memory_health", "local_owner", "generation", "enrollment", "execution_liveness")}
-    memory = (writer or Memory(profile.memory_config())).inspect()
+    memory = writer.inspect()
     report["status"] = "ENROLLED" if completed(profile, memory) else "PENDING"
-    if report["status"] == "ENROLLED" and intent:
+    if report["status"] == "ENROLLED":
         require(binding is not None, "Restore the original guided enrollment provenance")
     if command == "reconnect":
         verify_enrollment(profile)
@@ -659,7 +661,7 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
         if command == "doctor":
             report["runtime"] = runtime_capability(profile.state)
         try:
-            installed, _ = provider_inputs(profile) if intent else (None, None)
+            installed, _ = provider_inputs(profile)
             inspected = preview(profile, installed=installed)
             report["configuration"] = inspected["status"]
             report["tasks"] = [{"issue_id": row["issue_id"],
