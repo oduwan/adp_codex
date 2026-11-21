@@ -3,6 +3,7 @@ from contextlib import redirect_stdout
 from contextlib import contextmanager
 import io
 import json
+import os
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -366,8 +367,65 @@ class CodexGuidedFlowTests(unittest.TestCase):
             with self.assertRaisesRegex(ADPError, "Reviewed remote checkpoint changed while fetching"):
                 memory.recover(expected_remote=approved)
         transport.assert_called_once_with(memory.config.root,
-                                          ("fetch", "--no-tags", "--no-write-fetch-head", "--no-auto-maintenance"), approved)
+                                          ("fetch", "--no-tags", "--no-recurse-submodules", "--refmap=",
+                                           "--no-prune", "--no-write-fetch-head", "--no-auto-maintenance"), approved)
         write.assert_not_called()
+
+    def test_reviewed_recovery_does_not_fetch_configured_submodule(self):
+        self.apply()
+        f = self.fixture
+        git = test_enrollment.run
+        memory = Memory(load_profile(f.directory / "profile.json", f.trust).memory_config())
+        child = f.base / "disposable-submodule-origin"
+        child.mkdir()
+        git(child, "init", "--initial-branch=main")
+        git(child, "config", "user.name", "ADP fixture")
+        git(child, "config", "user.email", "fixture@example.invalid")
+        git(child, "commit", "--allow-empty", "-m", "fixture: initial child")
+        git(f.control, "-c", "protocol.file.allow=always", "submodule", "add", str(child), "nested")
+        git(f.control, "commit", "-m", "fixture: populated submodule")
+        git(f.control, "config", "fetch.recurseSubmodules", "true")
+        nested = f.control / "nested"
+        git(nested, "config", "protocol.file.allow", "always")
+        previous_nested = git(nested, "rev-parse", "refs/remotes/origin/main")
+        git(child, "commit", "--allow-empty", "-m", "fixture: advance child")
+        previous = memory.inspect()["local_head"]
+        approved = memory.add_task("fixture-reviewed-checkpoint")["local_head"]
+        git(memory.path, "reset", "--hard", previous)
+
+        self.assertEqual(memory.recover(expected_remote=approved)["local_head"], approved)
+        self.assertEqual(git(nested, "rev-parse", "refs/remotes/origin/main"), previous_nested)
+        git(f.control, "-c", "protocol.file.allow=always", "fetch", "--no-tags", "memory", approved)
+        self.assertEqual(git(nested, "rev-parse", "refs/remotes/origin/main"), git(child, "rev-parse", "HEAD"))
+
+    def test_guided_recovery_refuses_public_and_hardlinked_pending_journal(self):
+        self.apply()
+        f = self.fixture
+        memory = Memory(load_profile(f.directory / "profile.json", f.trust).memory_config())
+        with patch.object(Memory, "_finish", side_effect=ADPError("synthetic interrupted transaction")):
+            with self.assertRaises(ADPError):
+                memory.add_task("synthetic-private-journal")
+        pending = memory.control / "pending.json"
+        head = memory.inspect()["remote_head"]
+        content = pending.read_bytes()
+        alias = f.base / "fixture-journal-alias"
+        for case in ("public", "hardlinked"):
+            with self.subTest(case=case):
+                if case == "public":
+                    pending.chmod(0o644)
+                else:
+                    os.link(pending, alias)
+                try:
+                    code, view = invoke("status", *self.retained, "--for-operation", "resume")
+                    self.assertEqual(code, 4, view)
+                    self.assertNotIn("invocation_review", view)
+                    with self.assertRaisesRegex(ADPError, "owned protected regular"):
+                        memory.recover(expected_remote=head)
+                    self.assertEqual(pending.read_bytes(), content)
+                    self.assertEqual(memory.inspect()["remote_head"], head)
+                finally:
+                    pending.chmod(0o600)
+                    alias.unlink(missing_ok=True)
 
     def test_resume_rechecks_review_at_m1_lock_before_recovering_late_journal(self):
         from adp.storage import locked

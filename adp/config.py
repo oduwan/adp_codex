@@ -21,11 +21,13 @@ def safe_path(path: Path) -> Path:
     return path
 
 
-def load_json(path: Path, limit: int = 65536) -> dict:
+def load_json(path: Path, limit: int = 65536, *, protected: bool = False) -> dict:
     safe_path(path)
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         metadata = os.fstat(descriptor)
+        if protected and (metadata.st_uid != os.getuid() or metadata.st_mode & 0o077 or metadata.st_nlink != 1):
+            raise ADPError("Use an owned protected regular operator file")
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
             raise ADPError("JSON must be a regular bounded file")
         raw = os.read(descriptor, limit + 1)

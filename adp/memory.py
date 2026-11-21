@@ -168,11 +168,11 @@ class Memory:
             require((self.path / ".gitignore").read_bytes() == IGNORE, "Ignore rules differ from commit")
         return head, state, tasks
 
-    def _recovery_document(self) -> dict | None:
+    def _recovery_document(self, *, protected=False) -> dict | None:
         path = safe_path(self.control / "pending.json")
         if not path.exists():
             return None
-        pending = load_json(path, MAX_JOURNAL)
+        pending = load_json(path, MAX_JOURNAL, protected=True) if protected else load_json(path, MAX_JOURNAL)
         fields(pending, "base state tasks")
         require(isinstance(pending["base"], str) and SHA.fullmatch(pending["base"]), "Invalid recovery base")
         bundle(pending["state"], pending["tasks"], self.config.identity)
@@ -197,7 +197,7 @@ class Memory:
             self._registered()
             head = value(self.path, "rev-parse", "HEAD")
             state, tasks = self._read_ref(head)
-            pending = self._recovery_document()
+            pending = self._recovery_document(protected=True)
             slots = {slot for path, limit in self._recovery_slots(pending, tasks)
                      if (slot := interrupted_slot(path, limit)) is not None}
             self._layout(slots)
@@ -389,7 +389,7 @@ class Memory:
             guarded = expected_remote is not _UNREVIEWED_REMOTE
             if guarded:
                 require(self._remote_head() == expected_remote, "Reviewed remote checkpoint changed before recovery")
-            pending = self._recovery_document()
+            pending = self._recovery_document(protected=guarded)
             if pending is not None:
                 previous, _ = self._read_ref(pending["base"])
                 require(pending["state"]["revision"] == previous["revision"] + 1, "Invalid pending revision")
@@ -425,7 +425,8 @@ class Memory:
                     self._push(None)
                 else:
                     if guarded:
-                        self._remote_git(self.config.root, ("fetch", "--no-tags", "--no-write-fetch-head", "--no-auto-maintenance"), remote)
+                        self._remote_git(self.config.root, ("fetch", "--no-tags", "--no-recurse-submodules",
+                                         "--refmap=", "--no-prune", "--no-write-fetch-head", "--no-auto-maintenance"), remote)
                         require(self._remote_head() == remote, "Reviewed remote checkpoint changed while fetching")
                     else:
                         self._remote_git(self.config.root, ("fetch", "--no-tags"), "refs/heads/" + self.branch)

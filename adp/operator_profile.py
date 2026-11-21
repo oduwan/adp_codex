@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import os
 from pathlib import Path
-import stat
 import time
 
 from .config import Config, load_json, remote_identity, safe_path
@@ -31,10 +30,7 @@ SUPPORTED = {Operation.INSPECT, Operation.EDIT, Operation.STAGE, Operation.COMMI
 def private_file(path, *, limit=1048576):
     string(str(path),4096)
     path = safe_path(Path(path).absolute())
-    info = path.lstat()
-    require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077
-            and info.st_nlink == 1 and info.st_size <= limit, 'Use an owned protected regular operator file')
-    return load_json(path, limit)
+    return load_json(path, limit, protected=True)
 
 
 def file_digest(path):
