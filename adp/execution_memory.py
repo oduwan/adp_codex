@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import os
 from contextlib import contextmanager
+from threading import get_ident
 
 from .errors import AuthorityError
 from .execution_schema import execution_schema
@@ -11,20 +12,34 @@ from .schema import require
 from .storage import locked
 
 
+class _InvocationLease:
+    def __init__(self, path):
+        self.path = path
+        self.owner = get_ident()
+        self.active = True
+
+
 @contextmanager
-def invocation_lock(directory):
+def invocation_lock(directory, *, lease=None):
     import fcntl
     from .config import safe_path
     from .errors import Conflict
     path = safe_path(directory / "conductor-invocation.lock")
+    if lease is not None:
+        require(type(lease) is _InvocationLease and lease.active and lease.path == path and lease.owner == get_ident(),
+                "The caller must hold the exact Conductor invocation lock")
+        yield lease
+        return
     descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    owned = _InvocationLease(path)
     try:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise Conflict("Another Conductor invocation owns this local execution queue") from exc
-        yield
+        yield owned
     finally:
+        owned.active = False
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
 

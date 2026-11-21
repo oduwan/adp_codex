@@ -11,6 +11,7 @@ from adp.cli import main
 from adp.errors import ADPError
 from adp.memory import Memory
 from adp.operator_profile import OperatorProfile, load_profile, private_file
+from adp.schema import MAX_JOURNAL, encode
 import test_enrollment
 
 FAKE_REVIEW = "v1." + ".".join(["1" * 64] * 3)
@@ -199,7 +200,6 @@ class CodexGuidedFlowTests(unittest.TestCase):
         live.assert_not_called()
 
     def test_concurrent_checkpoint_change_under_native_lock_refuses_before_effects(self):
-        from adp.autonomous_track import AutonomousTrack
         from adp.execution_memory import invocation_lock
 
         self.apply()
@@ -210,17 +210,38 @@ class CodexGuidedFlowTests(unittest.TestCase):
 
         @contextmanager
         def advanced(directory):
-            with invocation_lock(directory):
+            with invocation_lock(directory) as lease:
                 memory.add_task("synthetic-concurrent-update")
-                yield
+                yield lease
 
         with (patch("adp.codex_cli.runtime", return_value={"status": "SUPPORTED"}),
-              patch("adp.autonomous_track.invocation_lock", side_effect=advanced),
-              patch.object(AutonomousTrack, "_window") as start):
+              patch("adp.execution_memory.invocation_lock", side_effect=advanced),
+              patch("adp.operator_controller.InstalledProject.build") as build):
             code, view = invoke("run", *self.retained, "--reviewed", examined["invocation_review"], "--authorize-execution")
         self.assertEqual(code, 4, view)
         self.assertEqual(view["blockers"][0]["code"], "INVOCATION_CHANGED")
-        start.assert_not_called()
+        build.assert_not_called()
+
+    def test_checkout_moved_during_provider_preview_refuses_before_port_assembly(self):
+        from adp.enrollment import preview
+
+        self.apply()
+        f = self.fixture
+        code, examined = invoke("preview", *self.retained, "--for-operation", "run")
+        self.assertEqual(code, 0, examined)
+
+        def moved(*args, **kwargs):
+            profile = preview(*args, **kwargs)
+            test_enrollment.run(f.product, "commit", "--allow-empty", "-m", "fixture: concurrent checkout")
+            return profile
+
+        with (patch("adp.enrollment.preview", side_effect=moved),
+              patch("adp.codex_cli.runtime", return_value={"status": "SUPPORTED"}),
+              patch("adp.operator_controller.InstalledProject.build") as build):
+            code, view = invoke("run", *self.retained, "--reviewed", examined["invocation_review"], "--authorize-execution")
+        self.assertEqual(code, 4, view)
+        self.assertEqual(view["blockers"][0]["code"], "INVOCATION_CHANGED")
+        build.assert_not_called()
 
     def test_authorized_revocation_is_retained_before_rechecking_preview(self):
         self.apply()
@@ -255,12 +276,36 @@ class CodexGuidedFlowTests(unittest.TestCase):
         self.assertEqual(examined["result"]["memory_health"], "RECOVERY_REQUIRED")
         self.assertTrue(examined["invocation_request"]["recover_checkpoint"])
         with (patch("adp.codex_cli.runtime", return_value={"status": "SUPPORTED"}),
-              patch.object(Conductor, "_privacy_preflight", side_effect=ADPError("halt fixture before any execution")) as stop):
+              patch.object(Conductor, "_privacy_preflight", side_effect=[None, ADPError("halt before execution")]) as stop):
             code, view = invoke("resume", *self.retained, "--reviewed", examined["invocation_review"], "--authorize-execution")
         self.assertEqual(code, 4, view)
         self.assertEqual(view["blockers"][0]["code"], "OPERATOR_REFUSED")
-        stop.assert_called_once()
+        self.assertEqual(stop.call_count, 2)
         after = memory.inspect()
         self.assertEqual(after["health"], "SYNCED")
         self.assertEqual(after["state"]["generation"], generation)
         self.assertIn("synthetic-interrupted-update", [task["id"] for task in after["tasks"].values()])
+
+    def test_resume_checks_pending_privacy_before_recovery_can_publish(self):
+        self.apply()
+        f = self.fixture
+        memory = Memory(load_profile(f.directory / "profile.json", f.trust).memory_config())
+        with patch.object(Memory, "_finish", side_effect=ADPError("synthetic interrupted transaction")):
+            with self.assertRaises(ADPError):
+                memory.add_task("synthetic-interrupted-update")
+        pending = memory.control / "pending.json"
+        document = private_file(pending, limit=MAX_JOURNAL)
+        document["state"]["execution"]["actions"]["synthetic"] = "ghp_" + "a" * 40
+        content = encode(document, MAX_JOURNAL)
+        pending.write_bytes(content)
+        previous = memory.inspect()
+        code, examined = invoke("status", *self.retained, "--for-operation", "resume")
+        self.assertEqual(code, 0, examined)
+        with (patch("adp.codex_cli.runtime", return_value={"status": "SUPPORTED"}),
+              patch.object(Memory, "recover") as recover):
+            code, view = invoke("resume", *self.retained, "--reviewed", examined["invocation_review"], "--authorize-execution")
+        self.assertEqual(code, 4, view)
+        self.assertEqual(view["blockers"][0]["code"], "OPERATOR_REFUSED")
+        recover.assert_not_called()
+        self.assertEqual(memory.inspect(), previous)
+        self.assertEqual(pending.read_bytes(), content)

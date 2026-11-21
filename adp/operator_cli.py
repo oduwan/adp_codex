@@ -73,19 +73,27 @@ def run(args, *, expected_binding=None, before_effects=None):
     require(type(parallel) is int and 1<=parallel<=w['maximum_parallel'] and type(rounds) is int and 1<=rounds<=4,
         'Invocation exceeds the unchanged finite project delegation')
     verify_enrollment(p)
-    scoped_preflight={}
-    if before_effects is not None:
+
+    def invoke(lease=None):
+        controller=InstalledProject(p,mutating=True).build()
+        if before_effects is not None: before_effects()
+        selected=controller.track
+        if command=='resume' and getattr(args,'adopt_generation',False): selected.adopt_generation(authorized=True)
+        scoped={'lease':lease} if lease is not None else {}
+        if command=='handoff': result=selected.handoff(authorized=True, **scoped)
+        else:
+            method=selected.resume if command=='resume' else selected.run
+            result=method(rounds=rounds,maximum_parallel=parallel,authorized=True, **scoped)
+        report=exit_report(p,controller,result,command)
+        return report,0 if report['status'] in ('COMPLETE','HANDOFF_RECORDED') else 7 if report['status'] in ('UNSUPPORTED','UNSUPPORTED_RUNTIME') else 4
+
+    if before_effects is None:
+        return invoke()
+    from .execution_memory import invocation_lock
+    from .memory import Memory
+    with invocation_lock(Memory(p.memory_config()).control) as lease:
         before_effects()
-        scoped_preflight['before_effects']=before_effects
-    controller=InstalledProject(p,mutating=True).build()
-    selected=controller.track
-    if command=='resume' and getattr(args,'adopt_generation',False): selected.adopt_generation(authorized=True)
-    if command=='handoff': result=selected.handoff(authorized=True, **scoped_preflight)
-    else:
-        method=selected.resume if command=='resume' else selected.run
-        result=method(rounds=rounds,maximum_parallel=parallel,authorized=True, **scoped_preflight)
-    report=exit_report(p,controller,result,command)
-    return report,0 if report['status'] in ('COMPLETE','HANDOFF_RECORDED') else 7 if report['status'] in ('UNSUPPORTED','UNSUPPORTED_RUNTIME') else 4
+        return invoke(lease)
 
 
 def exit_report(profile,controller,result,command):

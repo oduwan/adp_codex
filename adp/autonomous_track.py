@@ -222,19 +222,19 @@ class AutonomousTrack:
         self._slot(spec, packet=result.packet_reference, status="ACTIVE")
         return self._attach(spec, result.packet_reference)
 
-    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False, before_effects=None):
+    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False, lease=None):
         if not authorized:
             raise AuthorityError("Autonomous track requires explicit finite execution authority")
         parallel = self.window.maximum_parallel if maximum_parallel is None else maximum_parallel
         require(type(rounds) is int and 1 <= rounds <= 4 and type(parallel) is int
                 and 1 <= parallel <= self.window.maximum_parallel, "Invocation exceeds finite track limits")
         c, admissions = self.c, []
-        with invocation_lock(c.memory.control):
-            if before_effects is not None:
-                before_effects()
+        lock = invocation_lock(c.memory.control, lease=lease) if lease is not None else invocation_lock(c.memory.control)
+        with lock:
+            c._privacy_preflight()
             if recover:
                 c.memory.recover()
-            c._privacy_preflight()
+                c._privacy_preflight()
             self._window(create=True)
             try:
                 if self._ticket_stops():
@@ -374,7 +374,7 @@ class AutonomousTrack:
             c.journal.change(adopt)
             return self.status()
 
-    def handoff(self, *, authorized=False, before_effects=None):
+    def handoff(self, *, authorized=False, lease=None):
         # A new generation cannot inherit this window's execution grants or
         # counters by silently changing configuration. Retain it as evidence.
         row = self._window()
@@ -385,6 +385,6 @@ class AutonomousTrack:
                 admission = self._attach(spec, slot["packet"])
                 life = self.c._project(admission).lifecycle
                 life._admission = admission
-        if before_effects is None:
+        if lease is None:
             return self.c.handoff(authorized=authorized)
-        return self.c.handoff(authorized=authorized, before_effects=before_effects)
+        return self.c.handoff(authorized=authorized, lease=lease)

@@ -38,7 +38,7 @@ HINTS = {
     "AUTHORITY_NOT_ESTABLISHED": "Select the independent trust root and operator proposal service before setup.",
     "CONFIGURATION_REQUIRED": "Answer the outstanding setup questions.",
     "TRUST_ROOT_REQUIRED": "Select the protected independent trust root.",
-    "OPERATOR_PROPOSAL_REQUIRED": "Ask the project operator to connect the trusted profile proposal service.",
+    "OPERATOR_PROPOSAL_REQUIRED": "Confirm the trusted proposal service is running and the Codex session has approved access to its local socket.",
     "PROPOSAL_CONFLICT": "Reconcile the signed proposal with the selected project, issue, checkout and trust.",
     "MISSING_TRUST_ROLE": "Ask the project operator to provision separate verifiers for the required independent providers.",
     "PROJECT_POLICY_REQUIRED": "Obtain current repository-bound data from the independent policy provider.",
@@ -305,12 +305,30 @@ def execution(args):
                        "Use a Codex CLI and host with the accepted runtime capabilities.", status="UNSUPPORTED_RUNTIME"), 7
     rounds = getattr(args, "rounds", 1)
     parallel = getattr(args, "maximum_parallel", 1)
+    approved_state = None
+
+    def observe(stage):
+        raw, code = enrollment_cli.run(Namespace(**{**vars(args), "enroll_command": stage}))
+        return project(stage, raw, code)
+
+    def state(view):
+        current = view.get("result", {})
+        return {key: current.get(key) for key in ("status", "repository_id", "profile", "memory_health",
+                                                  "local_owner", "generation", "invocation")}
 
     def before_effects():
-        raw, code = enrollment_cli.run(Namespace(**{**vars(args), "enroll_command": observed}))
-        reviewed, _ = invocation(project(observed, raw, code), operation, rounds, parallel)
-        if reviewed is None or reviewed["invocation_review"] != args.reviewed:
-            raise Blocked("INVOCATION_CHANGED", "Review current enrollment, scope and ownership, then confirm the invocation again.")
+        nonlocal approved_state
+        changed = Blocked("INVOCATION_CHANGED", "Review current enrollment, scope and ownership, then confirm the invocation again.")
+        if approved_state is None:
+            view = observe(observed)
+            reviewed, _ = invocation(view, operation, rounds, parallel)
+            if reviewed is None or reviewed["invocation_review"] != args.reviewed:
+                raise changed
+            approved_state = state(view)
+        # The provider preview can take time. Observe the actual ref and both
+        # heads again locally, and repeat this check after native port assembly.
+        if state(observe("status")) != approved_state:
+            raise changed
 
     try:
         selected = local_checkout(args.repo, args.remote)

@@ -47,6 +47,9 @@ approve the displayed plan and its coordination-memory writes. A missing
 provider leaves setup blocked with the appropriate next action. Resolve it
 with the independent provider before approving a fresh plan. Setup itself
 initializes protected ADP state through the installed engine.
+If the service is running but the Codex session cannot reach its local socket,
+check the session's tool permissions. Approve access only for the selected
+managed command and the trusted provider.
 
 ## Inspect, start, and return later
 
