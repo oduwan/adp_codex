@@ -361,14 +361,28 @@ class InstallerTests(unittest.TestCase):
         self.codex.remove.assert_not_called()
 
     def test_pending_probe_keeps_private_scratch(self):
-        scratch = self.home / "probe-scratch"
-        scratch.mkdir()
-        with patch.object(installer.tempfile, "mkdtemp", return_value=str(scratch)):
-            with self.assertRaises(installer.PendingMutation):
-                with installer.installer_scratch() as path:
-                    (path / "pending-probe").touch()
-                    raise installer.PendingMutation("probe is settling")
-        self.assertTrue((scratch / "pending-probe").is_file())
+        for interruption in (installer.PendingMutation, KeyboardInterrupt):
+            with self.subTest(interruption=interruption):
+                scratch = self.home / interruption.__name__
+                scratch.mkdir()
+                with patch.object(installer.tempfile, "mkdtemp", return_value=str(scratch)):
+                    with self.assertRaises(interruption):
+                        with installer.installer_scratch() as path:
+                            (path / "pending-probe").touch()
+                            raise interruption
+                self.assertTrue((scratch / "pending-probe").is_file())
+
+    def test_interrupt_during_error_handling_leaves_staging_for_recovery(self):
+        self.install.root.mkdir(mode=0o700)
+        source = self.source()
+        with patch.object(installer, "command", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.install.apply("install", {}, None, source)
+        records, current = self.install.load()
+        self.assertIsNone(current)
+        name, = records
+        self.assertTrue((self.install.root / name / "build/source/pyproject.toml").is_file())
+        self.codex.remove.assert_not_called()
 
     def test_disposable_probe_refuses_changed_skill_identity_fields(self):
         codex = installer.Codex("/unused", self.codex.home, self.home)

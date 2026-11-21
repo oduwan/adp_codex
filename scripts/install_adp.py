@@ -206,16 +206,16 @@ def installed_files(root: Path, expected: dict[str, str]) -> bool:
 @contextmanager
 def installer_scratch():
     path = Path(tempfile.mkdtemp(prefix="adp-install-", dir="/tmp"))
-    retain = False
     try:
         yield path
-    except PendingMutation:
-        retain = True
+    except (PendingMutation, KeyboardInterrupt):
         print(f"Retained private installer scratch while the command settles: {path}", file=sys.stderr)
         raise
-    finally:
-        if not retain:
-            shutil.rmtree(path)
+    except BaseException:
+        shutil.rmtree(path)
+        raise
+    else:
+        shutil.rmtree(path)
 
 
 def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
@@ -254,16 +254,15 @@ def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
     except (KeyboardInterrupt, OSError, Refusal, subprocess.TimeoutExpired) as exc:
         if process is None:
             raise
-        if mutation_lock is not None and process.poll() is None:
+        if mutation_lock is not None:
             # Leave the guard holding the same lock until every writer exits.
             # The next invocation must observe the receipt and actual effect.
             raise PendingMutation(f"{label} did not settle. Wait for the installer lock, then retry.") from None
-        if mutation_lock is None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
         if isinstance(exc, subprocess.TimeoutExpired):
             raise Refusal(f"{label} timed out. Check prerequisites and retry.") from None
         raise
@@ -722,9 +721,9 @@ class Installation:
         except UnknownCodexState:
             self.retain_unknown(records, name)
             raise
-        except PendingMutation:
+        except (PendingMutation, KeyboardInterrupt):
             raise
-        except (Refusal, OSError, ValueError, KeyError, TypeError, AttributeError, KeyboardInterrupt):
+        except (Refusal, OSError, ValueError, KeyError, TypeError, AttributeError):
             if self.load()[1] != name:
                 self.cleanup(records, name)
                 print("Candidate removed and prior activation preserved.", file=sys.stderr)
