@@ -48,7 +48,8 @@ python3.11 -I /path/to/install_adp.py upgrade --source /path/to/new-adp.tar --re
 python3.11 -I /path/to/install_adp.py uninstall
 ```
 
-- **Verify** checks installed package files and version, runs `adp --help`, then
+- **Verify** checks installed package files, version, interpreter and launcher,
+  runs `adp --help`, and
   reports Codex plugin installation, enablement and exact skill discovery in a
   new local app-server session. It does not start a model turn. Project-specific
   visibility can still depend on that project's Codex configuration.

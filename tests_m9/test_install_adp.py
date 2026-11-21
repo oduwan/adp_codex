@@ -244,10 +244,33 @@ class InstallerTests(unittest.TestCase):
         launcher = engine / "bin/adp"
         launcher.parent.mkdir()
         launcher.write_text("#!/missing/interpreter\n")
-        with patch.object(self.install, "stage", side_effect=installer.Refusal("Repair reached staging")):
+        receipt = dict(self.receipt, launcher_sha256=installer.digest(launcher.read_bytes()))
+        records[OLD] = receipt
+        self.install.save(records)
+        command = installer.command
+
+        def run(argv, *args, **kwargs):
+            if "-c" in argv:
+                return json.dumps([str(engine), str(sites / "adp/__init__.py")]).encode()
+            return command(argv, *args, **kwargs)
+
+        with (patch.object(installer, "command", side_effect=run),
+              patch.object(self.install, "stage", side_effect=installer.Refusal("Repair reached staging"))):
             with self.assertRaisesRegex(installer.Refusal, "Repair reached staging"):
                 self.install.apply("install", records, current, source)
-        self.assertEqual(self.install.load(), ({OLD: self.receipt}, OLD))
+        self.assertEqual(self.install.load(), ({OLD: receipt}, OLD))
+
+        launcher.write_text("#!/bin/sh\nexit 0\n")
+        launcher.chmod(0o700)
+        with patch.object(installer, "command") as command:
+            self.assertFalse(self.install.report(current, receipt))
+        command.assert_not_called()
+
+    def test_subprocess_output_is_bounded(self):
+        with patch.object(installer, "MAX_RESPONSE", 1024):
+            with self.assertRaisesRegex(installer.Refusal, "exceeded the output limit"):
+                installer.command([sys.executable, "-c", "while True: print('x' * 1024)"],
+                                  self.home, "Test overflow")
 
     def test_verify_requires_receipt_to_own_launcher(self):
         self.install.root.mkdir(mode=0o700)

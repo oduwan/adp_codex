@@ -153,21 +153,35 @@ def installed_files(root: Path, expected: dict[str, str]) -> bool:
 
 def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
             env: dict[str, str] | None = None) -> bytes:
+    deadline = time.monotonic() + seconds
+    output = bytearray()
     with subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                           start_new_session=True) as process:
         try:
-            output, _ = process.communicate(timeout=seconds)
-        except (KeyboardInterrupt, subprocess.TimeoutExpired) as exc:
-            if process.poll() is None:
+            with selectors.DefaultSelector() as readable:
+                readable.register(process.stdout, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    require(remaining > 0 and readable.select(remaining),
+                            f"{label} timed out. Check prerequisites and retry.")
+                    chunk = os.read(process.stdout.fileno(), 65536)
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                    require(len(output) <= MAX_RESPONSE, f"{label} exceeded the output limit.")
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+        except (KeyboardInterrupt, OSError, Refusal, subprocess.TimeoutExpired) as exc:
+            try:
                 os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             process.wait()
-            if isinstance(exc, KeyboardInterrupt):
-                raise
-            raise Refusal(f"{label} timed out. Check prerequisites and retry.") from None
-    require(process.returncode == 0 and len(output) <= MAX_RESPONSE,
-            f"{label} failed. Check its prerequisites in the installation guide.")
-    return output
+            if isinstance(exc, subprocess.TimeoutExpired):
+                raise Refusal(f"{label} timed out. Check prerequisites and retry.") from None
+            raise
+    require(process.returncode == 0, f"{label} failed. Check its prerequisites in the installation guide.")
+    return bytes(output)
 
 
 @dataclass(frozen=True)
@@ -340,6 +354,8 @@ class Installation:
             require(GENERATION.fullmatch(name) and SHA.fullmatch(receipt["revision"])
                     and HEX.fullmatch(receipt["sha256"]) and VERSION.fullmatch(receipt["version"]),
                     "Invalid ADP generation identity in ownership receipt.")
+            require("launcher_sha256" not in receipt or HEX.fullmatch(receipt["launcher_sha256"]),
+                    "Invalid engine launcher identity in ownership receipt.")
             for section, valid_name in (("engine", engine_file), ("plugin", plugin_file)):
                 entries = receipt[section]
                 require(isinstance(entries, dict)
@@ -442,9 +458,18 @@ class Installation:
             env = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
             env["PYTHONDONTWRITEBYTECODE"] = "1"
             try:
+                require(launcher.stat().st_size <= MAX_RESPONSE
+                        and digest(launcher.read_bytes()) == receipt.get("launcher_sha256"),
+                        "Installed engine launcher differs from its receipt.")
+                probe = ("import importlib.util, json, sys; "
+                         "print(json.dumps([sys.prefix, importlib.util.find_spec('adp').origin]))")
+                identity = command([str(engine / "bin/python"), "-I", "-B", "-c", probe],
+                                   self.codex.cwd, "Inspect installed engine import origin", env=env)
+                require(json.loads(identity) == [str(engine), str(sites[0] / "adp/__init__.py")],
+                        "Venv imports ADP from a different installation.")
                 command([str(launcher), "--help"], self.codex.cwd, "Installed adp --help", env=env)
-            except (OSError, Refusal):
-                print("Installed adp launcher failed --help.", flush=True)
+            except (OSError, Refusal, ValueError):
+                print("Installed adp launcher or interpreter failed verification.", flush=True)
                 engine_ok = False
             else:
                 print("Installed adp --help passed.", flush=True)
@@ -513,7 +538,12 @@ class Installation:
         self.save(records)
         try:
             self.stage(name, source)
-            require(self.report(name, source.receipt), "Candidate engine and skill did not both verify.")
+            launcher = self.root / name / "engine/bin/adp"
+            require(owned_file(launcher, os.getuid()).st_size <= MAX_RESPONSE,
+                    "Generated adp launcher exceeds the inspection bound.")
+            records[name] = dict(source.receipt, launcher_sha256=digest(launcher.read_bytes()))
+            self.save(records)
+            require(self.report(name, records[name]), "Candidate engine and skill did not both verify.")
             pending = self.root / name / "activate"
             pending.symlink_to(name)
             pending.replace(self.link)
@@ -549,13 +579,13 @@ def run(args: argparse.Namespace) -> None:
     safe_directory(codex_home, uid, home=home)
     for relative in ("plugins/cache", ".tmp/marketplaces"):
         safe_directory(codex_home / relative, uid, home=home)
-    if os.path.lexists(codex_home / "config.toml"):
+    if args.action != "verify" and os.path.lexists(codex_home / "config.toml"):
         config = codex_home / "config.toml"
         owned_file(config, uid)
         require(os.access(config, os.W_OK), "Codex config.toml is not writable.")
     executable = shutil.which("codex")
     require(executable, "Install a compatible Codex CLI and put it on PATH.")
-    executable = str(Path(executable).resolve())
+    executable = os.path.abspath(executable)
     source = None
     if args.action in {"install", "upgrade"}:
         require(args.source and args.revision and args.sha256, "Specify --source, --revision and --sha256.")
@@ -603,7 +633,7 @@ def run(args: argparse.Namespace) -> None:
             command([executable, "login", "status"], codex.cwd, "Codex login status")
             github = shutil.which("gh")
             require(github, "Install GitHub CLI and authenticate for github.com.")
-            login = command([str(Path(github).resolve()), "api", "--hostname", "github.com",
+            login = command([os.path.abspath(github), "api", "--hostname", "github.com",
                              "user", "--jq", ".login"], codex.cwd,
                             "Read-only GitHub authentication check (authenticate gh for github.com)")
             require(re.fullmatch(rb"[a-zA-Z0-9_-]+\s*", login), "GitHub authentication could not be confirmed.")
