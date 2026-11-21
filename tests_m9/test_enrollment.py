@@ -523,12 +523,17 @@ class GuidedEnrollmentTests(OperatorFixture):
         explicit = ("--operator-profile", str(self.directory / "profile.json"), "--operator-trust", str(self.trust))
         code, report = self.call("reconnect", *explicit, configured=False, proposal=False)
         self.assertEqual(code, 0, report)
-        marker = self.profile.state / "guided-enrollment.json"
-        retained = marker.read_bytes()
-        marker.unlink()
-        code, report = self.call("reconnect", *explicit, configured=False, proposal=False)
+        copied = self.auth / "restored-profile.json"
+        self.write(copied, self.reply)
+        renamed = ("--operator-profile", str(copied), "--operator-trust", str(self.trust))
+        code, report = self.call("reconnect", *renamed, configured=False, proposal=False)
+        self.assertEqual(code, 0, report)
+        record = self.profile.state / "enrollment.json"
+        retained = json.loads(record.read_bytes())
+        record.unlink()
+        code, report = self.call("reconnect", *renamed, configured=False, proposal=False)
         self.assertEqual(code, 4, report)
-        self.write(marker, json.loads(retained))
+        self.write(record, retained)
         alternate = self.base / "copy.git"
         run(self.base, "clone", "--bare", str(self.bare), str(alternate))
         run(self.control, "remote", "set-url", "memory", str(alternate))
@@ -538,6 +543,29 @@ class GuidedEnrollmentTests(OperatorFixture):
         code, report = self.call("reconnect", *explicit, configured=False, proposal=False)
         self.assertEqual(code, 4, report)
         self.assertNotEqual(report["status"], "RECONNECTED")
+        code, report = self.call("reconnect", *renamed, configured=False, proposal=False)
+        self.assertEqual(code, 4, report)
+        self.assertNotEqual(report["status"], "RECONNECTED")
+
+    def test_guided_diagnostics_report_missing_check_provider_as_unknown(self):
+        plan, _ = self.proposed()
+        with patch("adp.enrollment.exchange", return_value=self.reply):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 0, report)
+        code, report = self.call("preview", proposal=False)
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["result"]["configuration"], "CONFIGURATION_VERIFIED")
+        record = self.profile.state / "enrollment.json"
+        previous = record.read_bytes()
+        (self.auth / "results.json").unlink()
+        for command in ("doctor", "preview"):
+            with self.subTest(command=command):
+                code, report = self.call(command, proposal=False)
+                self.assertEqual(code, 4, report)
+                self.assertEqual(report["status"], "UNKNOWN")
+                self.assertEqual(report["result"]["configuration"], "UNKNOWN")
+                self.assert_blocked(report, "PROJECT_CHECK_PROVIDER_REQUIRED")
+        self.assertEqual(record.read_bytes(), previous)
 
     def test_interrupted_enrollment_reuses_exact_intent_and_native_generation(self):
         plan, _ = self.proposed()

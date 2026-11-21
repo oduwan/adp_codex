@@ -112,8 +112,9 @@ commands also accept `--operator-profile` in place of `--directory` for an
 existing installed profile. Reconnect verifies locally retained enrollment and
 the canonical remote identity with the accepted scoped read credential. Guided
 reconnection also checks the original local coordination destination, including
-when selected through `--operator-profile`. Preserve `guided-enrollment.json`
-in the private state directory alongside the original enrollment intent.
+when selected through `--operator-profile`. The protected `enrollment.json`
+record binds guided setup to the original enrollment intent. Doctor and preview
+also check current independent provider inputs, including signed check data.
 
 All command results have version `schema_version: 1`, `command`, `mode`,
 `status`, optional structured `facts`, `plan`, `approval` and `result`

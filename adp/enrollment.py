@@ -22,7 +22,7 @@ from .operator_authority import OperatorAuthority, remote_semantics
 from .operator_controller import InstalledProject, READ_PERMISSIONS
 from .operator_decisions import exchange
 from .operator_profile import OperatorProfile, Trust, _validate_profile, load_profile, private_file
-from .operator_setup import GUIDED_BINDING, PreviewBinding, guided_binding, preview, setup, status, verify_enrollment
+from .operator_setup import ENROLLMENT_RECORD, PreviewBinding, guided_binding, preview, setup, status, verify_enrollment
 from .policy_schema import branch as git_branch
 from .project_validation_types import EvidenceRequest, ProjectObservation
 from .schema import encode, fields, require, string
@@ -285,12 +285,12 @@ def local_effects(profile: OperatorProfile, directory: Path, checkout: dict) -> 
         require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022,
                 "Use owner-controlled coordination and state paths")
     author(cfg.root)
-    effects = {"enrollment_directory": str(directory), "profile": str(profile.path),
+    effects = {"enrollment_directory": str(directory), "profile": str(directory / PROFILE),
                "intent": str(directory / INTENT), "lock": str(directory / "lock"),
                "coordination_checkout": str(cfg.root), "coordination_git_directory": str(common),
                "coordination_control": str(memory.control),
                "local_bare_remote": str(bare), "memory_worktree": str(memory.path),
-               "private_evidence": str(profile.state), "guided_binding": str(profile.state / GUIDED_BINDING),
+               "private_evidence": str(profile.state), "enrollment_record": str(profile.state / ENROLLMENT_RECORD),
                "memory_ref": "refs/heads/" + memory.branch,
                "authority": "EXACT_DIGEST_AND_EXPLICIT_MEMORY_WRITE_REQUIRED"}
     public(effects)
@@ -510,7 +510,7 @@ def prepare(observation: Observation, directory: Path, trust_path: Path, issue: 
     try:
         effects, writer = local_effects(profile, directory, observation.checkout)
         memory = writer.inspect()
-        existing = safe_path(profile.state / "enrollment.json")
+        existing = safe_path(profile.state / ENROLLMENT_RECORD)
         if intent is None:
             require(memory["health"] == "UNINITIALIZED" and not existing.exists() and not profile.state.exists(),
                     "Previously established state requires explicit reconnect")
@@ -659,16 +659,20 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
         if command == "doctor":
             report["runtime"] = runtime_capability(profile.state)
         try:
-            inspected = preview(profile)
+            installed, _ = provider_inputs(profile) if intent else (None, None)
+            inspected = preview(profile, installed=installed)
             report["configuration"] = inspected["status"]
             report["tasks"] = [{"issue_id": row["issue_id"],
                                 "assessment": "AVAILABLE" if row.get("packet_preview") else "UNKNOWN"}
                                for row in inspected["tasks"]]
+        except Blocked as exc:
+            report["configuration"] = "UNKNOWN"
+            report["blocker"] = {"code": exc.reason, "action": str(exc)}
         except FAILURES:
             report["configuration"] = "UNKNOWN"
         if report["configuration"] != "CONFIGURATION_VERIFIED":
             report["status"] = "UNKNOWN"
-            report["next_action"] = "Restore current independent policy, scope, and credential providers."
+            report["next_action"] = "Restore current independent policy, scope, check and credential providers."
     report["profile"] = str(profile_path)
     public(report)
     return report

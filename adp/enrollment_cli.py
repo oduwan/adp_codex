@@ -116,6 +116,9 @@ def _run(args, report: dict) -> None:
         result = read_enrollment(directory, profile, trust, checkout, command, GitHubHTTPTransport)
         if args.github_id is not None and result.get("repository_id") not in (None, args.github_id):
             raise Blocked("REPOSITORY_IDENTITY_MISMATCH", "Reconnect using the original immutable repository ID.")
+        blocker = result.pop("blocker", None)
+        if blocker is not None:
+            report["blockers"].append(blocker)
         report.update(status=result["status"], result=result)
         return
     try:
