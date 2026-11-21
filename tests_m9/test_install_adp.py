@@ -347,6 +347,19 @@ class InstallerTests(unittest.TestCase):
             self.install.cleanup(records, name)
         self.codex.remove.assert_not_called()
 
+    def test_pending_build_keeps_files_for_the_guarded_worker(self):
+        self.install.root.mkdir(mode=0o700)
+        source = self.source()
+        with patch.object(installer, "command", side_effect=installer.PendingMutation("build is settling")):
+            with self.assertRaisesRegex(installer.PendingMutation, "build is settling"):
+                self.install.apply("install", {}, None, source)
+        records, current = self.install.load()
+        self.assertIsNone(current)
+        name, = records
+        staged = self.install.root / name / "build/source/pyproject.toml"
+        self.assertEqual(staged.read_bytes(), source.files["pyproject.toml"])
+        self.codex.remove.assert_not_called()
+
     def test_disposable_probe_refuses_changed_skill_identity_fields(self):
         codex = installer.Codex("/unused", self.codex.home, self.home)
         expected = self.home / "probe-codex-home/plugins/cache/adp-managed-probe/adp-codex/0.0.1" / installer.SKILL

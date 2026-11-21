@@ -638,30 +638,32 @@ class Installation:
         generation.mkdir(mode=0o700)
         catalog = self.catalog(name)
         engine = generation / "venv"
-        with tempfile.TemporaryDirectory(dir=self.codex.cwd) as scratch:
-            build = Path(scratch) / "source"
-            build.mkdir()
-            for name_in_source, data in source.files.items():
-                if name_in_source == "pyproject.toml" or engine_file(name_in_source):
-                    file = build / name_in_source
-                elif plugin_file(name_in_source):
-                    file = catalog / CATALOG_PLUGIN / name_in_source
-                else:
-                    continue
-                file.parent.mkdir(parents=True, exist_ok=True)
-                file.write_bytes(data)
-            pip_env = {key: value for key, value in os.environ.items() if key in {
-                "HOME", "PATH", "LANG", "LC_ALL", "HTTPS_PROXY", "HTTP_PROXY",
-                "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"}}
-            pip_env["PIP_CONFIG_FILE"] = os.devnull
-            pip_env["TMPDIR"] = scratch
-            command([sys.executable, "-I", "-m", "venv", str(engine)], self.codex.cwd,
-                    "Create isolated Python environment", seconds=90, env=pip_env,
-                    mutation_lock=self.codex.mutation_lock)
-            command([str(engine / "bin/python"), "-I", "-m", "pip", "install", "--no-input",
-                     "--disable-pip-version-check", "--no-cache-dir", "--no-deps", str(build)],
-                    self.codex.cwd, "Build and install ADP (build dependency download may have failed)",
-                    seconds=180, env=pip_env, mutation_lock=self.codex.mutation_lock)
+        # Keep staging data reachable until guarded subprocesses settle.
+        scratch = generation / "build"
+        build = scratch / "source"
+        build.mkdir(parents=True)
+        for name_in_source, data in source.files.items():
+            if name_in_source == "pyproject.toml" or engine_file(name_in_source):
+                file = build / name_in_source
+            elif plugin_file(name_in_source):
+                file = catalog / CATALOG_PLUGIN / name_in_source
+            else:
+                continue
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(data)
+        pip_env = {key: value for key, value in os.environ.items() if key in {
+            "HOME", "PATH", "LANG", "LC_ALL", "HTTPS_PROXY", "HTTP_PROXY",
+            "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"}}
+        pip_env["PIP_CONFIG_FILE"] = os.devnull
+        pip_env["TMPDIR"] = str(scratch)
+        command([sys.executable, "-I", "-m", "venv", str(engine)], self.codex.cwd,
+                "Create isolated Python environment", seconds=90, env=pip_env,
+                mutation_lock=self.codex.mutation_lock)
+        command([str(engine / "bin/python"), "-I", "-m", "pip", "install", "--no-input",
+                 "--disable-pip-version-check", "--no-cache-dir", "--no-deps", str(build)],
+                self.codex.cwd, "Build and install ADP (build dependency download may have failed)",
+                seconds=180, env=pip_env, mutation_lock=self.codex.mutation_lock)
+        shutil.rmtree(scratch)
         marketplace = catalog / ".agents/plugins/marketplace.json"
         marketplace.parent.mkdir(parents=True)
         marketplace.write_text(json.dumps(marketplace_payload(name)))
@@ -816,6 +818,7 @@ def run(args: argparse.Namespace) -> None:
                 require(not any(row.get("enabled") is not False for row in codex.independent_plugins(records)),
                         "An independently installed ADP plugin became enabled. Review the new plan and retry.")
                 codex.require_plugins_enabled()
+            codex.cwd = root
             try:
                 installation.apply(args.action, records, current, source)
             except (Refusal, OSError, ValueError, KeyError, TypeError, AttributeError, KeyboardInterrupt):
