@@ -36,7 +36,7 @@ class InstallerTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.home = Path(self.directory.name)
         self.codex = Mock(home=self.home / ".codex", cwd=self.home)
-        self.codex.observe.return_value = (False, False, False)
+        self.codex.observe.return_value = installer.PluginState(False, False, False, False)
         self.install = installer.Installation(self.home / "managed", self.codex)
         self.archive = self.home / "source.tar"
         self.receipt = self.source().receipt
@@ -112,11 +112,30 @@ class InstallerTests(unittest.TestCase):
               patch.object(installer.shutil, "which", return_value="/bin/false"),
               patch.object(installer, "Codex", return_value=self.codex),
               patch.object(installer, "command", side_effect=command)):
-            self.codex.cli.return_value = {"installed": []}
+            self.codex.independent_plugins.return_value = []
             with self.assertRaisesRegex(installer.Refusal, "GitHub authentication"):
                 installer.run(args)
         self.assertFalse((self.home / installer.MANAGED).exists())
         self.codex.skills.assert_not_called()
+
+    def test_concurrent_conflicting_plugin_is_detected_after_confirmation(self):
+        args = argparse.Namespace(action="install", source=self.archive, revision=REVISION,
+                                  sha256=self.receipt["sha256"], dry_run=False, yes=True)
+        with (patch.dict(os.environ, {"HOME": str(self.home), "CODEX_HOME": str(self.codex.home)}),
+              patch.object(os, "getuid", return_value=1234),
+              patch.object(os, "geteuid", return_value=1234),
+              patch.object(os, "umask"),
+              patch.object(installer, "safe_directory"),
+              patch.object(installer.shutil, "which", return_value="/bin/false"),
+              patch.object(installer, "Codex", return_value=self.codex),
+              patch.object(installer, "command", return_value=b"managed_enterprise\n"),
+              patch.object(installer.Installation, "apply") as apply):
+            self.codex.independent_plugins.side_effect = [[], [{"enabled": True}]]
+            with self.assertRaisesRegex(installer.Refusal, "became enabled"):
+                installer.run(args)
+        self.codex.skills.assert_called_once_with(probe=True)
+        self.codex.cli.assert_not_called()
+        apply.assert_not_called()
 
     def active(self):
         self.install.root.mkdir(mode=0o700)
@@ -153,12 +172,12 @@ class InstallerTests(unittest.TestCase):
         self.install.save({OLD: self.receipt, NEW: self.receipt})
         (self.install.root / NEW).mkdir(mode=0o700)
         records, current = self.install.load()
-        self.codex.observe.return_value = (True, True, True)
+        self.codex.observe.return_value = installer.PluginState(True, True, True, True)
         self.codex.cli.side_effect = installer.Refusal("Codex temporarily unavailable")
         with self.assertRaisesRegex(installer.Refusal, "temporarily unavailable"):
             self.install.apply("uninstall", records, current, None)
         self.assertEqual(set(self.install.load()[0]), {OLD, NEW})
-        self.codex.observe.return_value = (False, False, False)
+        self.codex.observe.return_value = installer.PluginState(False, False, False, False)
         self.codex.cli.side_effect = None
         self.install.apply("uninstall", *self.install.load(), None)
         self.assertEqual(self.install.load(), ({}, None))
@@ -166,11 +185,69 @@ class InstallerTests(unittest.TestCase):
     def test_uninstall_refuses_repointed_marketplace(self):
         records, current = self.active()
         codex = installer.Codex("/unused", self.codex.home, self.home)
-        with patch.object(codex, "cli", return_value={"marketplaces": [
-                {"name": OLD, "root": str(self.home / "someone-elses-marketplace")}]}):
+        with patch.object(codex, "config", return_value={"marketplaces": {
+                OLD: {"source_type": "local", "source": str(self.home / "foreign")}}}):
             with self.assertRaisesRegex(installer.Refusal, "points elsewhere"):
-                codex.observe(OLD, self.install.catalog(OLD), records[current]["version"])
+                codex.observe(OLD, self.install.catalog(OLD))
         self.assertTrue((self.install.root / OLD).is_dir())
+
+    def test_disabled_plugins_refuse_install_capability(self):
+        codex = installer.Codex("/unused", self.codex.home, self.home)
+        with patch.object(installer, "command", return_value=b"plugins stable false\n"):
+            with self.assertRaisesRegex(installer.Refusal, "plugins are disabled"):
+                codex.require_plugins_enabled()
+
+    def test_cleanup_reconciles_half_installed_plugins_with_missing_catalog(self):
+        for configured, cached in ((False, True), (True, False)):
+            with self.subTest(configured=configured, cached=cached):
+                self.install.root.mkdir(mode=0o700, exist_ok=True)
+                records = {OLD: self.receipt}
+                self.install.save(records)
+                catalog = self.install.catalog(OLD)
+                codex = installer.Codex("/unused", self.codex.home, self.home)
+                self.install.codex = codex
+                plugin_dir = codex.home / "plugins/cache" / OLD / installer.NAME
+                if cached:
+                    plugin_dir.mkdir(parents=True)
+                selector = f"{installer.NAME}@{OLD}"
+                config = {"marketplaces": {OLD: {"source_type": "local", "source": str(catalog)}},
+                          "plugins": {selector: {"enabled": True}} if configured else {}}
+
+                def remove(*args):
+                    if args == ("remove", selector):
+                        config["plugins"].pop(selector, None)
+                        if cached:
+                            plugin_dir.rmdir()
+                    elif args == ("marketplace", "remove", OLD):
+                        del config["marketplaces"][OLD]
+                    else:
+                        self.fail(f"Unexpected Codex command {args}")
+
+                with (patch.object(codex, "config", return_value=config),
+                      patch.object(codex, "cli", side_effect=remove) as cli):
+                    self.install.cleanup(records, OLD)
+                self.assertEqual(cli.call_count, 2)
+                self.assertEqual(self.install.load(), ({}, None))
+
+    def test_unexecutable_launcher_fails_verify_and_is_repairable(self):
+        records, current = self.active()
+        engine = self.install.root / OLD / "engine"
+        sites = engine / "lib/python3.11/site-packages"
+        source = self.source()
+        for name in self.receipt["engine"]:
+            path = sites / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(source.files[name])
+        metadata = sites / "adp_codex-0.1.0.dist-info/METADATA"
+        metadata.parent.mkdir()
+        metadata.write_text("Name: adp-codex\nVersion: 0.1.0\n")
+        launcher = engine / "bin/adp"
+        launcher.parent.mkdir()
+        launcher.write_text("#!/missing/interpreter\n")
+        with patch.object(self.install, "stage", side_effect=installer.Refusal("Repair reached staging")):
+            with self.assertRaisesRegex(installer.Refusal, "Repair reached staging"):
+                self.install.apply("install", records, current, source)
+        self.assertEqual(self.install.load(), ({OLD: self.receipt}, OLD))
 
     def test_verify_requires_receipt_to_own_launcher(self):
         self.install.root.mkdir(mode=0o700)

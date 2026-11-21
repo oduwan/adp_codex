@@ -53,7 +53,14 @@ def engine_file(name: str) -> bool:
 
 
 def plugin_file(name: str) -> bool:
-    return name in {"plugin.json", SKILL} or re.fullmatch(r"docs/[a-zA-Z0-9_/-]+\.md", name) is not None
+    return name in {"plugin.json", SKILL} or re.fullmatch(r"docs/[a-zA-Z0-9_/-]+\.(?:md|json)", name) is not None
+
+
+def marketplace_payload(name: str) -> dict:
+    return {"name": name, "plugins": [{
+        "name": NAME, "source": {"source": "local", "path": "./" + CATALOG_PLUGIN},
+        "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+        "category": "Productivity"}]}
 
 
 @dataclass(frozen=True)
@@ -151,13 +158,24 @@ def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
                           start_new_session=True) as process:
         try:
             output, _ = process.communicate(timeout=seconds)
-        except (KeyboardInterrupt, subprocess.TimeoutExpired):
-            os.killpg(process.pid, signal.SIGKILL)
+        except (KeyboardInterrupt, subprocess.TimeoutExpired) as exc:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
             process.wait()
-            raise Refusal(f"{label} interrupted or timed out. Check prerequisites and retry.") from None
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            raise Refusal(f"{label} timed out. Check prerequisites and retry.") from None
     require(process.returncode == 0 and len(output) <= MAX_RESPONSE,
             f"{label} failed. Check its prerequisites in the installation guide.")
     return output
+
+
+@dataclass(frozen=True)
+class PluginState:
+    registered: bool
+    configured: bool
+    cached: bool
+    enabled: bool
 
 
 class Codex:
@@ -176,8 +194,6 @@ class Codex:
             (("plugin", "marketplace", "remove"), ("<MARKETPLACE_NAME>", "--json")),
             (("plugin", "add"), ("PLUGIN", "--json")),
             (("plugin", "remove"), ("PLUGIN", "--json")),
-            (("plugin", "list"), ("--marketplace", "--json")),
-            (("plugin", "marketplace", "list"), ("--json",)),
             (("app-server",), ("--listen", "stdio://")),
         ):
             help_text = command([self.executable, *args, "--help"], self.cwd,
@@ -185,38 +201,49 @@ class Codex:
             require(all(marker.encode() in help_text for marker in markers),
                     "Unsupported Codex plugin or app-server command shape. Use a compatible CLI.")
 
-    def observe(self, generation: str, catalog: Path, version: str) -> tuple[bool, bool, bool]:
-        selector = f"{NAME}@{generation}"
-        matching = [row for row in self.cli("marketplace", "list")["marketplaces"]
-                    if row["name"] == generation]
-        registered = bool(matching)
-        source = {"sourceType": "local", "source": str(catalog)}
-        if registered:
-            require(len(matching) == 1 and matching[0]["root"] == str(catalog)
-                    and matching[0]["marketplaceSource"] == source,
-                    "An ADP marketplace name points elsewhere. Restore its original source before retrying.")
-        installed = self.cli("list", "--marketplace", generation)["installed"]
-        require(isinstance(installed, list) and len(installed) <= 1,
-                "Unexpected entries in an ADP marketplace. Inspect it before retrying.")
-        if installed:
-            row = installed[0]
-            require(registered and row["pluginId"] == selector and row["name"] == NAME
-                    and row["marketplaceName"] == generation and row["version"] == version
-                    and row["installed"] is True and type(row["enabled"]) is bool
-                    and row["marketplaceSource"] == source
-                    and row["source"] == {"source": "local", "path": str(catalog / CATALOG_PLUGIN)},
-                    "Codex reports conflicting plugin identity. Inspect the ADP entry before retrying.")
-
-        # Check for an orphan config entry that a scoped listing could omit.
+    def config(self) -> dict:
         import tomllib
 
-        config = self.home / "config.toml"
-        if os.path.lexists(config):
-            require(owned_file(config, os.getuid()).st_size <= MAX_RESPONSE, "Codex config.toml exceeds the inspection bound.")
-            plugins = tomllib.loads(config.read_text()).get("plugins", {})
-            require(bool(installed) == (selector in plugins),
-                    "Codex plugin listing and configuration disagree. Reconcile the ADP entry before retrying.")
-        return registered, bool(installed), bool(installed and installed[0]["enabled"])
+        path = self.home / "config.toml"
+        if not os.path.lexists(path):
+            return {}
+        require(owned_file(path, os.getuid()).st_size <= MAX_RESPONSE, "Codex config.toml exceeds the inspection bound.")
+        config = tomllib.loads(path.read_text())
+        require(all(isinstance(config.get(section, {}), dict) for section in ("marketplaces", "plugins")),
+                "Unsupported Codex configuration shape.")
+        return config
+
+    def require_plugins_enabled(self) -> None:
+        output = command([self.executable, "features", "list"], self.cwd, "Inspect effective Codex plugin support")
+        values = [line.split()[-1] for line in output.splitlines() if line.split()[:1] == [b"plugins"]]
+        require(values == [b"true"],
+                "Codex plugins are disabled or unsupported. Enable plugin support in Codex before installing ADP.")
+
+    def independent_plugins(self, records: dict) -> list[dict]:
+        plugins = self.config().get("plugins", {})
+        owned = {f"{NAME}@{name}" for name in records}
+        return [value for selector, value in plugins.items()
+                if selector.startswith(f"{NAME}@") and selector not in owned]
+
+    def observe(self, generation: str, catalog: Path) -> PluginState:
+        # Native listing can hide disabled registrations, fail on missing catalogs,
+        # or refresh remote caches. Inspect persistence without editing it.
+        config = self.config()
+        marketplaces = config.get("marketplaces", {})
+        registered = generation in marketplaces
+        if registered:
+            entry = marketplaces[generation]
+            require(entry.get("source_type") == "local" and entry.get("source") == str(catalog),
+                    "An ADP marketplace name points elsewhere. Restore its original source before retrying.")
+        plugin_dir = self.home / "plugins/cache" / generation / NAME
+        cached = os.path.lexists(plugin_dir)
+        if cached:
+            safe_directory(plugin_dir, os.getuid(), home=self.home)
+        selector = f"{NAME}@{generation}"
+        plugins = config.get("plugins", {})
+        configured = selector in plugins
+        enabled = configured and plugins[selector].get("enabled", True) is True
+        return PluginState(registered, configured, cached, enabled)
 
     def skills(self, *, probe: bool = False) -> list[dict]:
         # A new stdio session, with only initialize and skills/list. No thread or model turn.
@@ -348,20 +375,22 @@ class Installation:
     def catalog(self, name: str) -> Path:
         return self.root / name / "catalog"
 
-    def observe(self, name: str, receipt: dict) -> tuple[bool, bool, bool]:
+    def observe(self, name: str) -> PluginState:
         generation = self.root / name
         if os.path.lexists(generation):
             safe_directory(generation, os.getuid(), private=True)
-        return self.codex.observe(name, self.catalog(name), receipt["version"])
+        return self.codex.observe(name, self.catalog(name))
 
     def cleanup(self, records: dict, name: str) -> None:
-        registered, installed, _ = self.observe(name, records[name])
-        if installed:
+        state = self.observe(name)
+        if state.configured or state.cached:
             self.codex.cli("remove", f"{NAME}@{name}")
-            require(not self.observe(name, records[name])[1], "Codex plugin removal is unconfirmed.")
-        if registered:
+            remaining = self.observe(name)
+            require(not remaining.configured and not remaining.cached, "Codex plugin removal is unconfirmed.")
+        if state.registered:
             self.codex.cli("marketplace", "remove", name)
-        require(not any(self.observe(name, records[name])), "Codex cleanup is unconfirmed.")
+        require(self.observe(name) == PluginState(False, False, False, False),
+                "Codex cleanup is unconfirmed.")
         cache = self.codex.home / "plugins/cache" / name
         if os.path.lexists(cache):
             safe_directory(cache, os.getuid(), home=self.codex.home)
@@ -375,7 +404,7 @@ class Installation:
         del records[name]
 
     def report(self, name: str, receipt: dict) -> bool:
-        registered, installed, enabled = self.observe(name, receipt)
+        plugin = self.observe(name)
         generation = self.root / name
         engine = generation / "engine"
         sites = list(engine.glob("lib/python*/site-packages"))
@@ -387,12 +416,22 @@ class Installation:
                 metadata = BytesParser().parsebytes(versions[0].read_bytes(), headersonly=True)
                 engine_ok = metadata["Name"] == NAME and metadata["Version"] == receipt["version"]
         cache = self.codex.home / "plugins/cache" / name / NAME / receipt["version"]
-        plugin_ok = installed and installed_files(cache, receipt["plugin"])
+        catalog = self.catalog(name)
+        catalog_files = installed_files(catalog / CATALOG_PLUGIN, receipt["plugin"])
+        manifest = catalog / ".agents/plugins/marketplace.json"
+        catalog_ok = False
+        if catalog_files and manifest.is_file() and manifest.resolve() == manifest:
+            try:
+                catalog_ok = manifest.stat().st_size <= MAX_RESPONSE and json.loads(manifest.read_bytes()) == marketplace_payload(name)
+            except ValueError:
+                pass
+        plugin_ok = plugin.cached and installed_files(cache, receipt["plugin"])
         print(f"{name} revision={receipt['revision']} version={receipt['version']} sha256={receipt['sha256']}")
-        print(f"Engine matches={engine_ok}  Marketplace registered={registered}  "
-              f"Plugin installed={installed} enabled={enabled} matches={plugin_ok}", flush=True)
+        print(f"Engine files match={engine_ok}  Marketplace registered={plugin.registered} ready={catalog_ok}  "
+              f"Plugin installed={plugin.cached} configured={plugin.configured} "
+              f"enabled={plugin.enabled} matches={plugin_ok}", flush=True)
         discovered = False
-        if plugin_ok:
+        if plugin_ok and catalog_ok and plugin.registered and plugin.enabled:
             selector = f"{NAME}@{name}"
             discovered = any(skill.get("name") in {NAME, f"{NAME}:{NAME}"}
                              and skill.get("path") == str(cache / SKILL)
@@ -400,10 +439,17 @@ class Installation:
                              and skill.get("enabled") is True for skill in self.codex.skills())
         print(f"Exact enabled skill discovered={discovered}", flush=True)
         if engine_ok:
-            command([str(engine / "bin/python"), "-I", "-B", str(engine / "bin/adp"), "--help"],
-                    self.codex.cwd, "Installed adp --help")
-            print("Installed adp --help passed.", flush=True)
-        return engine_ok and registered and plugin_ok and enabled and discovered
+            env = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            try:
+                command([str(launcher), "--help"], self.codex.cwd, "Installed adp --help", env=env)
+            except (OSError, Refusal):
+                print("Installed adp launcher failed --help.", flush=True)
+                engine_ok = False
+            else:
+                print("Installed adp --help passed.", flush=True)
+        return engine_ok and plugin.registered and catalog_ok and plugin_ok and plugin.enabled and discovered
+
 
     def stage(self, name: str, source: Source) -> None:
         generation = self.root / name
@@ -435,10 +481,7 @@ class Installation:
                     seconds=180, env=pip_env)
         marketplace = catalog / ".agents/plugins/marketplace.json"
         marketplace.parent.mkdir(parents=True)
-        marketplace.write_text(json.dumps({"name": name, "plugins": [{
-            "name": NAME, "source": {"source": "local", "path": "./" + CATALOG_PLUGIN},
-            "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
-            "category": "Productivity"}]}))
+        marketplace.write_text(json.dumps(marketplace_payload(name)))
         registration = self.codex.cli("marketplace", "add", str(catalog))
         require(registration["marketplaceName"] == name and registration["alreadyAdded"] is False
                 and registration["installedRoot"] == str(catalog), "Codex marketplace registration is unconfirmed.")
@@ -464,7 +507,7 @@ class Installation:
         name = f"adp-managed-{uuid.uuid4().hex}"
         require(not os.path.lexists(self.root / name)
                 and not os.path.lexists(self.codex.home / "plugins/cache" / name)
-                and not any(self.observe(name, source.receipt)),
+                and self.observe(name) == PluginState(False, False, False, False),
                 "Candidate ADP namespace already exists. Retry to select a fresh namespace.")
         records[name] = source.receipt
         self.save(records)
@@ -527,9 +570,7 @@ def run(args: argparse.Namespace) -> None:
         codex.probe()
         with installation.lock():
             records, current = installation.load()
-            plugins = codex.cli("list")["installed"]
-            require(isinstance(plugins, list), "Unsupported Codex plugin listing shape.")
-            unowned = [row for row in plugins if row["name"] == NAME and row["marketplaceName"] not in records]
+            unowned = codex.independent_plugins(records)
             if unowned:
                 print("An independently installed ADP plugin is present.")
             existing_cli = shutil.which("adp")
@@ -538,20 +579,22 @@ def run(args: argparse.Namespace) -> None:
             if args.action == "verify":
                 if current is None:
                     print("No active managed ADP engine.")
-                verified = current is not None and installation.report(current, records[current])
                 inactive = set(records) - {current}
                 for name in sorted(inactive):
-                    print(f"PARTIAL: pending cleanup of {name}.")
-                    installation.observe(name, records[name])
+                    print(f"PARTIAL: pending cleanup of {name}.", flush=True)
+                verified = current is not None and installation.report(current, records[current])
+                for name in sorted(inactive):
+                    print(installation.observe(name))
                 require(verified and not inactive, "ADP verification incomplete. Use install, upgrade or uninstall to reconcile.")
                 return
             for name, receipt in records.items():
                 print(f"Existing generation {name} revision={receipt['revision']} "
                       f"engine present={(root / name / 'engine/bin/adp').is_file()} "
-                      f"marketplace/plugin/enabled={installation.observe(name, receipt)}")
+                      f"{installation.observe(name)}")
         if source:
-            require(not any(row["enabled"] is not False for row in unowned),
+            require(not any(row.get("enabled") is not False for row in unowned),
                     "An independently installed ADP plugin is enabled. Disable it in Codex before installing a managed copy.")
+            codex.require_plugins_enabled()
             if current and args.action == "install":
                 require(installation.same_source(records[current], source),
                         "A different ADP source is active. Use upgrade explicitly.")
@@ -563,7 +606,7 @@ def run(args: argparse.Namespace) -> None:
             login = command([str(Path(github).resolve()), "api", "--hostname", "github.com",
                              "user", "--jq", ".login"], codex.cwd,
                             "Read-only GitHub authentication check (authenticate gh for github.com)")
-            require(re.fullmatch(rb"[a-zA-Z0-9-]+\s*", login), "GitHub authentication could not be confirmed.")
+            require(re.fullmatch(rb"[a-zA-Z0-9_-]+\s*", login), "GitHub authentication could not be confirmed.")
             codex.skills(probe=True)
             print(f"Source {source.receipt['revision']} SHA-256 {source.receipt['sha256']} "
                   f"version {source.receipt['version']}")
@@ -579,6 +622,10 @@ def run(args: argparse.Namespace) -> None:
             safe_directory(root, uid, home=home, private=True)
             require(installation.load() == (records, current),
                     "Installation changed after preflight. Review the new plan and retry.")
+            if source:
+                require(not any(row.get("enabled") is not False for row in codex.independent_plugins(records)),
+                        "An independently installed ADP plugin became enabled. Review the new plan and retry.")
+                codex.require_plugins_enabled()
             try:
                 installation.apply(args.action, records, current, source)
             except (Refusal, OSError, ValueError, KeyError, TypeError, AttributeError, KeyboardInterrupt):

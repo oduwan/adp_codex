@@ -9,7 +9,7 @@ package. The digest is an integrity check against the identity you selected.
 Public distribution still requires separate authorization.
 
 Run this as your normal user on Linux or WSL2, with Python 3.11+ and its
-`venv`/ `ensurepip` support, a signed-in Codex CLI, and `gh` authenticated for
+`venv` and `ensurepip` support, a signed-in Codex CLI, and `gh` authenticated for
 `github.com`.
 
 ```bash
@@ -87,8 +87,9 @@ managed Codex namespace. The catalog uses the user's existing `CODEX_HOME`
   independently installed `adp` on PATH is preserved.
 - If an interruption leaves a pending generation, `verify` reports it. Rerun
   the requested operation to reconcile receipt-owned entries. If a marketplace
-  was repointed, the receipt or config was altered, or Codex cannot confirm
-  removal, restore the original state before retrying. Keep the receipt for
+  was repointed or Codex cannot confirm removal, inspect the reported
+  namespace before retrying. Missing managed catalog or cache files can be
+  reconciled from the receipt and the remaining Codex state. Keep the receipt for
   diagnosis. Use `install` to recover an interrupted first install with no
   active launcher.
 
