@@ -3,6 +3,7 @@
 Public release is NOT_AUTHORIZED. These procedures stage/install development
 artifacts locally; they do not publish to a registry, plugin directory or Git tag.
 Choose license/distribution terms separately. Use owned disposable projects only.
+For ordinary installation, see the [ADP installer guide](../operations/INSTALL_ADP.md).
 
 ## Python engine
 
@@ -25,10 +26,8 @@ files are exclusive mode0600. Existing results are never overwritten. The summar
 records exact source, interpreter, archive/wheel and log hashes. No editable source
 or current-directory import can substitute for the installed wheel probe.
 
-For regular local engine setup, install the selected source into a fresh venv and
-use `adp --help`. Start with `init --dry-run` or read-only `discover`/`plan`. Mutation
-requires explicit operator/project evidence and configured qualified ports. The
-package does not contain a permissive controller or production validation sandbox.
+For engine usage, start with `init --dry-run` or read-only `discover`/`plan`.
+Mutation requires explicit operator/project evidence and configured qualified ports.
 
 ## Portable planning plugin
 
