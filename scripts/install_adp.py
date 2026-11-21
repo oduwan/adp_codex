@@ -358,6 +358,14 @@ class Codex:
         require(self.observe(name, catalog) == PluginState(False, False, False, False),
                 "Codex cleanup is unconfirmed.")
 
+    def discovered(self, generation: str, version: str) -> bool:
+        selector = f"{NAME}@{generation}"
+        expected = self.home / "plugins/cache" / generation / NAME / version / SKILL
+        return any(skill.get("name") in {NAME, f"{NAME}:{NAME}"}
+                   and skill.get("path") == str(expected)
+                   and skill.get("pluginId", selector) == selector
+                   and skill.get("enabled") is True for skill in self.skills())
+
     def probe_lifecycle(self) -> None:
         import fcntl
 
@@ -383,9 +391,8 @@ class Codex:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             probe.mutation_lock = fd
             probe.add(name, catalog, version)
-            expected = probe.home / "plugins/cache" / name / NAME / version / SKILL
-            require(any(entry.get("path") == str(expected) and entry.get("enabled") is True for entry in probe.skills()),
-                    "The disposable Codex skill could not be discovered and enabled.")
+            require(probe.discovered(name, version),
+                    "The disposable Codex skill response did not confirm the enabled plugin identity.")
             probe.remove(name, catalog)
         finally:
             os.close(fd)
@@ -583,11 +590,7 @@ class Installation:
               f"enabled={plugin.enabled} matches={plugin_ok}", flush=True)
         discovered = False
         if plugin_ok and catalog_ok and plugin.registered and plugin.enabled:
-            selector = f"{NAME}@{name}"
-            discovered = any(skill.get("name") in {NAME, f"{NAME}:{NAME}"}
-                             and skill.get("path") == str(cache / SKILL)
-                             and skill.get("pluginId", selector) == selector
-                             and skill.get("enabled") is True for skill in self.codex.skills())
+            discovered = self.codex.discovered(name, receipt["version"])
         print(f"Exact enabled skill discovered={discovered}", flush=True)
         if engine_ok:
             try:

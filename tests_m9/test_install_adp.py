@@ -323,7 +323,7 @@ class InstallerTests(unittest.TestCase):
         launcher.write_text(installer.launcher_script(engine))
         receipt = records[current] | {"launcher_sha256": installer.digest(launcher.read_bytes())}
         self.codex.observe.return_value = installer.PluginState(True, True, True, True)
-        self.codex.skills.return_value = [{"name": installer.NAME, "path": str(cache / installer.SKILL), "enabled": True}]
+        self.codex.discovered.return_value = True
         with patch.object(installer, "command", side_effect=[
                 json.dumps([str(engine), str(sites / "adp/__init__.py")]).encode(), b"help"]):
             self.assertTrue(self.install.report(current, receipt))
@@ -346,6 +346,16 @@ class InstallerTests(unittest.TestCase):
         with self.assertRaisesRegex(installer.Refusal, "PARTIAL"):
             self.install.cleanup(records, name)
         self.codex.remove.assert_not_called()
+
+    def test_disposable_probe_refuses_changed_skill_identity_fields(self):
+        codex = installer.Codex("/unused", self.codex.home, self.home)
+        expected = self.home / "probe-codex-home/plugins/cache/adp-managed-probe/adp-codex/0.0.1" / installer.SKILL
+        changed = [{"skillName": installer.NAME, "path": str(expected), "enabled": True}]
+        with (patch.object(installer.Codex, "add"),
+              patch.object(installer.Codex, "skills", return_value=changed)):
+            with self.assertRaisesRegex(installer.Refusal, "skill response"):
+                codex.probe_lifecycle()
+        self.assertFalse(codex.home.exists())
 
     def test_interrupted_mutation_fences_detached_writer_until_exit(self):
         import fcntl
