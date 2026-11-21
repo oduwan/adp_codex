@@ -199,17 +199,21 @@ class OperatorProfile:
         return cfg
 
 
-def load_profile(path, trust_path, *, clock=None, retain_revocation=False, recover_initial_setup=False):
+def load_profile(path, trust_path, *, clock=None, retain_revocation=False, recover_initial_setup=False, expected_binding=None):
     try:
-        return _load_profile(path,trust_path,clock=clock,retain_revocation=retain_revocation,recover_initial_setup=recover_initial_setup)
+        return _load_profile(path,trust_path,clock=clock,retain_revocation=retain_revocation,
+                             recover_initial_setup=recover_initial_setup,expected_binding=expected_binding)
     except (TypeError,ValueError,KeyError,AttributeError,OverflowError):
         raise AuthorityError('Malformed protected operator configuration; inspect the closed schema') from None
 
 
-def _load_profile(path, trust_path, *, clock=None, retain_revocation=False,recover_initial_setup=False):
+def _load_profile(path, trust_path, *, clock=None, retain_revocation=False,recover_initial_setup=False,expected_binding=None):
     trust = Trust(trust_path, clock=clock)
     path = safe_path(Path(path).absolute()); raw = private_file(path, limit=65536)
     profile = _validate_profile(path, trust, raw)
+    if expected_binding is not None:
+        require((profile.fingerprint,trust.fingerprint)==expected_binding,
+                'The installed profile or trust changed after the execution preview')
     if retain_revocation and (profile.state/'enrollment.json').exists():
         if (profile.state/'revocation.json').exists(): profile.live(retain=True)
         else:

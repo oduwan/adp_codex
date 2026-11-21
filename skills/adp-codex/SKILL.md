@@ -77,13 +77,14 @@ For a requested `run`, use `preview --for-operation run`. For `resume` or
 `handoff`, use `status --for-operation resume` or `status --for-operation handoff`.
 For run or resume, supply the chosen `--rounds` and `--maximum-parallel`
 with the preview request and use the same values after confirmation.
-Require that digest before offering confirmation. For run or resume also
+Require that review token before offering confirmation. For run or resume also
 require supported runtime capabilities. Show the selected operation,
 repository, checkout revision, issue scope, delegated effects, merge mode,
 ownership generation and remaining window. Use one round and one worker
 at a time unless the operator selects a different finite bound. Handoff
 asks for authorization to relinquish ownership through ADP's stopped-context
-checks.
+checks. If the resume request includes `recover_checkpoint: true`, explain
+that accepted M1 recovery of the retained checkpoint precedes the invocation.
 
 After a separate, explicit operator reply authorizing this invocation, run
 the matching `adp codex run`, `resume`, or `handoff` with the same selectors

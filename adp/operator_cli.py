@@ -24,7 +24,7 @@ def add_commands(commands,common):
             command.add_argument('--authorize-memory-write',action='store_true')
 
 
-def run(args, *, expected_binding=None):
+def run(args, *, expected_binding=None, before_effects=None):
     from .operator_setup import setup,preview,status,verify_enrollment
     from .operator_controller import InstalledProject
     require(getattr(args,'operator_profile',None) is not None and getattr(args,'operator_trust',None) is not None,
@@ -36,12 +36,9 @@ def run(args, *, expected_binding=None):
     retain=(
         args.command in ('run','resume','handoff') and getattr(args,'authorize_execution',False)
         or args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False))
-    p=load_profile(args.operator_profile,args.operator_trust,retain_revocation=retain and expected_binding is None,
+    p=load_profile(args.operator_profile,args.operator_trust,retain_revocation=retain,
+        expected_binding=expected_binding,
         recover_initial_setup=(args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False)))
-    if expected_binding is not None:
-        require((p.fingerprint,p.trust.fingerprint)==expected_binding,'The installed profile or trust changed after the execution preview')
-        verify_enrollment(p)
-        if retain: p.live(retain=True)
     command=args.command
     if command=='status': return status(p),0
     if command=='setup' and args.apply:
@@ -76,13 +73,17 @@ def run(args, *, expected_binding=None):
     require(type(parallel) is int and 1<=parallel<=w['maximum_parallel'] and type(rounds) is int and 1<=rounds<=4,
         'Invocation exceeds the unchanged finite project delegation')
     verify_enrollment(p)
+    scoped_preflight={}
+    if before_effects is not None:
+        before_effects()
+        scoped_preflight['before_effects']=before_effects
     controller=InstalledProject(p,mutating=True).build()
     selected=controller.track
     if command=='resume' and getattr(args,'adopt_generation',False): selected.adopt_generation(authorized=True)
-    if command=='handoff': result=selected.handoff(authorized=True)
+    if command=='handoff': result=selected.handoff(authorized=True, **scoped_preflight)
     else:
         method=selected.resume if command=='resume' else selected.run
-        result=method(rounds=rounds,maximum_parallel=parallel,authorized=True)
+        result=method(rounds=rounds,maximum_parallel=parallel,authorized=True, **scoped_preflight)
     report=exit_report(p,controller,result,command)
     return report,0 if report['status'] in ('COMPLETE','HANDOFF_RECORDED') else 7 if report['status'] in ('UNSUPPORTED','UNSUPPORTED_RUNTIME') else 4
 

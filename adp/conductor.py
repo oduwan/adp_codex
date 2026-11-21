@@ -954,10 +954,12 @@ class Conductor:
         self.journal.change(lambda execution, state, tasks: execution["tasks"][key(admission.task_id)]["jobs"][assignment_id].update(status="COMPLETE"))
         return {"status": "FORENSIC_REVIEWED", "revision": self._task(admission)["revision"]}
 
-    def handoff(self, *, authorized=False):
+    def handoff(self, *, authorized=False, before_effects=None):
         if not authorized:
             raise AuthorityError("Conductor handoff requires explicit stop/handoff authority")
         with invocation_lock(self.memory.control):
+            if before_effects is not None:
+                before_effects()
             return self._handoff()
 
     def _handoff(self):

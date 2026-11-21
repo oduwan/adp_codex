@@ -222,7 +222,7 @@ class AutonomousTrack:
         self._slot(spec, packet=result.packet_reference, status="ACTIVE")
         return self._attach(spec, result.packet_reference)
 
-    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False):
+    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False, before_effects=None):
         if not authorized:
             raise AuthorityError("Autonomous track requires explicit finite execution authority")
         parallel = self.window.maximum_parallel if maximum_parallel is None else maximum_parallel
@@ -230,6 +230,8 @@ class AutonomousTrack:
                 and 1 <= parallel <= self.window.maximum_parallel, "Invocation exceeds finite track limits")
         c, admissions = self.c, []
         with invocation_lock(c.memory.control):
+            if before_effects is not None:
+                before_effects()
             if recover:
                 c.memory.recover()
             c._privacy_preflight()
@@ -372,7 +374,7 @@ class AutonomousTrack:
             c.journal.change(adopt)
             return self.status()
 
-    def handoff(self, *, authorized=False):
+    def handoff(self, *, authorized=False, before_effects=None):
         # A new generation cannot inherit this window's execution grants or
         # counters by silently changing configuration. Retain it as evidence.
         row = self._window()
@@ -383,4 +385,6 @@ class AutonomousTrack:
                 admission = self._attach(spec, slot["packet"])
                 life = self.c._project(admission).lifecycle
                 life._admission = admission
-        return self.c.handoff(authorized=authorized)
+        if before_effects is None:
+            return self.c.handoff(authorized=authorized)
+        return self.c.handoff(authorized=authorized, before_effects=before_effects)

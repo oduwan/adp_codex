@@ -8,7 +8,8 @@ import unicodedata
 from . import enrollment_cli, operator_cli
 from .codex_runtime import CodexExecRuntime
 from .discovery_schema import digest
-from .enrollment import FAILURES, LIMIT, installer_root, public
+from .enrollment import (Blocked, FAILURES, LIMIT, PROFILE, installer_root, local_checkout, public,
+                         selected_authority, selected_directory)
 from .git import SHA
 from .operator_profile import SUPPORTED
 from .schema import encode, fields, integer, require, string
@@ -69,7 +70,7 @@ def add_commands(commands) -> None:
     for name in EXECUTION:
         command = stages.add_parser(name)
         enrollment_cli.selectors(command, "status")
-        command.add_argument("--reviewed", help="Digest from the current preview or status")
+        command.add_argument("--reviewed", help="Review token from the current preview or status")
         command.add_argument("--authorize-execution", action="store_true")
         if name != "handoff":
             invocation_limits(command)
@@ -107,16 +108,19 @@ def boolean(value):
     return value
 
 
+def revision(value):
+    require(type(value) is str and SHA.fullmatch(value), "Invalid Git revision")
+    return value
+
+
 def rows(value, parse, maximum=512):
     require(type(value) is list and len(value) <= maximum, "Unsupported protocol array")
     return [parse(row) for row in value]
 
 
 def checkout(row):
-    head = label(row["head"], 64)
-    require(SHA.fullmatch(head), "Invalid checkout revision")
     return {"path": label(row["path"]), "remote": label(row["remote"], 128),
-            "repository": label(row["repository"], 202), "ref": label(row["ref"], 255), "head": head}
+            "repository": label(row["repository"], 202), "ref": label(row["ref"], 255), "head": revision(row["head"])}
 
 
 def repository(row):
@@ -209,12 +213,14 @@ def result(row):
         scope = row["invocation"]
         output["invocation"] = {"profile_digest": hex_digest(scope["profile_digest"]),
                                 "trust_digest": hex_digest(scope["trust_digest"]), "checkout": checkout(scope["checkout"]),
-                                "checkpoint": label(scope["checkpoint"], 64), "issues": rows(scope["issues"], lambda n: number(n, 1), 8),
+                                "checkpoint": revision(scope["checkpoint"]),
+                                "remote_checkpoint": revision(scope["remote_checkpoint"]) if scope["remote_checkpoint"] is not None else None,
+                                "recovery_journal": hex_digest(scope["recovery_journal"]) if scope["recovery_journal"] is not None else None,
+                                "issues": rows(scope["issues"], lambda n: number(n, 1), 8),
                                 "operations": rows(scope["operations"], lambda name: choice(name, SUPPORTED), 16),
                                 "merge_mode": choice(scope["merge_mode"], ("MANUAL", "DELEGATED")),
                                 "checks": checks(scope["checks"]),
                                 "window": window(scope["window"]), "used_rounds": number(scope["used_rounds"])}
-        require(SHA.fullmatch(output["invocation"]["checkpoint"]), "Invalid memory checkpoint")
     return output
 
 
@@ -268,18 +274,21 @@ def display_status(value):
 def invocation(view, operation, rounds, parallel):
     observed = view.get("result", {})
     scope = observed.get("invocation")
-    if (view["status"] != "ENROLLED" or scope is None or observed.get("local_owner") is not True
+    recovering = operation == "resume" and view["status"] == "PENDING" and (
+        observed.get("memory_health") in ("RECOVERY_REQUIRED", "REMOTE_MISMATCH"))
+    if (view["status"] != "ENROLLED" and not recovering or scope is None or observed.get("local_owner") is not True
             or operation == "run" and observed.get("configuration") != "CONFIGURATION_VERIFIED"):
         return None, "INVOCATION_UNAVAILABLE"
-    request = {"operation": operation}
+    request = {"operation": operation, "recover_checkpoint": recovering}
     if operation != "handoff":
         limits = scope["window"]
         if not (1 <= rounds <= min(4, limits["maximum_rounds"] - scope["used_rounds"])
                 and 1 <= parallel <= limits["maximum_parallel"]):
             return None, "INVOCATION_LIMIT"
         request.update(rounds=rounds, maximum_parallel=parallel)
-    return {"invocation_request": request,
-            "invocation_review": digest({"request": request, "observation": observed})}, None
+    preimage = digest({"request": request, "observation": observed})
+    token = ".".join(("v1", scope["profile_digest"], scope["trust_digest"], preimage))
+    return {"invocation_request": request, "invocation_review": token}, None
 
 
 def execution(args):
@@ -287,25 +296,35 @@ def execution(args):
     if not args.authorize_execution or not args.reviewed:
         return refused(operation, "EXECUTION_CONFIRMATION_REQUIRED",
                        "Confirm the current invocation and explicitly authorize execution."), 4
+    if not re.fullmatch(r"v1(?:\.[0-9a-f]{64}){3}", args.reviewed):
+        return refused(operation, "INVOCATION_CHANGED", "Obtain the current invocation review token."), 4
+    _, profile_digest, trust_digest, _ = args.reviewed.split(".")
     observed = "preview" if operation == "run" else "status"
     if operation != "handoff" and runtime()["status"] != "SUPPORTED":
         return refused(operation, "UNSUPPORTED_RUNTIME",
                        "Use a Codex CLI and host with the accepted runtime capabilities.", status="UNSUPPORTED_RUNTIME"), 7
-    raw, code = enrollment_cli.run(Namespace(**{**vars(args), "enroll_command": observed}))
-    view = project(observed, raw, code)
     rounds = getattr(args, "rounds", 1)
     parallel = getattr(args, "maximum_parallel", 1)
-    reviewed, _ = invocation(view, operation, rounds, parallel)
-    if reviewed is None or reviewed["invocation_review"] != hex_digest(args.reviewed):
-        return refused(operation, "INVOCATION_CHANGED",
-                       "Review current enrollment, scope and ownership, then confirm the invocation again."), 4
-    selected = view["result"]
-    scope = selected["invocation"]
+
+    def before_effects():
+        raw, code = enrollment_cli.run(Namespace(**{**vars(args), "enroll_command": observed}))
+        reviewed, _ = invocation(project(observed, raw, code), operation, rounds, parallel)
+        if reviewed is None or reviewed["invocation_review"] != args.reviewed:
+            raise Blocked("INVOCATION_CHANGED", "Review current enrollment, scope and ownership, then confirm the invocation again.")
+
     try:
-        native, code = operator_cli.run(Namespace(command=operation, operator_profile=selected["profile"],
-                                                   operator_trust=args.operator_trust, authorize_execution=True,
+        selected = local_checkout(args.repo, args.remote)
+        require(args.operator_trust is not None and (args.directory is None) != (args.operator_profile is None),
+                "Select one guided directory or profile and explicit trust")
+        trust = selected_authority(args.operator_trust, selected)
+        profile = (selected_directory(args.directory, selected) / PROFILE if args.directory is not None
+                   else selected_authority(args.operator_profile, selected))
+        native, code = operator_cli.run(Namespace(command=operation, operator_profile=profile,
+                                                   operator_trust=trust, authorize_execution=True,
                                                    rounds=rounds, maximum_parallel=parallel),
-                                        expected_binding=(scope["profile_digest"], scope["trust_digest"]))
+                                        expected_binding=(profile_digest, trust_digest), before_effects=before_effects)
+    except Blocked as exc:
+        return refused(operation, exc.reason, str(exc)), 4
     except FAILURES:
         return refused(operation, "OPERATOR_REFUSED", "Reconcile the exact installed delegation and retained execution state before retrying."), 4
     # Reasons and provider text stay in the native evidence. Only fixed status codes cross into chat.
@@ -334,9 +353,13 @@ def run(args):
         if operation is not None:
             proposed, blocker = invocation(view, operation, args.rounds, args.maximum_parallel)
             if proposed is None:
-                view["blockers"].append({"code": blocker, "action": "Check current ownership, configuration and remaining finite limits."})
+                action = "Check current ownership, configuration and remaining finite limits."
+                if view.get("result", {}).get("memory_health") in ("RECOVERY_REQUIRED", "REMOTE_MISMATCH"):
+                    action = "Reconcile the retained checkpoint using the accepted M1 operator recovery procedure."
+                view["blockers"].append({"code": blocker, "action": action})
                 return view, 4
             view.update(proposed)
+            return view, 0
         return view, code
     except (*FAILURES, RecursionError, OverflowError):
         return refused(command, "PROTOCOL_UNAVAILABLE",
