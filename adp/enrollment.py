@@ -22,7 +22,7 @@ from .operator_authority import OperatorAuthority, remote_semantics
 from .operator_controller import InstalledProject, READ_PERMISSIONS
 from .operator_decisions import exchange
 from .operator_profile import OperatorProfile, Trust, _validate_profile, load_profile, private_file
-from .operator_setup import PreviewBinding, preview, setup, status, verify_enrollment
+from .operator_setup import GUIDED_BINDING, PreviewBinding, guided_binding, preview, setup, status, verify_enrollment
 from .policy_schema import branch as git_branch
 from .project_validation_types import EvidenceRequest, ProjectObservation
 from .schema import encode, fields, require, string
@@ -290,7 +290,8 @@ def local_effects(profile: OperatorProfile, directory: Path, checkout: dict) -> 
                "coordination_checkout": str(cfg.root), "coordination_git_directory": str(common),
                "coordination_control": str(memory.control),
                "local_bare_remote": str(bare), "memory_worktree": str(memory.path),
-               "private_evidence": str(profile.state), "memory_ref": "refs/heads/" + memory.branch,
+               "private_evidence": str(profile.state), "guided_binding": str(profile.state / GUIDED_BINDING),
+               "memory_ref": "refs/heads/" + memory.branch,
                "authority": "EXACT_DIGEST_AND_EXPLICIT_MEMORY_WRITE_REQUIRED"}
     public(effects)
     return effects, memory
@@ -543,6 +544,7 @@ def check_initial_or_continuation(profile: OperatorProfile, memory: dict, intent
     require(memory["health"] in ("UNINITIALIZED", "SYNCED"), "Use existing M1 recovery for interrupted or foreign state")
     if memory["health"] == "SYNCED":
         verify_enrollment(profile)
+        require(guided_binding(profile) == str(profile.path.parent), "Guided enrollment provenance is missing or changed")
         state = memory["state"]
         initialized = state["schema_version"] == 3 and state["execution"]["schema_version"] == 3
         if not initialized:
@@ -623,6 +625,16 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
         require(intent is not None, "Select the existing legacy profile explicitly to reconnect")
     profile = load_profile(profile_path, trust)
     match_checkout(profile, checkout)
+    binding = guided_binding(profile)
+    if binding is None and directory is None and profile_path.name == PROFILE and safe_path(profile_path.parent / INTENT).exists():
+        directory = selected_directory(profile_path.parent, checkout)
+        intent = read_intent(directory)
+    if binding is not None:
+        original = selected_directory(Path(binding), checkout)
+        require(directory is None or directory == original, "Reconnect through the original guided enrollment")
+        directory = original
+        intent = read_intent(directory)
+        require(intent is not None, "Restore the original protected enrollment intent before reconnecting")
     writer = None
     if intent:
         require(profile.fingerprint == intent["profile_digest"] and profile.trust.fingerprint == intent["trust_digest"],
@@ -633,6 +645,8 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
     report = {key: observed[key] for key in ("repository_id", "memory_health", "local_owner", "generation", "enrollment", "execution_liveness")}
     memory = (writer or Memory(profile.memory_config())).inspect()
     report["status"] = "ENROLLED" if completed(profile, memory) else "PENDING"
+    if report["status"] == "ENROLLED" and intent:
+        require(binding is not None, "Restore the original guided enrollment provenance")
     if command == "reconnect":
         verify_enrollment(profile)
         require(report["status"] == "ENROLLED", "Restore synchronized memory before reconnecting")

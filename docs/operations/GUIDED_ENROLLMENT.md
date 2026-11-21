@@ -111,7 +111,9 @@ Use `reconnect`, `doctor`, or `preview` with the same selectors. Read-only
 commands also accept `--operator-profile` in place of `--directory` for an
 existing installed profile. Reconnect verifies locally retained enrollment and
 the canonical remote identity with the accepted scoped read credential. Guided
-reconnection checks the original local coordination destination as well.
+reconnection also checks the original local coordination destination, including
+when selected through `--operator-profile`. Preserve `guided-enrollment.json`
+in the private state directory alongside the original enrollment intent.
 
 All command results have version `schema_version: 1`, `command`, `mode`,
 `status`, optional structured `facts`, `plan`, `approval` and `result`

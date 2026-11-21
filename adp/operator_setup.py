@@ -12,10 +12,24 @@ from .guard_types import data
 from .memory import Memory
 from .operator_evidence import OperatorEvidence
 from .operator_profile import private_file
-from .schema import encode, fields, require
+from .schema import encode, fields, require, string
 from .storage import atomic, locked, temporary_slot
 import os
 import stat
+
+GUIDED_BINDING = 'guided-enrollment.json'
+
+
+def guided_binding(profile):
+    path=safe_path(profile.state/GUIDED_BINDING)
+    if not path.exists(): return None
+    record=private_file(path)
+    fields(record,'schema_version directory profile trust')
+    string(record['directory'],4096)
+    require(type(record['schema_version']) is int and record['schema_version']==1
+            and record['profile']==profile.fingerprint and record['trust']==profile.trust.fingerprint,
+            'Guided enrollment state does not match the retained profile and trust')
+    return record['directory']
 
 
 def manifest(profile):
@@ -138,6 +152,8 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
     else:
         require(bound_memory is None, 'A pinned memory destination requires guided enrollment')
         memory=Memory(cfg)
+    if expected_preview is None:
+        require(guided_binding(profile) is None,'Use the original guided enrollment and its approved intent')
     observed=memory.inspect()
     path=profile.state/'enrollment.json'
     initial=observed['health']=='UNINITIALIZED'
@@ -161,7 +177,8 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
             'Private enrollment directory is not owned/protected')
         entries=list(profile.state.iterdir())
         names=('authority','revocation.json','enrollment.json','lock',
-               temporary_slot(path).name,temporary_slot(profile.state/'revocation.json').name)
+               GUIDED_BINDING,temporary_slot(path).name,temporary_slot(profile.state/'revocation.json').name,
+               temporary_slot(profile.state/GUIDED_BINDING).name)
         require(all(p.name in names and not p.is_symlink() for p in entries),
             'Unknown existing private history cannot be adopted')
         if (profile.state/'authority').exists():
@@ -180,6 +197,16 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
         profile.state.mkdir(mode=0o700,parents=True,exist_ok=True)
         with locked(profile.state):
             initial_layout()
+            directory=guided_binding(profile)
+            if expected_preview is not None:
+                if directory is None:
+                    atomic(profile.state/GUIDED_BINDING,encode({'schema_version':1,
+                        'directory':str(profile.path.parent),'profile':profile.fingerprint,
+                        'trust':profile.trust.fingerprint}))
+                else:
+                    require(directory==str(profile.path.parent),'The original guided enrollment location is required')
+            else:
+                require(directory is None,'Use the original guided enrollment and its approved intent')
             if not path.exists():
                 atomic(path,encode(manifest(profile))) # locked intent before M1 effects
             OperatorEvidence(profile).prepare()
@@ -187,6 +214,10 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
     with locked(profile.state):
         profile.live()
         check_guided_checkout()
+        if expected_preview is not None:
+            require(guided_binding(profile)==str(profile.path.parent),'The original guided enrollment location is required')
+        else:
+            require(guided_binding(profile) is None,'Use the original guided enrollment and its approved intent')
         observed=memory.inspect()
         if expected_preview is not None and initial:
             require(observed['health']=='UNINITIALIZED','Guided enrollment cannot adopt a concurrently initialized checkpoint')

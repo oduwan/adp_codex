@@ -91,6 +91,7 @@ class GuidedEnrollmentTests(OperatorFixture):
         self.assertEqual(facts["repository"]["database_id"], int(self.rid))
         self.assertEqual(facts["repository"]["node_id"], self.node)
         self.assertEqual(facts["checkout"]["head"], self.head)
+        self.assertEqual(facts["installation"]["engine"], "AVAILABLE")
         self.assertEqual([[(edge["kind"], edge["number"]) for edge in issue["native_dependencies"]]
                           for issue in facts["issues"]], [[], [("BLOCKED_BY", 1)], [("BLOCKED_BY", 2)]])
         self.assertEqual(facts["branch_rules"][1]["required_check_contexts"], ["unit"])
@@ -404,6 +405,31 @@ class GuidedEnrollmentTests(OperatorFixture):
         self.assertIn("count: 0", value(alternate, "count-objects", "-v").splitlines())
         self.assertEqual(value(self.bare, "for-each-ref"), "")
 
+    def test_bound_git_write_keeps_registered_memory_admin_after_gitfile_redirect(self):
+        memory = Memory(self.profile.memory_config(), pinned_local_remote=self.bare)
+        memory.initialize(authorized=True)
+        alternate = self.base / "alternate-memory"
+        run(self.control, "worktree", "add", "-b", "other-memory", str(alternate), memory.branch)
+        gitfile = memory.path / ".git"
+        previous_gitfile = gitfile.read_bytes()
+        alternate_gitfile = (alternate / ".git").read_bytes()
+        state = memory.path / "state.json"
+        state.write_bytes(state.read_bytes() + b"\n")
+        registered = memory._registered
+
+        def redirect_after_registration():
+            directory = registered()
+            gitfile.write_bytes(alternate_gitfile)
+            return directory
+
+        try:
+            with patch.object(memory, "_registered", side_effect=redirect_after_registration):
+                memory._write_git(memory.path, "add", "--", "state.json")
+        finally:
+            gitfile.write_bytes(previous_gitfile)
+        self.assertEqual(value(alternate, "diff", "--cached", "--name-only"), "")
+        self.assertEqual(value(memory.path, "diff", "--cached", "--name-only"), "state.json")
+
     def test_claim_race_never_reclaims_a_released_generation(self):
         claim = Memory.claim
         plan, _ = self.proposed()
@@ -494,10 +520,22 @@ class GuidedEnrollmentTests(OperatorFixture):
         with patch("adp.enrollment.exchange", return_value=self.reply):
             code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
         self.assertEqual(code, 0, report)
+        explicit = ("--operator-profile", str(self.directory / "profile.json"), "--operator-trust", str(self.trust))
+        code, report = self.call("reconnect", *explicit, configured=False, proposal=False)
+        self.assertEqual(code, 0, report)
+        marker = self.profile.state / "guided-enrollment.json"
+        retained = marker.read_bytes()
+        marker.unlink()
+        code, report = self.call("reconnect", *explicit, configured=False, proposal=False)
+        self.assertEqual(code, 4, report)
+        self.write(marker, json.loads(retained))
         alternate = self.base / "copy.git"
         run(self.base, "clone", "--bare", str(self.bare), str(alternate))
         run(self.control, "remote", "set-url", "memory", str(alternate))
         code, report = self.call("reconnect", proposal=False)
+        self.assertEqual(code, 4, report)
+        self.assertNotEqual(report["status"], "RECONNECTED")
+        code, report = self.call("reconnect", *explicit, configured=False, proposal=False)
         self.assertEqual(code, 4, report)
         self.assertNotEqual(report["status"], "RECONNECTED")
 

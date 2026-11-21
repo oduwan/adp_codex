@@ -42,9 +42,7 @@ class Memory:
             prefix = ("--git-dir", str(directory))
         else:
             require(cwd == self.path, "Unexpected guided memory Git working directory")
-            self._registered()
-            directory = safe_path(Path(value(cwd, "rev-parse", "--absolute-git-dir")))
-            require(directory.parent == self.common / "worktrees", "Guided memory worktree administration changed")
+            directory = self._registered()
             prefix = ("--git-dir", str(directory), "--work-tree", str(cwd))
         return git(cwd, *prefix, *args, input=input)
 
@@ -107,16 +105,28 @@ class Memory:
         bundle(state, tasks, self.config.identity)
         return state, tasks
 
-    def _registered(self) -> None:
+    def _registered(self) -> Path | None:
         safe_path(self.path)
         require(self.path.is_dir(), "Memory worktree is absent; use authorized init --apply")
-        require((self.path / ".git").is_file() and not (self.path / ".git").is_symlink(),
+        gitfile = self.path / ".git"
+        require(gitfile.is_file() and not gitfile.is_symlink(),
                 "Storage is not a registered linked memory worktree; unexpected files are refused")
-        actual = value(self.path, "rev-parse", "--show-toplevel")
-        require(Path(actual) == self.path, "Storage is not the selected memory worktree")
-        common = value(self.path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        directory, prefix = None, ()
+        if self.pinned_local_remote is None:
+            actual = value(self.path, "rev-parse", "--show-toplevel")
+            require(Path(actual) == self.path, "Storage is not the selected memory worktree")
+        else:
+            directory = safe_path(Path(value(self.path, "rev-parse", "--absolute-git-dir")))
+            require(directory.parent == self.common / "worktrees", "Guided memory worktree administration changed")
+            backlink = safe_path(directory / "gitdir")
+            require(backlink.is_file() and backlink.stat().st_size <= 4096
+                    and safe_path(directory / backlink.read_text().removesuffix("\n")) == gitfile,
+                    "Git administration does not belong to the selected memory worktree")
+            prefix = ("--git-dir", str(directory), "--work-tree", str(self.path))
+        common = value(self.path, *prefix, "rev-parse", "--path-format=absolute", "--git-common-dir")
         require(Path(common) == self.control.parent.parent, "Memory belongs to another repository")
-        require(value(self.path, "symbolic-ref", "HEAD") == "refs/heads/" + self.branch, "Memory branch mismatch")
+        require(value(self.path, *prefix, "symbolic-ref", "HEAD") == "refs/heads/" + self.branch, "Memory branch mismatch")
+        return directory
 
     def _layout(self) -> None:
         self._registered()

@@ -126,7 +126,10 @@ def _run(args, report: dict) -> None:
         raise Blocked("DISCOVERY_CREDENTIAL_INVALID", "Supply a bounded read credential via the supported authentication input.") from exc
     observation = inspect_project(checkout, transport, args.github_id)
     intent = read_intent(directory) if directory is not None else None
+    launcher = installer_root() / "current/bin/adp"
     report["facts"] = {**observation.facts, "runtime": runtime_capability(installer_root()),
+                       "installation": {"engine": "AVAILABLE",
+                                        "managed_launcher": "OBSERVED" if launcher.is_file() else "UNKNOWN"},
                        "local_enrollment": intent["phase"] if intent else "UNSELECTED" if directory is None else "ABSENT"}
     if command == "inspect":
         report["questions"] = [
