@@ -35,6 +35,8 @@ CATALOG_PLUGIN = "plugins/adp-codex"
 MAX_SOURCE = 16 * 1024 * 1024
 MAX_RESPONSE = 4 * 1024 * 1024
 ENGINE_ENTRYPOINT = {"adp/__init__.py", "adp/__main__.py", "adp/cli.py"}
+LAUNCHER_ALIAS = Path("engine/bin/adp")
+LAUNCHER_LINK = "../../bin/adp"
 
 
 class Refusal(Exception):
@@ -68,9 +70,13 @@ def marketplace_payload(name: str) -> dict:
 def write_launcher(generation: Path) -> None:
     launcher = generation / "bin/adp"
     launcher.parent.mkdir()
-    interpreter = shlex.quote(str(generation / "engine/bin/python"))
+    interpreter = shlex.quote(str(generation / "venv/bin/python"))
     launcher.write_text(f'#!/bin/sh\nexec {interpreter} -I -B -m adp "$@"\n')
     launcher.chmod(0o700)
+    # Earlier installer drafts and archived skills used this stable path.
+    alias = generation / LAUNCHER_ALIAS
+    alias.parent.mkdir(parents=True)
+    alias.symlink_to(LAUNCHER_LINK)
 
 
 @dataclass(frozen=True)
@@ -432,7 +438,7 @@ class Installation:
     def report(self, name: str, receipt: dict) -> bool:
         plugin = self.observe(name)
         generation = self.root / name
-        engine = generation / "engine"
+        engine = generation / "venv"
         sites = list(engine.glob("lib/python*/site-packages"))
         engine_ok = False
         if len(sites) == 1 and installed_files(sites[0], receipt["engine"]):
@@ -469,6 +475,10 @@ class Installation:
                 require(launcher.stat().st_size <= MAX_RESPONSE
                         and digest(launcher.read_bytes()) == receipt.get("launcher_sha256"),
                         "Installed engine launcher differs from its receipt.")
+                alias = generation / LAUNCHER_ALIAS
+                require(alias.is_symlink() and os.readlink(alias) == LAUNCHER_LINK
+                        and alias.resolve() == launcher,
+                        "The compatible ADP launcher path no longer points to the managed launcher.")
                 probe = ("import importlib.util, json, sys; "
                          "print(json.dumps([sys.prefix, importlib.util.find_spec('adp').origin]))")
                 identity = command([str(engine / "bin/python"), "-I", "-B", "-c", probe],
@@ -488,7 +498,7 @@ class Installation:
         generation = self.root / name
         generation.mkdir(mode=0o700)
         catalog = self.catalog(name)
-        engine = generation / "engine"
+        engine = generation / "venv"
         with tempfile.TemporaryDirectory(dir=self.codex.cwd) as scratch:
             build = Path(scratch) / "source"
             build.mkdir()

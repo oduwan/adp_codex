@@ -231,7 +231,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_unexecutable_launcher_fails_verify_and_is_repairable(self):
         records, current = self.active()
-        engine = self.install.root / OLD / "engine"
+        engine = self.install.root / OLD / "venv"
         sites = engine / "lib/python3.11/site-packages"
         source = self.source()
         for name in self.receipt["engine"]:
@@ -244,6 +244,9 @@ class InstallerTests(unittest.TestCase):
         launcher = engine.parent / "bin/adp"
         launcher.parent.mkdir()
         launcher.write_text("#!/missing/interpreter\n")
+        alias = engine.parent / installer.LAUNCHER_ALIAS
+        alias.parent.mkdir(parents=True)
+        alias.symlink_to(installer.LAUNCHER_LINK)
         receipt = dict(self.receipt, launcher_sha256=installer.digest(launcher.read_bytes()))
         records[OLD] = receipt
         self.install.save(records)
@@ -270,7 +273,7 @@ class InstallerTests(unittest.TestCase):
         import venv
 
         generation = self.home / "generation with spaces"
-        engine = generation / "engine"
+        engine = generation / "venv"
         venv.EnvBuilder(with_pip=False).create(engine)
         candidates = list(engine.glob("lib/python*/site-packages"))
         managed = candidates[0] / "adp"
@@ -280,10 +283,16 @@ class InstallerTests(unittest.TestCase):
             (path / "__init__.py").touch()
             (path / "__main__.py").write_text(f"print({message!r})\n")
         installer.write_launcher(generation)
-        (self.home / "current").symlink_to(generation)
-        result = installer.command([str(self.home / "current/bin/adp"), "--help"], foreign.parent,
-                                   "Managed launcher", env=dict(os.environ, PYTHONPATH=str(foreign.parent)))
-        self.assertEqual(result, b"managed ADP\n")
+        current = self.home / "current"
+        current.symlink_to(self.home / "old-generation")
+        replacement = self.home / "activate"
+        replacement.symlink_to(generation)
+        replacement.replace(current)
+        for relative in ("bin/adp", installer.LAUNCHER_ALIAS):
+            with self.subTest(launcher=relative):
+                result = installer.command([str(current / relative), "--help"], foreign.parent,
+                                           "Managed launcher", env=dict(os.environ, PYTHONPATH=str(foreign.parent)))
+                self.assertEqual(result, b"managed ADP\n")
 
     def test_subprocess_output_is_bounded(self):
         with patch.object(installer, "MAX_RESPONSE", 1024):
