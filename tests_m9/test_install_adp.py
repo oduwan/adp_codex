@@ -347,27 +347,41 @@ class InstallerTests(unittest.TestCase):
             self.install.cleanup(records, name)
         self.codex.remove.assert_not_called()
 
-    def test_interrupted_mutation_is_stopped_or_fenced_until_exit(self):
+    def test_interrupted_mutation_fences_detached_writer_until_exit(self):
         import fcntl
 
         program = """import fcntl, os, signal, sys
 from pathlib import Path
 from scripts import install_adp
-root, ready, changed = map(Path, sys.argv[1:])
+root, ready, released, changed = map(Path, sys.argv[1:])
 signal.signal(signal.SIGTERM, install_adp.interrupt_on_term)
 fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
 fcntl.flock(fd, fcntl.LOCK_EX)
-child = 'import time; from pathlib import Path; Path(%r).touch(); time.sleep(1); Path(%r).touch()' % (str(ready), str(changed))
+child = '''
+from pathlib import Path
+import sys, time
+ready, released, changed = map(Path, sys.argv[1:])
+ready.touch()
+deadline = time.monotonic() + 8
+while not released.exists() and time.monotonic() < deadline:
+    time.sleep(.01)
+if released.exists():
+    changed.touch()
+'''
+shim = 'import subprocess,sys; subprocess.Popen(sys.argv[1:], start_new_session=True)'
 try:
-    install_adp.command([sys.executable, '-c', child], root, 'mutation', mutation_lock=fd)
-except KeyboardInterrupt:
+    install_adp.command([sys.executable, '-c', shim, sys.executable, '-c', child,
+                         str(ready), str(released), str(changed)], root, 'mutation', mutation_lock=fd)
+except install_adp.PendingMutation:
     sys.exit(2)
 """
         for interruption in (signal.SIGTERM, signal.SIGKILL):
             with self.subTest(signal=interruption):
                 ready = self.home / f"ready-{interruption}"
+                released = self.home / f"released-{interruption}"
                 changed = self.home / f"changed-{interruption}"
-                with subprocess.Popen([sys.executable, "-c", program, str(self.home), str(ready), str(changed)],
+                with subprocess.Popen([sys.executable, "-c", program, str(self.home), str(ready),
+                                       str(released), str(changed)],
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
                     try:
                         deadline = time.monotonic() + 10
@@ -376,25 +390,23 @@ except KeyboardInterrupt:
                         self.assertTrue(ready.exists())
                         process.send_signal(interruption)
                         process.wait(timeout=5)
+                        expected = 2 if interruption == signal.SIGTERM else -signal.SIGKILL
+                        self.assertEqual(process.returncode, expected)
                         fd = os.open(self.home, os.O_RDONLY | os.O_DIRECTORY)
                         try:
-                            if interruption == signal.SIGKILL:
-                                with self.assertRaises(BlockingIOError):
-                                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                                deadline = time.monotonic() + 5
-                                while True:
-                                    try:
-                                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                                        break
-                                    except BlockingIOError:
-                                        if time.monotonic() >= deadline:
-                                            self.fail("Mutation guard failed to release its lock")
-                                        time.sleep(0.01)
-                                self.assertTrue(changed.exists())
-                            else:
-                                self.assertEqual(process.returncode, 2)
+                            with self.assertRaises(BlockingIOError):
                                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                                self.assertFalse(changed.exists())
+                            released.touch()
+                            deadline = time.monotonic() + 5
+                            while True:
+                                try:
+                                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                                    break
+                                except BlockingIOError:
+                                    if time.monotonic() >= deadline:
+                                        self.fail("Mutation guard failed to release its lock")
+                                    time.sleep(0.01)
+                            self.assertTrue(changed.exists())
                         finally:
                             os.close(fd)
                     finally:

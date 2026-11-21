@@ -47,6 +47,32 @@ class UnknownCodexState(Refusal):
     pass
 
 
+class PendingMutation(Refusal):
+    pass
+
+
+MUTATION_GUARD = """
+import ctypes
+import os
+import subprocess
+import sys
+
+# Linux PR_SET_CHILD_SUBREAPER. A CLI shim can exit or change sessions while a
+# native writer is still active. This process inherits the installer's flock.
+if ctypes.CDLL(None).prctl(36, 1, 0, 0, 0) != 0:
+    raise SystemExit(125)
+try:
+    result = subprocess.call(sys.argv[1:])
+finally:
+    while True:
+        try:
+            os.waitpid(-1, 0)
+        except ChildProcessError:
+            break
+raise SystemExit(result)
+"""
+
+
 def require(condition: object, message: str) -> None:
     if not condition:
         raise Refusal(message)
@@ -181,36 +207,40 @@ def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
     output = bytearray()
     inherited = ()
     if mutation_lock is not None:
-        # Hold the same flock across abrupt installer exit, including when
-        # Codex's CLI shim closes inherited descriptors in its own child.
-        program = "import subprocess, sys; raise SystemExit(subprocess.call(sys.argv[1:]))"
-        argv = [sys.executable, "-I", "-c", program, *argv]
+        argv = [sys.executable, "-I", "-c", MUTATION_GUARD, *argv]
         inherited = (mutation_lock,)
-    with subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                          start_new_session=True, pass_fds=inherited) as process:
-        try:
-            with selectors.DefaultSelector() as readable:
-                readable.register(process.stdout, selectors.EVENT_READ)
-                while True:
-                    remaining = deadline - time.monotonic()
-                    require(remaining > 0 and readable.select(remaining),
-                            f"{label} timed out. Check prerequisites and retry.")
-                    chunk = os.read(process.stdout.fileno(), 65536)
-                    if not chunk:
-                        break
-                    output.extend(chunk)
-                    require(len(output) <= MAX_RESPONSE, f"{label} exceeded the output limit.")
-            process.wait(timeout=max(0, deadline - time.monotonic()))
-        except (KeyboardInterrupt, OSError, Refusal, subprocess.TimeoutExpired) as exc:
+    process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               start_new_session=True, pass_fds=inherited)
+    try:
+        with selectors.DefaultSelector() as readable:
+            readable.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                require(remaining > 0 and readable.select(remaining),
+                        f"{label} timed out. Check prerequisites and retry.")
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                output.extend(chunk)
+                require(len(output) <= MAX_RESPONSE, f"{label} exceeded the output limit.")
+        process.wait(timeout=max(0, deadline - time.monotonic()))
+    except (KeyboardInterrupt, OSError, Refusal, subprocess.TimeoutExpired) as exc:
+        if mutation_lock is not None and process.poll() is None:
+            # Leave the guard holding the same lock until every writer exits.
+            # The next invocation must observe the receipt and actual effect.
+            raise PendingMutation(f"{label} did not settle. Wait for the installer lock, then retry.") from None
+        if mutation_lock is None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             process.wait()
-            if isinstance(exc, subprocess.TimeoutExpired):
-                raise Refusal(f"{label} timed out. Check prerequisites and retry.") from None
-            raise
+        if isinstance(exc, subprocess.TimeoutExpired):
+            raise Refusal(f"{label} timed out. Check prerequisites and retry.") from None
+        raise
+    finally:
+        process.stdout.close()
     require(process.returncode == 0, f"{label} failed. Check its prerequisites in the installation guide.")
     return bytes(output)
 
@@ -329,6 +359,8 @@ class Codex:
                 "Codex cleanup is unconfirmed.")
 
     def probe_lifecycle(self) -> None:
+        import fcntl
+
         name, version = "adp-managed-probe", "0.0.1"
         catalog = self.cwd / "probe-catalog"
         plugin = catalog / CATALOG_PLUGIN
@@ -346,11 +378,17 @@ class Codex:
         marketplace.write_text(json.dumps(marketplace_payload(name)))
         probe = Codex(self.executable, self.cwd / "probe-codex-home", self.cwd)
         probe.home.mkdir()
-        probe.add(name, catalog, version)
-        expected = probe.home / "plugins/cache" / name / NAME / version / SKILL
-        require(any(entry.get("path") == str(expected) and entry.get("enabled") is True for entry in probe.skills()),
-                "The disposable Codex skill could not be discovered and enabled.")
-        probe.remove(name, catalog)
+        fd = os.open(probe.home, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            probe.mutation_lock = fd
+            probe.add(name, catalog, version)
+            expected = probe.home / "plugins/cache" / name / NAME / version / SKILL
+            require(any(entry.get("path") == str(expected) and entry.get("enabled") is True for entry in probe.skills()),
+                    "The disposable Codex skill could not be discovered and enabled.")
+            probe.remove(name, catalog)
+        finally:
+            os.close(fd)
 
     def skills(self) -> list[dict]:
         # A new stdio session, with only initialize and skills/list. No thread or model turn.
@@ -649,6 +687,8 @@ class Installation:
             self.sync_root()
         except UnknownCodexState:
             self.retain_unknown(records, name)
+            raise
+        except PendingMutation:
             raise
         except (Refusal, OSError, ValueError, KeyError, TypeError, AttributeError, KeyboardInterrupt):
             if self.load()[1] != name:
