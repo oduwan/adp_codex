@@ -83,7 +83,7 @@ repository, checkout revision, issue scope, delegated effects, merge mode,
 ownership generation and remaining window. Use one round and one worker
 at a time unless the operator selects a different finite bound. Handoff
 asks for authorization to relinquish ownership through ADP's stopped-context
-checks. If the resume request includes `recover_checkpoint: true`, explain
+checks and requires a retained execution window. If the resume request includes `recover_checkpoint: true`, explain
 that accepted M1 recovery of the retained checkpoint precedes the invocation.
 
 After a separate, explicit operator reply authorizing this invocation, run

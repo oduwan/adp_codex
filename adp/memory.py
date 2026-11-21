@@ -336,7 +336,7 @@ class Memory:
             state["owner"] = None
             return self._checkpoint(head, state, tasks)
 
-    def recover(self) -> dict:
+    def recover(self, *, before_effects=None) -> dict:
         """Explicitly publish a validated pending transaction or fast-forward sync.
 
         A missing owner is never repaired by recovery. Released/foreign owners
@@ -344,6 +344,8 @@ class Memory:
         """
         author(self.config.root)
         with locked(self.control):
+            if before_effects is not None:
+                before_effects()
             self._registered()
             pending_path = self.control / "pending.json"
             if pending_path.exists():

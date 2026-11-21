@@ -148,6 +148,11 @@ class CodexGuidedFlowTests(unittest.TestCase):
             self.assertEqual(code, 0, view)
             self.assertEqual(view["result"]["generation"], before["state"]["generation"])
         code, status = invoke("status", *self.retained, "--for-operation", "handoff")
+        self.assertEqual(code, 4, status)
+        self.assertEqual(status["blockers"][0]["code"], "HANDOFF_WINDOW_REQUIRED")
+        self.assertNotIn("invocation_review", status)
+        code, status = invoke("status", *self.retained, "--for-operation", "resume")
+        self.assertEqual(code, 0, status)
         digest = status["invocation_review"]
         with patch("adp.operator_controller.InstalledProject.build") as native:
             code, replay = invoke("handoff", *self.retained, "--reviewed", "f" * 64, "--authorize-execution")
@@ -155,8 +160,7 @@ class CodexGuidedFlowTests(unittest.TestCase):
             self.assertEqual(replay["blockers"][0]["code"], "INVOCATION_CHANGED")
             code, refused = invoke("handoff", *self.retained, "--reviewed", digest)
             self.assertEqual(code, 4, refused)
-            with patch("adp.codex_cli.runtime", return_value={"status": "SUPPORTED"}):
-                code, refused = invoke("resume", *self.retained, "--reviewed", digest, "--authorize-execution")
+            code, refused = invoke("handoff", *self.retained, "--reviewed", digest, "--authorize-execution")
             self.assertEqual(code, 4, refused)
             self.assertEqual(refused["blockers"][0]["code"], "INVOCATION_CHANGED")
             native.assert_not_called()
@@ -302,10 +306,42 @@ class CodexGuidedFlowTests(unittest.TestCase):
         code, examined = invoke("status", *self.retained, "--for-operation", "resume")
         self.assertEqual(code, 0, examined)
         with (patch("adp.codex_cli.runtime", return_value={"status": "SUPPORTED"}),
-              patch.object(Memory, "recover") as recover):
+              patch.object(Memory, "_finish") as publish):
             code, view = invoke("resume", *self.retained, "--reviewed", examined["invocation_review"], "--authorize-execution")
         self.assertEqual(code, 4, view)
         self.assertEqual(view["blockers"][0]["code"], "OPERATOR_REFUSED")
-        recover.assert_not_called()
+        publish.assert_not_called()
         self.assertEqual(memory.inspect(), previous)
+        self.assertEqual(pending.read_bytes(), content)
+
+    def test_resume_rechecks_review_at_m1_lock_before_recovering_late_journal(self):
+        from adp.storage import locked
+
+        self.apply()
+        f = self.fixture
+        memory = Memory(load_profile(f.directory / "profile.json", f.trust).memory_config())
+        with patch.object(Memory, "_finish", side_effect=ADPError("synthetic interrupted transaction")):
+            with self.assertRaises(ADPError):
+                memory.add_task("synthetic-late-journal")
+        pending = memory.control / "pending.json"
+        content = pending.read_bytes()
+        pending.unlink()
+        before = memory.inspect()
+        code, examined = invoke("status", *self.retained, "--for-operation", "resume")
+        self.assertEqual(code, 0, examined)
+        self.assertFalse(examined["invocation_request"]["recover_checkpoint"])
+
+        @contextmanager
+        def arrived(directory):
+            with locked(directory):
+                pending.write_bytes(content)
+                yield
+
+        with (patch("adp.codex_cli.runtime", return_value={"status": "SUPPORTED"}),
+              patch("adp.memory.locked", side_effect=arrived), patch.object(Memory, "_finish") as publish):
+            code, view = invoke("resume", *self.retained, "--reviewed", examined["invocation_review"], "--authorize-execution")
+        self.assertEqual(code, 4, view)
+        self.assertEqual(view["blockers"][0]["code"], "INVOCATION_CHANGED")
+        publish.assert_not_called()
+        self.assertEqual(memory.inspect()["remote_head"], before["remote_head"])
         self.assertEqual(pending.read_bytes(), content)

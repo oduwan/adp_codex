@@ -675,6 +675,8 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
                                 "merge_mode": profile.delegation["merge_mode"],
                                 "checks": [{"name": check.name, "phase": str(check.phase)} for check in profile.checks],
                                 "window": profile.payload["window"],
+                                "track_current": (track is not None and track["id"] == profile.payload["window"]["id"]
+                                                  and track["generation"] == state["generation"]),
                                 "used_rounds": track["used_rounds"] if track else 0}
     if command == "reconnect":
         verify_enrollment(profile)

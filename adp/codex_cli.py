@@ -220,6 +220,7 @@ def result(row):
                                 "operations": rows(scope["operations"], lambda name: choice(name, SUPPORTED), 16),
                                 "merge_mode": choice(scope["merge_mode"], ("MANUAL", "DELEGATED")),
                                 "checks": checks(scope["checks"]),
+                                "track_current": boolean(scope["track_current"]),
                                 "window": window(scope["window"]), "used_rounds": number(scope["used_rounds"])}
     return output
 
@@ -279,6 +280,8 @@ def invocation(view, operation, rounds, parallel):
     if (view["status"] != "ENROLLED" and not recovering or scope is None or observed.get("local_owner") is not True
             or operation == "run" and observed.get("configuration") != "CONFIGURATION_VERIFIED"):
         return None, "INVOCATION_UNAVAILABLE"
+    if operation == "handoff" and not scope["track_current"]:
+        return None, "HANDOFF_WINDOW_REQUIRED"
     request = {"operation": operation, "recover_checkpoint": recovering}
     if operation != "handoff":
         limits = scope["window"]
@@ -374,6 +377,8 @@ def run(args):
                 action = "Check current ownership, configuration and remaining finite limits."
                 if view.get("result", {}).get("memory_health") in ("RECOVERY_REQUIRED", "REMOTE_MISMATCH"):
                     action = "Reconcile the retained checkpoint using the accepted M1 operator recovery procedure."
+                if blocker == "HANDOFF_WINDOW_REQUIRED":
+                    action = "There is no retained finite execution window to hand off."
                 view["blockers"].append({"code": blocker, "action": action})
                 return view, 4
             view.update(proposed)

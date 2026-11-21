@@ -83,6 +83,7 @@ def run(args, *, expected_binding=None, before_effects=None):
         if command=='handoff': result=selected.handoff(authorized=True, **scoped)
         else:
             method=selected.resume if command=='resume' else selected.run
+            if command=='resume' and before_effects is not None: scoped['recovery_check']=before_effects
             result=method(rounds=rounds,maximum_parallel=parallel,authorized=True, **scoped)
         report=exit_report(p,controller,result,command)
         return report,0 if report['status'] in ('COMPLETE','HANDOFF_RECORDED') else 7 if report['status'] in ('UNSUPPORTED','UNSUPPORTED_RUNTIME') else 4

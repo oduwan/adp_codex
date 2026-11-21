@@ -222,7 +222,7 @@ class AutonomousTrack:
         self._slot(spec, packet=result.packet_reference, status="ACTIVE")
         return self._attach(spec, result.packet_reference)
 
-    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False, lease=None):
+    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False, lease=None, recovery_check=None):
         if not authorized:
             raise AuthorityError("Autonomous track requires explicit finite execution authority")
         parallel = self.window.maximum_parallel if maximum_parallel is None else maximum_parallel
@@ -231,10 +231,13 @@ class AutonomousTrack:
         c, admissions = self.c, []
         lock = invocation_lock(c.memory.control, lease=lease) if lease is not None else invocation_lock(c.memory.control)
         with lock:
-            c._privacy_preflight()
             if recover:
-                c.memory.recover()
-                c._privacy_preflight()
+                def check_recovery():
+                    if recovery_check is not None:
+                        recovery_check()
+                    c._privacy_preflight()
+                c.memory.recover(before_effects=check_recovery)
+            c._privacy_preflight()
             self._window(create=True)
             try:
                 if self._ticket_stops():
