@@ -104,10 +104,14 @@ intent, independently signed inputs, source, trust or ownership differ, inspect
 the blocker before proceeding. Use the [accepted memory recovery](../MEMORY_CLI.md)
 for interrupted M1 checkpoints. Completed enrollment is reused without
 claiming released ownership. The current signed window still applies.
+If an incomplete enrollment already has an unowned memory checkpoint, confirm
+its provenance and use the separately authorized M1 ownership procedure before
+resuming setup.
 Use `reconnect`, `doctor`, or `preview` with the same selectors. Read-only
 commands also accept `--operator-profile` in place of `--directory` for an
 existing installed profile. Reconnect verifies locally retained enrollment and
-the canonical remote identity with the accepted scoped read credential.
+the canonical remote identity with the accepted scoped read credential. Guided
+reconnection checks the original local coordination destination as well.
 
 All command results have version `schema_version: 1`, `command`, `mode`,
 `status`, optional structured `facts`, `plan`, `approval` and `result`

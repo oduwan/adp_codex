@@ -30,24 +30,41 @@ class Memory:
         self.config = config
         self.pinned_local_remote = pinned_local_remote
         self.branch, self.path = config.require_storage()
-        common = Path(value(config.root, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-        self.control = safe_path(common / "adp" / key(self.branch))
+        self.common = safe_path(Path(value(config.root, "rev-parse", "--path-format=absolute", "--git-common-dir")))
+        self.control = safe_path(self.common / "adp" / key(self.branch))
+
+    def _write_git(self, cwd: Path, *args: str, input: bytes | None = None) -> bytes:
+        if self.pinned_local_remote is None:
+            return git(cwd, *args, input=input)
+        self.verify_pinned_remote()
+        if cwd == self.config.root:
+            directory = self.common
+            prefix = ("--git-dir", str(directory))
+        else:
+            require(cwd == self.path, "Unexpected guided memory Git working directory")
+            self._registered()
+            directory = safe_path(Path(value(cwd, "rev-parse", "--absolute-git-dir")))
+            require(directory.parent == self.common / "worktrees", "Guided memory worktree administration changed")
+            prefix = ("--git-dir", str(directory), "--work-tree", str(cwd))
+        return git(cwd, *prefix, *args, input=input)
 
     def _remote_git(self, cwd: Path, args: tuple[str, ...], refspec: str) -> bytes:
         if self.pinned_local_remote is None:
             return git(cwd, *args, self.config.remote, refspec)
-        self.verify_pinned_remote()
         endpoint = safe_path(self.pinned_local_remote).as_uri()
         # A private one-use alias prevents a selected remote name or an
         # existing URL rewrite from redirecting the approved local endpoint.
         alias = "adp-local-" + secrets.token_hex(16) + ":"
-        return git(cwd, "-c", "protocol.allow=never", "-c", "protocol.file.allow=always",
-                   "-c", f"url.{endpoint}.insteadOf={alias}", "-c", f"url.{endpoint}.pushInsteadOf={alias}",
-                   *args, alias, refspec)
+        return self._write_git(cwd, "-c", "protocol.allow=never", "-c", "protocol.file.allow=always",
+                               "-c", f"url.{endpoint}.insteadOf={alias}", "-c", f"url.{endpoint}.pushInsteadOf={alias}",
+                               *args, alias, refspec)
 
     def verify_pinned_remote(self) -> None:
         if self.pinned_local_remote is not None:
             path = safe_path(self.pinned_local_remote)
+            require(safe_path(self.common) == self.common
+                    and Path(value(self.config.root, "rev-parse", "--path-format=absolute", "--git-common-dir")) == self.common,
+                    "The approved coordination Git directory changed")
             require(value(self.config.root, 'remote', 'get-url', '--all', self.config.remote) in (str(path), path.as_uri())
                     and value(self.config.root, 'remote', 'get-url', '--push', '--all', self.config.remote) in (str(path), path.as_uri()),
                     'The approved local coordination destination changed')
@@ -176,13 +193,13 @@ class Memory:
                 state = {"schema_version": 1, "repository_id": self.config.identity,
                          "revision": 1, "generation": 0, "owner": None,
                          "task_keys": [], "assignment_sequence": 0}
-                state_blob = git(
+                state_blob = self._write_git(
                     self.config.root, "hash-object", "-w", "--stdin", input=encode(state)).decode().strip()
-                ignore_blob = git(self.config.root, "hash-object", "-w", "--stdin", input=IGNORE).decode().strip()
-                tree = git(self.config.root, "mktree", input=(
+                ignore_blob = self._write_git(self.config.root, "hash-object", "-w", "--stdin", input=IGNORE).decode().strip()
+                tree = self._write_git(self.config.root, "mktree", input=(
                     f"100644 blob {ignore_blob}\t.gitignore\n100644 blob {state_blob}\tstate.json\n").encode()).decode().strip()
-                commit = git(self.config.root, "commit-tree", tree, "-m", "Initialize coordination memory").decode().strip()
-            git(self.config.root, "worktree", "add", "-b", self.branch, str(self.path), commit)
+                commit = self._write_git(self.config.root, "commit-tree", tree, "-m", "Initialize coordination memory").decode().strip()
+            self._write_git(self.config.root, "worktree", "add", "-b", self.branch, str(self.path), commit)
             if not remote:
                 self._push(None)
             return self.inspect()
@@ -248,8 +265,8 @@ class Memory:
         current = value(self.path, "rev-parse", "HEAD")
         if current == base:
             self._write_files(state, tasks)
-            git(self.path, "add", "--all", "--", "state.json", "tasks")
-            git(self.path, "commit", "-m", f"Checkpoint coordination revision {state['revision']}")
+            self._write_git(self.path, "add", "--all", "--", "state.json", "tasks")
+            self._write_git(self.path, "commit", "-m", f"Checkpoint coordination revision {state['revision']}")
         else:
             require(value(self.path, "rev-parse", "HEAD^") == base, "Pending checkpoint parent mismatch")
             stored_state, stored_tasks = self._read_ref(current)
@@ -361,7 +378,7 @@ class Memory:
                         raise Conflict("Divergent memory histories require operator reconciliation") from exc
                     if self._inbox():
                         raise Conflict("Local inbox would be stranded by synchronization")
-                    git(self.path, "merge", "--ff-only", "--no-edit", remote)
+                    self._write_git(self.path, "merge", "--ff-only", "--no-edit", remote)
             return self.inspect()
 
     def add_task(self, identifier: str, source_revision: str | None = None) -> dict:

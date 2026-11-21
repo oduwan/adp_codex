@@ -402,12 +402,13 @@ def read_intent(directory: Path) -> dict | None:
     if not path.exists():
         return None
     intent = private_file(path, limit=LIMIT)
-    fields(intent, "schema_version approval profile_digest trust_digest repository_id issue phase document")
+    fields(intent, "schema_version approval profile_digest trust_digest repository_id issue phase document effects")
     require(type(intent["schema_version"]) is int and intent["schema_version"] == SCHEMA
             and intent["phase"] in ("PENDING", "COMPLETE")
             and all(type(intent[k]) is str and re.fullmatch("[0-9a-f]{64}", intent[k])
                     for k in ("approval", "profile_digest", "trust_digest"))
             and type(intent["issue"]) is int and intent["issue"] > 0
+            and type(intent["effects"]) is dict
             and digest(intent["document"]) == intent["profile_digest"],
             "Retained enrollment intent is invalid; preserve local records for inspection")
     return intent
@@ -514,6 +515,8 @@ def prepare(observation: Observation, directory: Path, trust_path: Path, issue: 
                     "Previously established state requires explicit reconnect")
         else:
             check_initial_or_continuation(profile, memory, intent)
+    except Blocked:
+        raise
     except FAILURES as exc:
         raise Blocked("LOCAL_STATE_REQUIRES_RECONCILIATION",
                       "Confirm isolated owned paths, local bare coordination, and the retained enrollment before setup.") from exc
@@ -543,8 +546,9 @@ def check_initial_or_continuation(profile: OperatorProfile, memory: dict, intent
         state = memory["state"]
         initialized = state["schema_version"] == 3 and state["execution"]["schema_version"] == 3
         if not initialized:
-            require(state["owner"] is None and state["generation"] == 0 or memory["local_owner"],
-                    "Retain prior ownership; use the accepted M1 handoff and recovery procedures")
+            if not memory["local_owner"]:
+                raise Blocked("M1_OWNERSHIP_REQUIRED",
+                              "Reconcile the existing checkpoint and establish its original ownership through M1 before resuming.")
     else:
         require(intent["phase"] == "PENDING", "Completed enrollment has lost its memory; preserve retained evidence")
 
@@ -582,10 +586,12 @@ def apply_plan(plan: Plan, *, approved: str, authorized: bool) -> dict:
                     "Existing state requires its original enrollment")
             intent = {"schema_version": SCHEMA, "approval": approved, "profile_digest": profile.fingerprint,
                       "trust_digest": profile.trust.fingerprint, "repository_id": profile.repository_id,
-                      "issue": plan.summary["issue"], "phase": "PENDING", "document": profile.evidence.document}
+                      "issue": plan.summary["issue"], "phase": "PENDING", "document": profile.evidence.document,
+                      "effects": effects}
             atomic(directory / INTENT, encode(intent, LIMIT))
         else:
-            require(intent["approval"] == approved, "Existing enrollment has a different approved intent")
+            require(intent["approval"] == approved and intent["effects"] == effects,
+                    "Existing enrollment has a different approved intent")
             check_initial_or_continuation(profile, memory, intent)
         if not profile.path.exists():
             require(intent["phase"] == "PENDING" and memory["health"] == "UNINITIALIZED",
@@ -617,12 +623,15 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
         require(intent is not None, "Select the existing legacy profile explicitly to reconnect")
     profile = load_profile(profile_path, trust)
     match_checkout(profile, checkout)
+    writer = None
     if intent:
         require(profile.fingerprint == intent["profile_digest"] and profile.trust.fingerprint == intent["trust_digest"],
                 "Persisted profile or trust does not match the enrollment intent")
-    observed = status(profile)
+        effects, writer = local_effects(profile, directory, checkout)
+        require(effects == intent["effects"], "Local coordination no longer matches the retained enrollment destination")
+    observed = status(profile, bound_memory=writer)
     report = {key: observed[key] for key in ("repository_id", "memory_health", "local_owner", "generation", "enrollment", "execution_liveness")}
-    memory = Memory(profile.memory_config()).inspect()
+    memory = (writer or Memory(profile.memory_config())).inspect()
     report["status"] = "ENROLLED" if completed(profile, memory) else "PENDING"
     if command == "reconnect":
         verify_enrollment(profile)

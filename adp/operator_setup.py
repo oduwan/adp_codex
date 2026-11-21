@@ -32,9 +32,9 @@ def verify_enrollment(profile):
     profile.live()
 
 
-def status(profile):
+def status(profile, *, bound_memory: Memory | None = None):
     profile.live()
-    memory=Memory(profile.memory_config()).inspect()
+    memory=(bound_memory or Memory(profile.memory_config())).inspect()
     state=memory.get('state',{})
     execution=state.get('execution',{})
     # No runtime construction, recovery, lock, discovery, or migration.
@@ -130,7 +130,8 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
             'Setup requires the persisted, verified operator profile')
     cfg=profile.memory_config()
     if expected_preview is not None:
-        require(type(bound_memory) is Memory and bound_memory.config == cfg and bound_memory.pinned_local_remote is not None,
+        require(type(bound_memory) is Memory and bound_memory.config == cfg
+                and bound_memory.control == Memory(cfg).control and bound_memory.pinned_local_remote is not None,
                 'Guided setup requires the approved local memory destination')
         memory=bound_memory
         memory.verify_pinned_remote()
@@ -146,6 +147,13 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
     profile.live(retain=path.exists() and (profile.state/'revocation.json').exists())
     preflight=preview(profile) if expected_preview is None else preview(profile, expected=expected_preview)
     require(preflight['status']=='CONFIGURATION_VERIFIED','UNKNOWN: complete independently verified enrollment is required before memory writes')
+    def check_guided_checkout():
+        if expected_preview is not None:
+            workspace=profile.tasks[0].workspace
+            require(value(workspace,'symbolic-ref','--quiet','HEAD')==expected_preview.checkout_ref
+                    and value(workspace,'rev-parse','HEAD')==expected_preview.checkout_sha,
+                    'Guided enrollment feature checkout changed after final preflight')
+    check_guided_checkout()
     def initial_layout():
         if not profile.state.exists(): return
         info=safe_path(profile.state).stat()
@@ -178,12 +186,17 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
         profile.live(retain=True)
     with locked(profile.state):
         profile.live()
+        check_guided_checkout()
         observed=memory.inspect()
+        if expected_preview is not None and initial:
+            require(observed['health']=='UNINITIALIZED','Guided enrollment cannot adopt a concurrently initialized checkpoint')
+        initialized_here=False
         if observed['health']=='UNINITIALIZED':
             if expected_preview is None:
                 memory.initialize(authorized=True)
             else:
                 memory.initialize(authorized=True, initial_only=True)
+            initialized_here=True
             observed=memory.inspect()
         require(observed['health']=='SYNCED','Use explicit M1 recovery for an interrupted checkpoint; never reset memory')
         if observed['state']['owner'] is None:
@@ -191,6 +204,7 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
             if expected_preview is None:
                 memory.claim(profile.payload['memory']['owner'])
             else:
+                require(initialized_here,'An existing unowned checkpoint requires separate explicit M1 ownership')
                 memory.claim(profile.payload['memory']['owner'], initial_only=True)
         else:
             require(observed['local_owner'],'BLOCKED_OPERATOR: foreign owner requires confirmed-stop handoff')

@@ -326,6 +326,84 @@ class GuidedEnrollmentTests(OperatorFixture):
         self.assertFalse(self.profile.state.exists())
         self.assertEqual(value(self.bare, "for-each-ref"), "")
 
+    def test_branch_switch_at_final_metadata_read_refuses_same_sha(self):
+        from adp.operator_setup import setup
+
+        plan, _ = self.proposed()
+        original = self.transport.get
+        reads = []
+
+        def get(path):
+            if path == self.prefix:
+                reads.append(path)
+                if len(reads) == 3:
+                    run(self.product, "checkout", "-b", "work/different")
+            return original(path)
+
+        def changed(profile, **kwargs):
+            with patch.object(self.transport, "get", side_effect=get):
+                return setup(profile, **kwargs)
+
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch("adp.enrollment.setup", side_effect=changed)):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        self.assertEqual(value(self.product, "rev-parse", "HEAD"), self.head)
+        self.assertEqual(value(self.product, "symbolic-ref", "HEAD"), "refs/heads/work/different")
+        self.assertFalse(self.profile.state.exists())
+        self.assertEqual(value(self.bare, "for-each-ref"), "")
+
+    def test_preexisting_checkpoint_between_inspections_stays_unowned_on_retry(self):
+        from adp.operator_evidence import OperatorEvidence
+
+        plan, _ = self.proposed()
+        prepare = OperatorEvidence.prepare
+
+        def initialize_between(inspector):
+            prepare(inspector)
+            Memory(inspector.profile.memory_config()).initialize(authorized=True)
+
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch.object(OperatorEvidence, "prepare", initialize_between)):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        installed = load_profile(self.directory / "profile.json", self.trust)
+        memory = Memory(installed.memory_config())
+        previous = memory.inspect()
+        code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write", proposal=False)
+        self.assertEqual(code, 4, report)
+        self.assert_blocked(report, "M1_OWNERSHIP_REQUIRED")
+        self.assertEqual(memory.inspect(), previous)
+        self.assertIsNone(previous["state"]["owner"])
+
+    def test_bound_common_git_directory_survives_checkout_gitfile_redirect(self):
+        from adp.memory import git as original_git
+
+        run(self.control, "commit", "--allow-empty", "-m", "fixture: coordination seed")
+        lane = self.base / "linked-control"
+        run(self.control, "worktree", "add", "-b", "control-lane", str(lane))
+        self.body["memory"]["repo"] = str(lane)
+        self.reply = self.signed("profile", copy.deepcopy(self.body))
+        alternate = self.base / "alternate-control"
+        alternate.mkdir()
+        run(alternate, "init")
+        plan, _ = self.proposed()
+        visited = []
+
+        def changed(path, *args, **kwargs):
+            if "hash-object" in args and not visited:
+                (lane / ".git").write_text(f"gitdir: {alternate / '.git'}\n")
+                visited.append(args)
+            return original_git(path, *args, **kwargs)
+
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch("adp.memory.git", side_effect=changed)):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        self.assertEqual(visited[0][:2], ("--git-dir", str(self.control / ".git")))
+        self.assertIn("count: 0", value(alternate, "count-objects", "-v").splitlines())
+        self.assertEqual(value(self.bare, "for-each-ref"), "")
+
     def test_claim_race_never_reclaims_a_released_generation(self):
         claim = Memory.claim
         plan, _ = self.proposed()
@@ -365,17 +443,19 @@ class GuidedEnrollmentTests(OperatorFixture):
         self.assertEqual(state["revision"], 1)
 
     def test_interruption_at_profile_publication_leaves_single_link_and_retries(self):
-        from adp.enrollment import atomic
+        from adp.storage import sync_directory
 
         plan, _ = self.proposed()
 
-        def interrupted(path, raw, **kwargs):
-            atomic(path, raw, **kwargs)
-            if path.name == "profile.json":
-                raise ADPError("fixture interruption after publication")
+        def interrupted(directory):
+            profile = self.directory / "profile.json"
+            if directory == self.directory and profile.exists():
+                self.assertEqual(profile.stat().st_nlink, 1)
+                raise ADPError("fixture interruption before publication directory sync")
+            return sync_directory(directory)
 
         with (patch("adp.enrollment.exchange", return_value=self.reply),
-              patch("adp.enrollment.atomic", side_effect=interrupted)):
+              patch("adp.storage.sync_directory", side_effect=interrupted)):
             code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
         self.assertEqual(code, 4, report)
         self.assertEqual(read_intent(self.directory)["phase"], "PENDING")
@@ -408,6 +488,18 @@ class GuidedEnrollmentTests(OperatorFixture):
         self.assertEqual(code, 0, report)
         self.assertEqual(report["status"], "ALREADY_ENROLLED")
         self.assertEqual(memory.inspect(), previous)
+
+    def test_reconnect_refuses_a_different_remote_with_the_same_checkpoint(self):
+        plan, _ = self.proposed()
+        with patch("adp.enrollment.exchange", return_value=self.reply):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 0, report)
+        alternate = self.base / "copy.git"
+        run(self.base, "clone", "--bare", str(self.bare), str(alternate))
+        run(self.control, "remote", "set-url", "memory", str(alternate))
+        code, report = self.call("reconnect", proposal=False)
+        self.assertEqual(code, 4, report)
+        self.assertNotEqual(report["status"], "RECONNECTED")
 
     def test_interrupted_enrollment_reuses_exact_intent_and_native_generation(self):
         plan, _ = self.proposed()
