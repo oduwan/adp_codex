@@ -73,6 +73,8 @@ def parser() -> argparse.ArgumentParser:
     add_operator_commands(commands, common)
     from .enrollment_cli import add_commands as add_enrollment_commands
     add_enrollment_commands(commands)
+    from .codex_cli import add_commands as add_codex_commands
+    add_codex_commands(commands)
     return root
 
 
@@ -93,6 +95,11 @@ def check_product_worktrees(config: Config) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
+        if args.command == "codex":
+            from .codex_cli import run as codex_run
+            report, code = codex_run(args)
+            emit(report)
+            return code
         if args.command == "enroll":
             from .enrollment_cli import run as enrollment_run
             report, code = enrollment_run(args)
