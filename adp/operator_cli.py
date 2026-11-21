@@ -24,7 +24,7 @@ def add_commands(commands,common):
             command.add_argument('--authorize-memory-write',action='store_true')
 
 
-def run(args):
+def run(args, *, expected_binding=None):
     from .operator_setup import setup,preview,status,verify_enrollment
     from .operator_controller import InstalledProject
     require(getattr(args,'operator_profile',None) is not None and getattr(args,'operator_trust',None) is not None,
@@ -33,10 +33,15 @@ def run(args):
     # Mixing legacy flags with a signed profile is an authority ambiguity.
     require(all(getattr(args,k,None) is None for k in ('config','remote','repository_id','branch','storage')),
         'Memory/remote overrides cannot modify an installed delegation')
-    p=load_profile(args.operator_profile,args.operator_trust,retain_revocation=(
+    retain=(
         args.command in ('run','resume','handoff') and getattr(args,'authorize_execution',False)
-        or args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False)),
+        or args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False))
+    p=load_profile(args.operator_profile,args.operator_trust,retain_revocation=retain and expected_binding is None,
         recover_initial_setup=(args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False)))
+    if expected_binding is not None:
+        require((p.fingerprint,p.trust.fingerprint)==expected_binding,'The installed profile or trust changed after the execution preview')
+        verify_enrollment(p)
+        if retain: p.live(retain=True)
     command=args.command
     if command=='status': return status(p),0
     if command=='setup' and args.apply:

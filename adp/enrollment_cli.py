@@ -18,23 +18,26 @@ def add_commands(commands) -> None:
     enroll = commands.add_parser("enroll", help="Inspect and configure an explicitly selected GitHub project")
     stages = enroll.add_subparsers(dest="enroll_command", required=True)
     for name in ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect"):
-        stage = stages.add_parser(name)
-        stage.add_argument("--repo", required=True, type=Path)
-        stage.add_argument("--remote", required=True)
-        stage.add_argument("--github-id", help="Expected immutable GitHub database ID")
-        stage.add_argument("--directory", type=Path, help="Private guided enrollment directory")
-        if name in ("inspect", "plan", "apply"):
-            stage.add_argument("--token-env", default="GH_TOKEN", help="Read credential environment variable name")
-        if name != "inspect":
-            stage.add_argument("--operator-trust", type=Path, help="Explicit protected existing operator trust root")
-        if name in ("plan", "apply"):
-            stage.add_argument("--operator-socket", type=Path, help="Protected local proposal service")
-            stage.add_argument("--issue", type=int, help="Select one open issue on this feature checkout")
-        if name in ("status", "doctor", "preview", "reconnect"):
-            stage.add_argument("--operator-profile", type=Path, help="Guided profile with its retained enrollment record")
-        if name == "apply":
-            stage.add_argument("--approve", help="Exact approved plan digest")
-            stage.add_argument("--authorize-memory-write", action="store_true")
+        selectors(stages.add_parser(name), name)
+
+
+def selectors(stage, name: str) -> None:
+    stage.add_argument("--repo", required=True, type=Path)
+    stage.add_argument("--remote", required=True)
+    stage.add_argument("--github-id", help="Expected immutable GitHub database ID")
+    stage.add_argument("--directory", type=Path, help="Private guided enrollment directory")
+    if name in ("inspect", "plan", "apply"):
+        stage.add_argument("--token-env", default="GH_TOKEN", help="Read credential environment variable name")
+    if name != "inspect":
+        stage.add_argument("--operator-trust", type=Path, help="Explicit protected existing operator trust root")
+    if name in ("plan", "apply"):
+        stage.add_argument("--operator-socket", type=Path, help="Protected local proposal service")
+        stage.add_argument("--issue", type=int, help="Select one open issue on this feature checkout")
+    if name in ("status", "doctor", "preview", "reconnect"):
+        stage.add_argument("--operator-profile", type=Path, help="Guided profile with its retained enrollment record")
+    if name == "apply":
+        stage.add_argument("--approve", help="Exact approved plan digest")
+        stage.add_argument("--authorize-memory-write", action="store_true")
 
 
 def discovery_token(name: str) -> str:

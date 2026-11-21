@@ -649,6 +649,16 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
     report["status"] = "ENROLLED" if completed(profile, memory) else "PENDING"
     if report["status"] == "ENROLLED":
         require(binding is not None, "Restore the original guided enrollment provenance")
+        track = memory["state"]["execution"].get("track")
+        report["invocation"] = {"profile_digest": profile.fingerprint, "trust_digest": profile.trust.fingerprint,
+                                "checkout": checkout,
+                                "checkpoint": memory["local_head"],
+                                "issues": [task.number for task in profile.tasks],
+                                "operations": profile.delegation["operations"],
+                                "merge_mode": profile.delegation["merge_mode"],
+                                "checks": [{"name": check.name, "phase": str(check.phase)} for check in profile.checks],
+                                "window": profile.payload["window"],
+                                "used_rounds": track["used_rounds"] if track else 0}
     if command == "reconnect":
         verify_enrollment(profile)
         require(report["status"] == "ENROLLED", "Restore synchronized memory before reconnecting")
@@ -665,6 +675,7 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
             inspected = preview(profile, installed=installed)
             report["configuration"] = inspected["status"]
             report["tasks"] = [{"issue_id": row["issue_id"],
+                                "status": row["status"],
                                 "assessment": "AVAILABLE" if row.get("packet_preview") else "UNKNOWN"}
                                for row in inspected["tasks"]]
         except Blocked as exc:
