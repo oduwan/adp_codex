@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import os
 from pathlib import Path
 import re
@@ -26,7 +25,7 @@ from .operator_profile import OperatorProfile, Trust, _validate_profile, load_pr
 from .operator_setup import ENROLLMENT_RECORD, PreviewBinding, guided_binding, preview, setup, status, verify_enrollment
 from .policy_schema import branch as git_branch
 from .project_validation_types import EvidenceRequest, ProjectObservation
-from .schema import MAX_JOURNAL, encode, fields, require, string
+from .schema import encode, fields, require, string
 from .storage import atomic, locked, temporary_slot
 
 SCHEMA = 1
@@ -644,32 +643,31 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
             "Persisted profile or trust does not match the enrollment intent")
     effects, writer = local_effects(profile, directory, checkout)
     require(effects == intent["effects"], "Local coordination no longer matches the retained enrollment destination")
-    observed = status(profile, bound_memory=writer)
+    observed = status(profile, bound_memory=writer, recovery=True)
     report = {key: observed[key] for key in ("repository_id", "memory_health", "local_owner", "generation", "enrollment", "execution_liveness")}
-    memory = writer.inspect()
+    memory = writer.inspect(recovery=True)
     report["status"] = "ENROLLED" if completed(profile, memory) else "PENDING"
     if report["status"] == "ENROLLED":
         require(binding is not None, "Restore the original guided enrollment provenance")
     state = memory.get("state", {})
-    pending = safe_path(writer.control / "pending.json")
-    journal_exists = pending.exists()
+    journal = memory.get("recovery_journal")
+    slots = memory.get("recovery_slots", [])
     recoverable = (command == "status" and binding is not None and observed["enrollment"] == "MATCHED"
                    and state.get("schema_version") == 3 and state["execution"]["schema_version"] == 3
                    and memory.get("local_owner") is True
                    and (memory["health"] == "REMOTE_MISMATCH" and memory["remote_head"] is not None
-                        or memory["health"] == "RECOVERY_REQUIRED" and journal_exists))
+                        or memory["health"] == "RECOVERY_REQUIRED" and (journal is not None or bool(slots))))
     if report["status"] == "ENROLLED" or recoverable:
         require(memory["health"] == observed["memory_health"] and memory["local_owner"] == observed["local_owner"]
                 and state["generation"] == observed["generation"], "Coordination observation changed")
         if recoverable:
             verify_enrollment(profile)
-        journal = (hashlib.sha256(encode(private_file(pending, limit=MAX_JOURNAL), MAX_JOURNAL)).hexdigest()
-                   if journal_exists else None)
         track = state["execution"].get("track")
         report["invocation"] = {"profile_digest": profile.fingerprint, "trust_digest": profile.trust.fingerprint,
                                 "checkout": checkout,
                                 "checkpoint": memory["local_head"], "remote_checkpoint": memory["remote_head"],
                                 "recovery_journal": journal,
+                                "recovery_slots": digest(slots),
                                 "issues": [task.number for task in profile.tasks],
                                 "operations": profile.delegation["operations"],
                                 "merge_mode": profile.delegation["merge_mode"],

@@ -12,6 +12,7 @@ from adp.errors import ADPError
 from adp.memory import Memory
 from adp.operator_profile import OperatorProfile, load_profile, private_file
 from adp.schema import MAX_JOURNAL, bundle, encode, key
+from adp.storage import temporary_slot
 import test_enrollment
 
 FAKE_REVIEW = "v1." + ".".join(["1" * 64] * 3)
@@ -275,20 +276,24 @@ class CodexGuidedFlowTests(unittest.TestCase):
         with patch.object(Memory, "_finish", side_effect=ADPError("synthetic interrupted transaction")):
             with self.assertRaises(ADPError):
                 memory.add_task("synthetic-interrupted-update")
+        scratch = temporary_slot(memory.path / "state.json")
+        scratch.write_bytes(b"interrupted atomic write")
         code, examined = invoke("status", *self.retained, "--for-operation", "resume")
         self.assertEqual(code, 0, examined)
         self.assertEqual(examined["result"]["memory_health"], "RECOVERY_REQUIRED")
         self.assertTrue(examined["invocation_request"]["recover_checkpoint"])
+        self.assertTrue(scratch.exists())
         with (patch("adp.codex_cli.runtime", return_value={"status": "SUPPORTED"}),
-              patch.object(Conductor, "_privacy_preflight", side_effect=[None, ADPError("halt before execution")]) as stop):
+              patch.object(Conductor, "_privacy_preflight", side_effect=ADPError("halt before execution")) as stop):
             code, view = invoke("resume", *self.retained, "--reviewed", examined["invocation_review"], "--authorize-execution")
         self.assertEqual(code, 4, view)
         self.assertEqual(view["blockers"][0]["code"], "OPERATOR_REFUSED")
-        self.assertEqual(stop.call_count, 2)
+        stop.assert_called_once()
         after = memory.inspect()
         self.assertEqual(after["health"], "SYNCED")
         self.assertEqual(after["state"]["generation"], generation)
         self.assertIn("synthetic-interrupted-update", [task["id"] for task in after["tasks"].values()])
+        self.assertFalse(scratch.exists())
 
     def test_resume_checks_pending_privacy_before_recovery_can_publish(self):
         self.apply()
@@ -350,6 +355,19 @@ class CodexGuidedFlowTests(unittest.TestCase):
         self.assertEqual(view["blockers"][0]["code"], "OPERATOR_REFUSED")
         self.assertFalse(any("fetch" in call.args[2] for call in transport.call_args_list))
         self.assertEqual(memory.inspect(), before)
+
+    def test_recovery_fetches_only_the_reviewed_object_on_remote_race(self):
+        self.apply()
+        f = self.fixture
+        memory = Memory(load_profile(f.directory / "profile.json", f.trust).memory_config())
+        approved = f.head
+        with (patch.object(memory, "_remote_head", side_effect=[approved, approved, "a" * 40]),
+              patch.object(memory, "_remote_git") as transport, patch.object(memory, "_write_git") as write):
+            with self.assertRaisesRegex(ADPError, "Reviewed remote checkpoint changed while fetching"):
+                memory.recover(expected_remote=approved)
+        transport.assert_called_once_with(memory.config.root,
+                                          ("fetch", "--no-tags", "--no-write-fetch-head", "--no-auto-maintenance"), approved)
+        write.assert_not_called()
 
     def test_resume_rechecks_review_at_m1_lock_before_recovering_late_journal(self):
         from adp.storage import locked

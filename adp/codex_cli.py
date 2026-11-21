@@ -216,6 +216,7 @@ def result(row):
                                 "checkpoint": revision(scope["checkpoint"]),
                                 "remote_checkpoint": revision(scope["remote_checkpoint"]) if scope["remote_checkpoint"] is not None else None,
                                 "recovery_journal": hex_digest(scope["recovery_journal"]) if scope["recovery_journal"] is not None else None,
+                                "recovery_slots": hex_digest(scope["recovery_slots"]),
                                 "issues": rows(scope["issues"], lambda n: number(n, 1), 8),
                                 "operations": rows(scope["operations"], lambda name: choice(name, SUPPORTED), 16),
                                 "merge_mode": choice(scope["merge_mode"], ("MANUAL", "DELEGATED")),

@@ -233,12 +233,9 @@ class AutonomousTrack:
         lock = invocation_lock(c.memory.control, lease=lease) if lease is not None else invocation_lock(c.memory.control)
         with lock:
             if recover:
-                def check_recovery():
-                    if recovery_check is not None:
-                        recovery_check()
-                    c._privacy_preflight()
+                from .execution_privacy import require_clean_execution
                 scope = {"expected_remote": recovery_head} if recovery_check is not None else {}
-                c.memory.recover(before_effects=check_recovery, **scope)
+                c.memory.recover(before_effects=recovery_check, validate_states=require_clean_execution, **scope)
             c._privacy_preflight()
             self._window(create=True)
             try:
