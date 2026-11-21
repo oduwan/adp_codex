@@ -47,7 +47,7 @@ class GuidedEnrollmentTests(OperatorFixture):
                 "task_id": self.body["tasks"][0]["task_id"], "generation": 0,
                 "task_epoch": 0, "iteration": 0, "pull": None}, "results": [],
             "observed_at": self.now, "complete": False, "coverage": "UNKNOWN"}))
-        self.reply = self.signed("profile", self.body)
+        self.reply = self.signed("profile", copy.deepcopy(self.body))
         for patcher in (
             patch("adp.enrollment_cli.discovery_token", return_value="fixture-bootstrap-token"),
             patch("adp.enrollment_cli.GitHubHTTPTransport", side_effect=lambda token: self.transport),
@@ -229,6 +229,160 @@ class GuidedEnrollmentTests(OperatorFixture):
             code, report = self.call("plan")
         self.assertEqual(code, 4)
         self.assert_blocked(report, "PROJECT_CHECK_PROVIDER_REQUIRED")
+
+    def test_moved_head_during_apply_stops_before_memory_setup(self):
+        from adp.operator_setup import setup
+
+        def moved(profile, **kwargs):
+            run(self.product, "commit", "--allow-empty", "-m", "fixture: concurrent source")
+            return setup(profile, **kwargs)
+
+        proposed, _ = self.proposed()
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch("adp.enrollment.setup", side_effect=moved)):
+            code, report = self.call("apply", "--approve", proposed["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        self.assertEqual(read_intent(self.directory)["phase"], "PENDING")
+        self.assertFalse(self.profile.state.exists())
+        self.assertEqual(value(self.bare, "for-each-ref"), "")
+
+    def test_different_local_files_are_not_adopted(self):
+        self.directory.mkdir(mode=0o700)
+        unrelated = self.directory / "operator-notes"
+        unrelated.write_text("existing")
+        with patch("adp.enrollment.exchange") as exchange:
+            code, report = self.call("plan")
+        self.assertEqual(code, 4, report)
+        exchange.assert_not_called()
+        self.assertEqual(unrelated.read_text(), "existing")
+        self.assertFalse((self.directory / "profile.json").exists())
+
+    def test_retargeted_coordination_remote_requires_new_approval(self):
+        from adp.enrollment import apply_plan
+
+        alternate = self.base / "other.git"
+        alternate.mkdir()
+        run(alternate, "init", "--bare")
+        plan, _ = self.proposed()
+
+        def changed(prepared, **kwargs):
+            run(self.control, "remote", "set-url", "memory", str(alternate))
+            return apply_plan(prepared, **kwargs)
+
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch("adp.enrollment_cli.apply_plan", side_effect=changed)):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        self.assertIsNone(read_intent(self.directory))
+        self.assertEqual(value(alternate, "for-each-ref"), "")
+
+    def test_native_writes_keep_pinned_endpoint_after_remote_name_changes(self):
+        from adp.memory import git as original_git
+
+        alternate = self.base / "other.git"
+        alternate.mkdir()
+        run(alternate, "init", "--bare")
+        plan, _ = self.proposed()
+        sent = []
+
+        def retarget(path, *args, **kwargs):
+            if "push" in args and not sent:
+                run(self.control, "remote", "set-url", "memory", str(alternate))
+                sent.append(args)
+            return original_git(path, *args, **kwargs)
+
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch("adp.memory.git", side_effect=retarget)):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(value(alternate, "for-each-ref"), "")
+        self.assertTrue(value(self.bare, "for-each-ref"))
+
+    def test_final_metadata_recheck_refuses_changed_default_branch(self):
+        from adp.operator_setup import setup
+
+        plan, _ = self.proposed()
+        original = self.transport.get
+        metadata_calls = []
+
+        def get(path):
+            response = original(path)
+            if path == self.prefix:
+                metadata_calls.append(path)
+                if len(metadata_calls) == 3:
+                    return Response(200, dict(response.body, default_branch="work/one"))
+            return response
+
+        def changed(profile, **kwargs):
+            with patch.object(self.transport, "get", side_effect=get):
+                return setup(profile, **kwargs)
+
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch("adp.enrollment.setup", side_effect=changed)):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        self.assertGreaterEqual(len(metadata_calls), 3)
+        self.assertFalse(self.profile.state.exists())
+        self.assertEqual(value(self.bare, "for-each-ref"), "")
+
+    def test_claim_race_never_reclaims_a_released_generation(self):
+        claim = Memory.claim
+        plan, _ = self.proposed()
+
+        def released(memory, label, **kwargs):
+            if kwargs.get("initial_only"):
+                claim(memory, label)
+                memory.handoff()
+            return claim(memory, label, **kwargs)
+
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch.object(Memory, "claim", released)):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        installed = load_profile(self.directory / "profile.json", self.trust)
+        state = Memory(installed.memory_config()).inspect()["state"]
+        self.assertIsNone(state["owner"])
+        self.assertEqual(state["generation"], 1)
+        self.assertEqual(state["schema_version"], 1)
+
+    def test_initialization_race_never_claims_a_newly_appeared_checkpoint(self):
+        initialize = Memory.initialize
+        plan, _ = self.proposed()
+
+        def concurrent(memory, **kwargs):
+            initialize(memory, authorized=True)
+            return initialize(memory, **kwargs)
+
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch.object(Memory, "initialize", concurrent)):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        installed = load_profile(self.directory / "profile.json", self.trust)
+        state = Memory(installed.memory_config()).inspect()["state"]
+        self.assertIsNone(state["owner"])
+        self.assertEqual(state["generation"], 0)
+        self.assertEqual(state["revision"], 1)
+
+    def test_interruption_at_profile_publication_leaves_single_link_and_retries(self):
+        from adp.enrollment import atomic
+
+        plan, _ = self.proposed()
+
+        def interrupted(path, raw, **kwargs):
+            atomic(path, raw, **kwargs)
+            if path.name == "profile.json":
+                raise ADPError("fixture interruption after publication")
+
+        with (patch("adp.enrollment.exchange", return_value=self.reply),
+              patch("adp.enrollment.atomic", side_effect=interrupted)):
+            code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write")
+        self.assertEqual(code, 4, report)
+        self.assertEqual(read_intent(self.directory)["phase"], "PENDING")
+        self.assertEqual((self.directory / "profile.json").stat().st_nlink, 1)
+        code, report = self.call("apply", "--approve", plan["approval"], "--authorize-memory-write", proposal=False)
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["status"], "ENROLLED")
 
     def test_exact_approval_real_setup_and_reconnect_preserve_released_generation(self):
         plan, _ = self.proposed()

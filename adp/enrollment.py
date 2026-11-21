@@ -263,11 +263,11 @@ def profile_from_proposal(directory: Path, trust_path: Path, raw: dict) -> Opera
     return profile
 
 
-def local_effects(profile: OperatorProfile, directory: Path, checkout: dict) -> tuple[dict, dict]:
-    memory = Memory(profile.memory_config())
-    cfg = memory.config
+def local_effects(profile: OperatorProfile, directory: Path, checkout: dict) -> tuple[dict, Memory]:
+    cfg = profile.memory_config()
     bare = Path(remote_identity(value(cfg.root, "remote", "get-url", cfg.remote), cfg.root)[5:])
     bare = safe_path(bare)
+    memory = Memory(cfg, pinned_local_remote=bare)
     common = safe_path(Path(value(cfg.root, "rev-parse", "--path-format=absolute", "--git-common-dir")))
     require(value(cfg.root, "remote", "get-url", cfg.remote) in (str(bare), bare.as_uri()),
             "Use a direct canonical local coordination remote")
@@ -293,7 +293,7 @@ def local_effects(profile: OperatorProfile, directory: Path, checkout: dict) -> 
                "private_evidence": str(profile.state), "memory_ref": "refs/heads/" + memory.branch,
                "authority": "EXACT_DIGEST_AND_EXPLICIT_MEMORY_WRITE_REQUIRED"}
     public(effects)
-    return effects, memory.inspect()
+    return effects, memory
 
 
 def provider_inputs(profile: OperatorProfile) -> tuple[InstalledProject, dict]:
@@ -384,7 +384,10 @@ def provider_inputs(profile: OperatorProfile) -> tuple[InstalledProject, dict]:
 def inspect_profile(profile: OperatorProfile, observation: Observation) -> tuple[dict, PreviewBinding]:
     try:
         installed, bindings = provider_inputs(profile)
-        expected = PreviewBinding(observation.facts["discovery_digest"], bindings["policy"], bindings["assessment"])
+        repo = observation.repository
+        expected = PreviewBinding(observation.facts["discovery_digest"], bindings["policy"], bindings["assessment"],
+                                  observation.checkout["ref"], observation.checkout["head"],
+                                  (repo["database_id"], repo["node_id"], repo["name"], repo["default_branch"]))
         preview(profile, installed=installed, expected=expected)
     except Blocked:
         raise
@@ -417,6 +420,20 @@ def selected_directory(directory: Path, checkout: dict) -> Path:
             "Keep the enrollment directory outside every product checkout")
     require(disjoint(directory, installer_root()), "Keep project enrollment outside the M9-A managed installer")
     return directory
+
+
+def check_enrollment_contents(directory: Path) -> None:
+    if not directory.exists():
+        return
+    files = (directory / INTENT, directory / PROFILE)
+    allowed = {"lock", INTENT, PROFILE, *(temporary_slot(path).name for path in files)}
+    require(all(path.name in allowed and not path.is_symlink() for path in directory.iterdir()),
+            "Enrollment directory contains unrelated contents")
+    lock = directory / "lock"
+    if lock.exists():
+        info = lock.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                and info.st_nlink == 1 and not info.st_mode & 0o077, "Unsafe enrollment lock")
 
 
 def selected_authority(path: Path, checkout: dict) -> Path:
@@ -470,6 +487,7 @@ class Plan:
 
 def prepare(observation: Observation, directory: Path, trust_path: Path, issue: int | None,
             socket: Path | None) -> Plan:
+    check_enrollment_contents(directory)
     trust = Trust(trust_path)
     intent = read_intent(directory)
     if intent is None:
@@ -488,7 +506,8 @@ def prepare(observation: Observation, directory: Path, trust_path: Path, issue: 
     except FAILURES as exc:
         raise Blocked("PROPOSAL_CONFLICT", "Reconcile the signed proposal with the selected branch, issue, repository, trust and protected paths.") from exc
     try:
-        effects, memory = local_effects(profile, directory, observation.checkout)
+        effects, writer = local_effects(profile, directory, observation.checkout)
+        memory = writer.inspect()
         existing = safe_path(profile.state / "enrollment.json")
         if intent is None:
             require(memory["health"] == "UNINITIALIZED" and not existing.exists() and not profile.state.exists(),
@@ -545,15 +564,7 @@ def apply_plan(plan: Plan, *, approved: str, authorized: bool) -> dict:
     require(selected_directory(directory, checkout) == directory, "Enrollment directory changed")
     directory.mkdir(mode=0o700, exist_ok=True)
     protected_path(directory)
-    paths = (directory / INTENT, directory / PROFILE)
-    allowed = {"lock", INTENT, PROFILE, *(temporary_slot(path).name for path in paths)}
-    require(all(path.name in allowed and not path.is_symlink() for path in directory.iterdir()),
-            "Enrollment directory contains unrelated contents")
-    lock = directory / "lock"
-    if lock.exists():
-        info = lock.lstat()
-        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
-                and info.st_nlink == 1 and not info.st_mode & 0o077, "Unsafe enrollment lock")
+    check_enrollment_contents(directory)
     with locked(directory):
         require(local_checkout(Path(checkout["path"]), checkout["remote"]) == checkout, "Checkout changed after approval")
         require(profile.trust.fingerprint == Trust(profile.trust.path).fingerprint,
@@ -563,21 +574,23 @@ def apply_plan(plan: Plan, *, approved: str, authorized: bool) -> dict:
         require(digest(bindings) == plan.summary["provider_binding_digest"],
                 "Provider bootstrap inputs changed after approval")
         intent = read_intent(directory)
-        _, memory = local_effects(profile, directory, checkout)
+        effects, writer = local_effects(profile, directory, checkout)
+        require(effects == plan.summary["effects"], "Local coordination effects changed after approval")
+        memory = writer.inspect()
         if intent is None:
             require(not profile.path.exists() and not profile.state.exists() and memory["health"] == "UNINITIALIZED",
                     "Existing state requires its original enrollment")
             intent = {"schema_version": SCHEMA, "approval": approved, "profile_digest": profile.fingerprint,
                       "trust_digest": profile.trust.fingerprint, "repository_id": profile.repository_id,
                       "issue": plan.summary["issue"], "phase": "PENDING", "document": profile.evidence.document}
-            atomic(directory / INTENT, encode(intent, LIMIT), replace=False)
+            atomic(directory / INTENT, encode(intent, LIMIT))
         else:
             require(intent["approval"] == approved, "Existing enrollment has a different approved intent")
             check_initial_or_continuation(profile, memory, intent)
         if not profile.path.exists():
             require(intent["phase"] == "PENDING" and memory["health"] == "UNINITIALIZED",
                     "Preserve completed enrollment; restore the original protected profile")
-            atomic(profile.path, encode(intent["document"]), replace=False)
+            atomic(profile.path, encode(intent["document"]))
         installed = load_profile(profile.path, profile.trust.path)
         require(installed.fingerprint == intent["profile_digest"] and installed.trust.fingerprint == intent["trust_digest"],
                 "Published profile or trust differs from the original approved intent")
@@ -585,7 +598,7 @@ def apply_plan(plan: Plan, *, approved: str, authorized: bool) -> dict:
             outcome = "ALREADY_ENROLLED"
             generation = memory["state"]["generation"]
         else:
-            answer = setup(installed, authorized=True, expected_preview=plan.expected)
+            answer = setup(installed, authorized=True, expected_preview=plan.expected, bound_memory=writer)
             outcome, generation = "ENROLLED", answer["generation"]
         if intent["phase"] != "COMPLETE":
             atomic(directory / INTENT, encode(dict(intent, phase="COMPLETE"), LIMIT))

@@ -13,7 +13,7 @@ from .memory import Memory
 from .operator_evidence import OperatorEvidence
 from .operator_profile import private_file
 from .schema import encode, fields, require
-from .storage import atomic, locked
+from .storage import atomic, locked, temporary_slot
 import os
 import stat
 
@@ -52,6 +52,9 @@ class PreviewBinding:
     discovery: str
     policy: str
     assessment: str
+    checkout_ref: str
+    checkout_sha: str
+    github: tuple[int, str, str, str]
 
 
 def preview(profile, *, installed=None, expected: PreviewBinding | None = None):
@@ -63,6 +66,9 @@ def preview(profile, *, installed=None, expected: PreviewBinding | None = None):
         from .operator_authority import remote_semantics
         require(remote_semantics(snapshots) == expected.discovery,
                 'Guided enrollment discovery changed after review')
+        require(len(snapshots) == 1 and snapshots[0].repository.checkout_ref == expected.checkout_ref
+                and snapshots[0].repository.checkout_sha == expected.checkout_sha,
+                'Guided enrollment checkout changed after review')
     complete=all(complete_snapshot(s) for s in snapshots)
     inspections=[]
     for task in profile.tasks:
@@ -94,6 +100,12 @@ def preview(profile, *, installed=None, expected: PreviewBinding | None = None):
                 and installed.authority.preview_sources('discovery/') == {expected.assessment}
                 and installed.authority.preview_sources('policy/') == {expected.policy},
                 'Guided enrollment provider observations changed after review')
+        response = installed.read_transport.get('/repos/' + snapshots[0].repository.name)
+        metadata = response.body
+        require(response.status == 200 and type(metadata) is dict and type(metadata.get('id')) is int
+                and tuple(metadata.get(k) for k in ('id','node_id','full_name','default_branch')) == expected.github
+                and expected.checkout_ref != 'refs/heads/' + expected.github[3],
+                'Guided enrollment canonical repository or default branch changed')
     return {'mode':'READ_ONLY','status':'CONFIGURATION_VERIFIED' if verified else 'UNKNOWN',
         'repository_id':profile.repository_id,'repository':profile.payload['repository']['name'],
         'delegation':profile.identifier,'window':profile.payload['window'],
@@ -111,11 +123,20 @@ def preview(profile, *, installed=None, expected: PreviewBinding | None = None):
         'next_action':'Explicit setup --apply --authorize-memory-write' if verified else 'Refresh project policy, permissions or complete remote metadata'}
 
 
-def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None = None):
+def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None = None,
+          bound_memory: Memory | None = None):
     require(authorized and profile.delegation['allow_setup'],'Explicit memory-write authority and project setup delegation required')
     require(profile.trust.read(profile.path, 'profile', profile.repository_id).fingerprint == profile.fingerprint,
             'Setup requires the persisted, verified operator profile')
-    cfg=profile.memory_config(); memory=Memory(cfg)
+    cfg=profile.memory_config()
+    if expected_preview is not None:
+        require(type(bound_memory) is Memory and bound_memory.config == cfg and bound_memory.pinned_local_remote is not None,
+                'Guided setup requires the approved local memory destination')
+        memory=bound_memory
+        memory.verify_pinned_remote()
+    else:
+        require(bound_memory is None, 'A pinned memory destination requires guided enrollment')
+        memory=Memory(cfg)
     observed=memory.inspect()
     path=profile.state/'enrollment.json'
     initial=observed['health']=='UNINITIALIZED'
@@ -131,7 +152,9 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
         require(stat.S_ISDIR(info.st_mode) and info.st_uid==os.getuid() and stat.S_IMODE(info.st_mode)==0o700,
             'Private enrollment directory is not owned/protected')
         entries=list(profile.state.iterdir())
-        require(all(p.name in ('authority','revocation.json','enrollment.json','lock') and not p.is_symlink() for p in entries),
+        names=('authority','revocation.json','enrollment.json','lock',
+               temporary_slot(path).name,temporary_slot(profile.state/'revocation.json').name)
+        require(all(p.name in names and not p.is_symlink() for p in entries),
             'Unknown existing private history cannot be adopted')
         if (profile.state/'authority').exists():
             require(not any((profile.state/'authority').iterdir()),'Existing authority receipts require retained enrollment')
@@ -147,19 +170,28 @@ def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None 
             require(value(task.workspace,'rev-parse','HEAD')==task.expected_revision,
                 'Enrollment source changed from explicitly selected original revision')
         profile.state.mkdir(mode=0o700,parents=True,exist_ok=True)
-        atomic(path,encode(manifest(profile))) # intent before M1 effects
-        OperatorEvidence(profile).prepare()
+        with locked(profile.state):
+            initial_layout()
+            if not path.exists():
+                atomic(path,encode(manifest(profile))) # locked intent before M1 effects
+            OperatorEvidence(profile).prepare()
         profile.live(retain=True)
     with locked(profile.state):
         profile.live()
         observed=memory.inspect()
         if observed['health']=='UNINITIALIZED':
-            memory.initialize(authorized=True)
+            if expected_preview is None:
+                memory.initialize(authorized=True)
+            else:
+                memory.initialize(authorized=True, initial_only=True)
             observed=memory.inspect()
         require(observed['health']=='SYNCED','Use explicit M1 recovery for an interrupted checkpoint; never reset memory')
         if observed['state']['owner'] is None:
             require(profile.delegation['allow_claim'],'Project did not delegate M1 claim')
-            memory.claim(profile.payload['memory']['owner'])
+            if expected_preview is None:
+                memory.claim(profile.payload['memory']['owner'])
+            else:
+                memory.claim(profile.payload['memory']['owner'], initial_only=True)
         else:
             require(observed['local_owner'],'BLOCKED_OPERATOR: foreign owner requires confirmed-stop handoff')
         profile.live()

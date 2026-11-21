@@ -94,7 +94,9 @@ creating the protected enrollment directory. The directory stores one original
 intent and the matching protected profile. The accepted setup writes local
 coordination memory, private enrollment and revocation records, and the existing
 M1–M7 checkpoints. It requires the same observed discovery and independent
-provider bindings before those writes.
+provider bindings before those writes. Apply checks the approved control paths
+and pins the Git transport to the selected local bare remote. Guided ownership
+claim is limited to a pristine unowned checkpoint under the M1 lock.
 
 Rerun with the original approved digest if enrollment was interrupted. The
 retained proposal can be used without the proposal socket. If the retained
