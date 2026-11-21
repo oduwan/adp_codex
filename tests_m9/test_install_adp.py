@@ -360,10 +360,19 @@ class InstallerTests(unittest.TestCase):
     def test_interrupted_mutation_fences_detached_writer_until_exit(self):
         import fcntl
 
-        program = """import fcntl, os, signal, sys
+        program = """import fcntl, os, signal, subprocess, sys, time
 from pathlib import Path
 from scripts import install_adp
-root, ready, released, changed = map(Path, sys.argv[1:])
+root, ready, released, changed, spawn_return = map(Path, sys.argv[1:6])
+if sys.argv[6] == "during":
+    popen = subprocess.Popen
+    def delayed_popen(*args, **kwargs):
+        process = popen(*args, **kwargs)
+        deadline = time.monotonic() + 8
+        while not spawn_return.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        return process
+    subprocess.Popen = delayed_popen
 signal.signal(signal.SIGTERM, install_adp.interrupt_on_term)
 fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
 fcntl.flock(fd, fcntl.LOCK_EX)
@@ -385,13 +394,14 @@ try:
 except install_adp.PendingMutation:
     sys.exit(2)
 """
-        for interruption in (signal.SIGTERM, signal.SIGKILL):
-            with self.subTest(signal=interruption):
-                ready = self.home / f"ready-{interruption}"
-                released = self.home / f"released-{interruption}"
-                changed = self.home / f"changed-{interruption}"
+        for interruption, phase in ((signal.SIGTERM, "after"), (signal.SIGTERM, "during"), (signal.SIGKILL, "after")):
+            with self.subTest(signal=interruption, phase=phase):
+                ready = self.home / f"ready-{interruption}-{phase}"
+                released = self.home / f"released-{interruption}-{phase}"
+                changed = self.home / f"changed-{interruption}-{phase}"
+                spawn_return = self.home / f"spawn-return-{interruption}-{phase}"
                 with subprocess.Popen([sys.executable, "-c", program, str(self.home), str(ready),
-                                       str(released), str(changed)],
+                                       str(released), str(changed), str(spawn_return), phase],
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
                     try:
                         deadline = time.monotonic() + 10
@@ -399,6 +409,7 @@ except install_adp.PendingMutation:
                             time.sleep(0.01)
                         self.assertTrue(ready.exists())
                         process.send_signal(interruption)
+                        spawn_return.touch()
                         process.wait(timeout=5)
                         expected = 2 if interruption == signal.SIGTERM else -signal.SIGKILL
                         self.assertEqual(process.returncode, expected)

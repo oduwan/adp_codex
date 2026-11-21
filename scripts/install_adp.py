@@ -54,9 +54,11 @@ class PendingMutation(Refusal):
 MUTATION_GUARD = """
 import ctypes
 import os
+import signal
 import subprocess
 import sys
 
+signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM, signal.SIGINT})
 # Linux PR_SET_CHILD_SUBREAPER. A CLI shim can exit or change sessions while a
 # native writer is still active. This process inherits the installer's flock.
 if ctypes.CDLL(None).prctl(36, 1, 0, 0, 0) != 0:
@@ -209,10 +211,19 @@ def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
     if mutation_lock is not None:
         argv = [sys.executable, "-I", "-c", MUTATION_GUARD, *argv]
         inherited = (mutation_lock,)
-    process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                               start_new_session=True, pass_fds=inherited)
+    process = None
+    previous_mask = None
     try:
+        if mutation_lock is not None:
+            # Defer interruption until the caller has the guardian's handle.
+            previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        try:
+            process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                       start_new_session=True, pass_fds=inherited)
+        finally:
+            if previous_mask is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         with selectors.DefaultSelector() as readable:
             readable.register(process.stdout, selectors.EVENT_READ)
             while True:
@@ -226,6 +237,8 @@ def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
                 require(len(output) <= MAX_RESPONSE, f"{label} exceeded the output limit.")
         process.wait(timeout=max(0, deadline - time.monotonic()))
     except (KeyboardInterrupt, OSError, Refusal, subprocess.TimeoutExpired) as exc:
+        if process is None:
+            raise
         if mutation_lock is not None and process.poll() is None:
             # Leave the guard holding the same lock until every writer exits.
             # The next invocation must observe the receipt and actual effect.
@@ -240,7 +253,8 @@ def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
             raise Refusal(f"{label} timed out. Check prerequisites and retry.") from None
         raise
     finally:
-        process.stdout.close()
+        if process is not None:
+            process.stdout.close()
     require(process.returncode == 0, f"{label} failed. Check its prerequisites in the installation guide.")
     return bytes(output)
 
