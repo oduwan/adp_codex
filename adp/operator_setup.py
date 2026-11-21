@@ -1,5 +1,6 @@
 """Read-only enrollment plus explicitly authorized, restartable M1 setup."""
 from __future__ import annotations
+from dataclasses import dataclass
 
 from .config import safe_path
 from .discovery import complete_snapshot
@@ -46,11 +47,22 @@ def status(profile):
         'next_action':'Use a bounded authorized run/resume; a checkpoint does not prove running workers'}
 
 
-def preview(profile, *, installed=None):
+@dataclass(frozen=True)
+class PreviewBinding:
+    discovery: str
+    policy: str
+    assessment: str
+
+
+def preview(profile, *, installed=None, expected: PreviewBinding | None = None):
     from .operator_controller import InstalledProject
     installed=installed or InstalledProject(profile)
     require(not installed.authority.mutating,'Preview requires read-only providers')
     snapshots=tuple(adapter.discover() for adapter in installed.readiness.adapters)
+    if expected is not None:
+        from .operator_authority import remote_semantics
+        require(remote_semantics(snapshots) == expected.discovery,
+                'Guided enrollment discovery changed after review')
     complete=all(complete_snapshot(s) for s in snapshots)
     inspections=[]
     for task in profile.tasks:
@@ -76,6 +88,12 @@ def preview(profile, *, installed=None):
     conflicts=[reason for inspection in inspections for reason in inspection.conflicts]
     verified=complete and not conflicts and all(i.sources for i in inspections) and len(tasks)==len(profile.tasks) and all(
         t['status'] not in ('UNKNOWN','NEEDS_SPEC','BLOCKED_OPERATOR') and t.get('packet_preview') for t in tasks)
+    if expected is not None:
+        require(verified, 'Guided enrollment configuration is incomplete')
+        require(source.fingerprint == expected.assessment
+                and installed.authority.preview_sources('discovery/') == {expected.assessment}
+                and installed.authority.preview_sources('policy/') == {expected.policy},
+                'Guided enrollment provider observations changed after review')
     return {'mode':'READ_ONLY','status':'CONFIGURATION_VERIFIED' if verified else 'UNKNOWN',
         'repository_id':profile.repository_id,'repository':profile.payload['repository']['name'],
         'delegation':profile.identifier,'window':profile.payload['window'],
@@ -93,8 +111,10 @@ def preview(profile, *, installed=None):
         'next_action':'Explicit setup --apply --authorize-memory-write' if verified else 'Refresh project policy, permissions or complete remote metadata'}
 
 
-def setup(profile, *, authorized=False):
+def setup(profile, *, authorized=False, expected_preview: PreviewBinding | None = None):
     require(authorized and profile.delegation['allow_setup'],'Explicit memory-write authority and project setup delegation required')
+    require(profile.trust.read(profile.path, 'profile', profile.repository_id).fingerprint == profile.fingerprint,
+            'Setup requires the persisted, verified operator profile')
     cfg=profile.memory_config(); memory=Memory(cfg)
     observed=memory.inspect()
     path=profile.state/'enrollment.json'
@@ -103,7 +123,7 @@ def setup(profile, *, authorized=False):
         require(private_file(path)==manifest(profile) and (profile.state/'revocation.json').exists()
             and (profile.state/'authority').is_dir(),'Retained enrollment/authority history is missing or changed')
     profile.live(retain=path.exists() and (profile.state/'revocation.json').exists())
-    preflight=preview(profile)
+    preflight=preview(profile) if expected_preview is None else preview(profile, expected=expected_preview)
     require(preflight['status']=='CONFIGURATION_VERIFIED','UNKNOWN: complete independently verified enrollment is required before memory writes')
     def initial_layout():
         if not profile.state.exists(): return

@@ -1,5 +1,7 @@
 # Installed operator setup and finite project delegation
 
+For first-use setup, see [guided enrollment](GUIDED_ENROLLMENT.md).
+
 Issue #17 adds a data-configured entry point to the accepted #22 lifecycle. It
 composes the existing M1/M2/M3/M4, network Git CAS (#14), project evidence (#21)
 and GitHub product flow (#16) ports. It does not provision a project environment,

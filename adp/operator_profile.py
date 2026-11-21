@@ -147,8 +147,11 @@ class OperatorProfile:
     @property
     def delegation(self): return self.payload['delegation']
 
+    def _current_profile(self):
+        return self.trust.read(self.path, 'profile', self.repository_id)
+
     def live(self, *, retain=False):
-        current = self.trust.read(self.path, 'profile', self.repository_id)
+        current = self._current_profile()
         require(current.fingerprint == self.fingerprint, 'Installed delegation changed; re-enroll explicitly')
         revocation = self.trust.read(self.payload['providers']['revocations'], 'revocations', self.repository_id)
         body = revocation.payload
@@ -206,6 +209,19 @@ def load_profile(path, trust_path, *, clock=None, retain_revocation=False, recov
 def _load_profile(path, trust_path, *, clock=None, retain_revocation=False,recover_initial_setup=False):
     trust = Trust(trust_path, clock=clock)
     path = safe_path(Path(path).absolute()); raw = private_file(path, limit=65536)
+    profile = _validate_profile(path, trust, raw)
+    if retain_revocation and (profile.state/'enrollment.json').exists():
+        if (profile.state/'revocation.json').exists(): profile.live(retain=True)
+        else:
+            from .memory import Memory
+            require(recover_initial_setup and Memory(profile.memory_config()).inspect()['health']=='UNINITIALIZED',
+                'Retained revocation history is missing')
+            profile.live()
+    else: profile.live()
+    return profile
+
+
+def _validate_profile(path, trust, raw, *, profile_class=OperatorProfile):
     rid = raw.get('payload', {}).get('repository_id')
     string(rid)
     verified = trust.verify_document(raw, 'profile', rid)
@@ -291,7 +307,7 @@ def _load_profile(path, trust_path, *, clock=None, retain_revocation=False,recov
         require(candidate.is_absolute() and safe_path(candidate)==candidate, 'Absolute protected operator paths required')
         require(all(not candidate.is_relative_to(root) and not root.is_relative_to(candidate) for root in roots),
                 'Operator configuration/secrets must be outside product and memory roots')
-    profile=OperatorProfile(path,verified,trust,rid,tuple(tasks),checks)
+    profile=profile_class(path,verified,trust,rid,tuple(tasks),checks)
     cfg=profile.memory_config()
     commons=[Path(value(cfg.root,'rev-parse','--path-format=absolute','--git-common-dir')),
         Path(remote_identity(value(cfg.root,'remote','get-url',cfg.remote),cfg.root)[5:])]
@@ -303,12 +319,4 @@ def _load_profile(path, trust_path, *, clock=None, retain_revocation=False,recov
         for candidate in [path,trust.path,*files_to_protect]), 'Keep authentication/provider roots separate from private execution evidence')
     for task in tasks: profile.project_config(task)
     require(not credential_shaped({k:v for k,v in p.items() if k not in ('providers','memory','tasks')}), 'Private credentials do not belong in profile payloads')
-    if retain_revocation and (profile.state/'enrollment.json').exists():
-        if (profile.state/'revocation.json').exists(): profile.live(retain=True)
-        else:
-            from .memory import Memory
-            require(recover_initial_setup and Memory(profile.memory_config()).inspect()['health']=='UNINITIALIZED',
-                'Retained revocation history is missing')
-            profile.live()
-    else: profile.live()
     return profile
