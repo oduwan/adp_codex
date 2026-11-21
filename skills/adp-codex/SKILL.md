@@ -12,7 +12,7 @@ Always-on scheduling and public release workflows are not implemented. M6
 qualification does not select a license or authorize publication.
 
 For a managed installation, check the engine with
-`"$HOME/.local/share/adp-codex-install/current/engine/bin/adp" --help`.
+`"$HOME/.local/share/adp-codex-install/current/bin/adp" --help`.
 See the [installer guide](../../docs/operations/INSTALL_ADP.md) and
 [operator setup](../../docs/operations/OPERATOR_SETUP.md) for their respective
 installation and project authority requirements.

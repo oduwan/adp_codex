@@ -11,6 +11,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import selectors
+import shlex
 import shutil
 import signal
 import stat
@@ -33,6 +34,7 @@ SKILL = "skills/adp-codex/SKILL.md"
 CATALOG_PLUGIN = "plugins/adp-codex"
 MAX_SOURCE = 16 * 1024 * 1024
 MAX_RESPONSE = 4 * 1024 * 1024
+ENGINE_ENTRYPOINT = {"adp/__init__.py", "adp/__main__.py", "adp/cli.py"}
 
 
 class Refusal(Exception):
@@ -61,6 +63,14 @@ def marketplace_payload(name: str) -> dict:
         "name": NAME, "source": {"source": "local", "path": "./" + CATALOG_PLUGIN},
         "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
         "category": "Productivity"}]}
+
+
+def write_launcher(generation: Path) -> None:
+    launcher = generation / "bin/adp"
+    launcher.parent.mkdir()
+    interpreter = shlex.quote(str(generation / "engine/bin/python"))
+    launcher.write_text(f'#!/bin/sh\nexec {interpreter} -I -B -m adp "$@"\n')
+    launcher.chmod(0o700)
 
 
 @dataclass(frozen=True)
@@ -104,7 +114,7 @@ class Source:
                 and project.get("scripts", {}).get("adp") == "adp.cli:main"
                 and manifest.get("name") == NAME and manifest.get("version") == version
                 and manifest.get("repository") == "https://github.com/oduwan/adp_codex"
-                and {"adp/__init__.py", "adp/cli.py", SKILL, "docs/ARCHITECTURE.md"} <= files.keys(),
+                and ENGINE_ENTRYPOINT | {SKILL, "docs/ARCHITECTURE.md"} <= files.keys(),
                 "Engine, portable plugin or package version does not match the ADP distribution contract.")
         receipt = {
             "revision": revision, "sha256": expected, "version": version,
@@ -361,7 +371,7 @@ class Installation:
                 require(isinstance(entries, dict)
                         and all(valid_name(key) and HEX.fullmatch(value) for key, value in entries.items()),
                         "Invalid ADP file inventory in ownership receipt.")
-            require({"adp/__init__.py", "adp/cli.py"} <= receipt["engine"].keys()
+            require(ENGINE_ENTRYPOINT <= receipt["engine"].keys()
                     and {"plugin.json", SKILL} <= receipt["plugin"].keys(),
                     "Incomplete ADP file inventory in ownership receipt.")
         current = os.readlink(self.link) if os.path.lexists(self.link) else None
@@ -427,7 +437,7 @@ class Installation:
         engine_ok = False
         if len(sites) == 1 and installed_files(sites[0], receipt["engine"]):
             versions = list(sites[0].glob("adp_codex-*.dist-info/METADATA"))
-            launcher = engine / "bin/adp"
+            launcher = generation / "bin/adp"
             if len(versions) == 1 and versions[0].resolve() == versions[0] and launcher.is_file() and launcher.resolve() == launcher:
                 metadata = BytesParser().parsebytes(versions[0].read_bytes(), headersonly=True)
                 engine_ok = metadata["Name"] == NAME and metadata["Version"] == receipt["version"]
@@ -455,8 +465,6 @@ class Installation:
                              and skill.get("enabled") is True for skill in self.codex.skills())
         print(f"Exact enabled skill discovered={discovered}", flush=True)
         if engine_ok:
-            env = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
-            env["PYTHONDONTWRITEBYTECODE"] = "1"
             try:
                 require(launcher.stat().st_size <= MAX_RESPONSE
                         and digest(launcher.read_bytes()) == receipt.get("launcher_sha256"),
@@ -464,10 +472,10 @@ class Installation:
                 probe = ("import importlib.util, json, sys; "
                          "print(json.dumps([sys.prefix, importlib.util.find_spec('adp').origin]))")
                 identity = command([str(engine / "bin/python"), "-I", "-B", "-c", probe],
-                                   self.codex.cwd, "Inspect installed engine import origin", env=env)
+                                   self.codex.cwd, "Inspect installed engine import origin")
                 require(json.loads(identity) == [str(engine), str(sites[0] / "adp/__init__.py")],
                         "Venv imports ADP from a different installation.")
-                command([str(launcher), "--help"], self.codex.cwd, "Installed adp --help", env=env)
+                command([str(launcher), "--help"], self.codex.cwd, "Installed adp --help")
             except (OSError, Refusal, ValueError):
                 print("Installed adp launcher or interpreter failed verification.", flush=True)
                 engine_ok = False
@@ -538,7 +546,9 @@ class Installation:
         self.save(records)
         try:
             self.stage(name, source)
-            launcher = self.root / name / "engine/bin/adp"
+            generation = self.root / name
+            write_launcher(generation)
+            launcher = generation / "bin/adp"
             require(owned_file(launcher, os.getuid()).st_size <= MAX_RESPONSE,
                     "Generated adp launcher exceeds the inspection bound.")
             records[name] = dict(source.receipt, launcher_sha256=digest(launcher.read_bytes()))
@@ -619,7 +629,7 @@ def run(args: argparse.Namespace) -> None:
                 return
             for name, receipt in records.items():
                 print(f"Existing generation {name} revision={receipt['revision']} "
-                      f"engine present={(root / name / 'engine/bin/adp').is_file()} "
+                      f"launcher present={(root / name / 'bin/adp').is_file()} "
                       f"{installation.observe(name)}")
         if source:
             require(not any(row.get("enabled") is not False for row in unowned),
@@ -665,7 +675,7 @@ def run(args: argparse.Namespace) -> None:
         if args.action == "uninstall":
             print("Owned engine and plugin removed.")
         else:
-            print(f"Engine launcher: {root / 'current/engine/bin/adp'}")
+            print(f"Engine launcher: {root / 'current/bin/adp'}")
 
 
 def main() -> int:

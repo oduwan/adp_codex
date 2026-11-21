@@ -28,11 +28,11 @@ the skill picker. The CLI may display its namespaced name
 `adp-codex:adp-codex`. Check the engine from any working directory with
 
 ```bash
-"$HOME/.local/share/adp-codex-install/current/engine/bin/adp" --help
+"$HOME/.local/share/adp-codex-install/current/bin/adp" --help
 ```
 
 To use the short command name, prepend
-`$HOME/.local/share/adp-codex-install/current/engine/bin` to the PATH of the
+`$HOME/.local/share/adp-codex-install/current/bin` to the PATH of the
 shell where you launch Codex. The installer leaves shell startup files alone.
 The skill provides read-only guidance. Project enrollment, authenticated
 providers, execution authority and memory operations still follow the

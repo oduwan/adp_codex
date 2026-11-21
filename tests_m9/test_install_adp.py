@@ -43,7 +43,7 @@ class InstallerTests(unittest.TestCase):
 
     def source(self, *, manifest=MANIFEST, revision=REVISION, extra=None):
         contents = {"pyproject.toml": PROJECT, "plugin.json": json.dumps(manifest).encode(),
-                    "adp/__init__.py": b"", "adp/cli.py": b"# source",
+                    "adp/__init__.py": b"", "adp/__main__.py": b"from .cli import main", "adp/cli.py": b"# source",
                     installer.SKILL: b"# ADP", "docs/ARCHITECTURE.md": b"# Architecture"}
         contents.update(extra or {})
         with tarfile.open(self.archive, "w", format=tarfile.PAX_FORMAT,
@@ -241,7 +241,7 @@ class InstallerTests(unittest.TestCase):
         metadata = sites / "adp_codex-0.1.0.dist-info/METADATA"
         metadata.parent.mkdir()
         metadata.write_text("Name: adp-codex\nVersion: 0.1.0\n")
-        launcher = engine / "bin/adp"
+        launcher = engine.parent / "bin/adp"
         launcher.parent.mkdir()
         launcher.write_text("#!/missing/interpreter\n")
         receipt = dict(self.receipt, launcher_sha256=installer.digest(launcher.read_bytes()))
@@ -265,6 +265,25 @@ class InstallerTests(unittest.TestCase):
         with patch.object(installer, "command") as command:
             self.assertFalse(self.install.report(current, receipt))
         command.assert_not_called()
+
+    def test_documented_launcher_ignores_other_adp_on_pythonpath(self):
+        import venv
+
+        generation = self.home / "generation with spaces"
+        engine = generation / "engine"
+        venv.EnvBuilder(with_pip=False).create(engine)
+        candidates = list(engine.glob("lib/python*/site-packages"))
+        managed = candidates[0] / "adp"
+        foreign = self.home / "other-checkout/adp"
+        for path, message in ((managed, "managed ADP"), (foreign, "foreign ADP")):
+            path.mkdir(parents=True)
+            (path / "__init__.py").touch()
+            (path / "__main__.py").write_text(f"print({message!r})\n")
+        installer.write_launcher(generation)
+        (self.home / "current").symlink_to(generation)
+        result = installer.command([str(self.home / "current/bin/adp"), "--help"], foreign.parent,
+                                   "Managed launcher", env=dict(os.environ, PYTHONPATH=str(foreign.parent)))
+        self.assertEqual(result, b"managed ADP\n")
 
     def test_subprocess_output_is_bounded(self):
         with patch.object(installer, "MAX_RESPONSE", 1024):
