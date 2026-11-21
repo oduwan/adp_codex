@@ -360,6 +360,16 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(staged.read_bytes(), source.files["pyproject.toml"])
         self.codex.remove.assert_not_called()
 
+    def test_pending_probe_keeps_private_scratch(self):
+        scratch = self.home / "probe-scratch"
+        scratch.mkdir()
+        with patch.object(installer.tempfile, "mkdtemp", return_value=str(scratch)):
+            with self.assertRaises(installer.PendingMutation):
+                with installer.installer_scratch() as path:
+                    (path / "pending-probe").touch()
+                    raise installer.PendingMutation("probe is settling")
+        self.assertTrue((scratch / "pending-probe").is_file())
+
     def test_disposable_probe_refuses_changed_skill_identity_fields(self):
         codex = installer.Codex("/unused", self.codex.home, self.home)
         expected = self.home / "probe-codex-home/plugins/cache/adp-managed-probe/adp-codex/0.0.1" / installer.SKILL

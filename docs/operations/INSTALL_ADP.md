@@ -92,7 +92,8 @@ managed Codex namespace. The catalog uses the user's existing `CODEX_HOME`
   namespace before retrying. Missing managed catalog or cache files can be
   reconciled from the receipt and the remaining Codex state. Wait for an active
   mutation to release its lock before retrying. An interrupted command can
-  finish under that lock. When a changed Codex format
+  finish under that lock. The installer reports any retained private temporary
+  directory for an interrupted probe. When a changed Codex format
   leaves ownership uncertain, the installer retains the receipt and refuses
   cleanup. Use `install` to recover an interrupted first install with no active
   launcher.

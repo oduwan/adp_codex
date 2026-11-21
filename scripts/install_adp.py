@@ -203,6 +203,21 @@ def installed_files(root: Path, expected: dict[str, str]) -> bool:
                for name, checksum in expected.items())
 
 
+@contextmanager
+def installer_scratch():
+    path = Path(tempfile.mkdtemp(prefix="adp-install-", dir="/tmp"))
+    retain = False
+    try:
+        yield path
+    except PendingMutation:
+        retain = True
+        print(f"Retained private installer scratch while the command settles: {path}", file=sys.stderr)
+        raise
+    finally:
+        if not retain:
+            shutil.rmtree(path)
+
+
 def command(argv: list[str], cwd: Path, label: str, *, seconds: int = 30,
             env: dict[str, str] | None = None, mutation_lock: int | None = None) -> bytes:
     deadline = time.monotonic() + seconds
@@ -755,8 +770,8 @@ def run(args: argparse.Namespace) -> None:
         require(all(importlib.util.find_spec(module) for module in ("venv", "ensurepip")),
                 "Install the venv and ensurepip support for your Python interpreter.")
         source = Source.read(args.source, args.revision, args.sha256)
-    with tempfile.TemporaryDirectory(prefix="adp-install-", dir="/tmp") as scratch:
-        codex = Codex(executable, codex_home, Path(scratch))
+    with installer_scratch() as scratch:
+        codex = Codex(executable, codex_home, scratch)
         installation = Installation(root, codex)
         codex.probe()
         with installation.lock():
