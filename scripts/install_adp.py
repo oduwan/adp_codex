@@ -67,11 +67,15 @@ def marketplace_payload(name: str) -> dict:
         "category": "Productivity"}]}
 
 
+def launcher_script(engine: Path) -> str:
+    interpreter = shlex.quote(str(engine / "bin/python"))
+    return f'#!/bin/sh\nexec {interpreter} -I -B -m adp "$@"\n'
+
+
 def write_launcher(generation: Path) -> None:
     launcher = generation / "bin/adp"
     launcher.parent.mkdir()
-    interpreter = shlex.quote(str(generation / "venv/bin/python"))
-    launcher.write_text(f'#!/bin/sh\nexec {interpreter} -I -B -m adp "$@"\n')
+    launcher.write_text(launcher_script(generation / "venv"))
     launcher.chmod(0o700)
     # Earlier installer drafts and archived skills used this stable path.
     alias = generation / LAUNCHER_ALIAS
@@ -438,7 +442,8 @@ class Installation:
     def report(self, name: str, receipt: dict) -> bool:
         plugin = self.observe(name)
         generation = self.root / name
-        engine = generation / "venv"
+        modern_layout = os.path.lexists(generation / "venv")
+        engine = generation / ("venv" if modern_layout else "engine")
         sites = list(engine.glob("lib/python*/site-packages"))
         engine_ok = False
         if len(sites) == 1 and installed_files(sites[0], receipt["engine"]):
@@ -472,13 +477,16 @@ class Installation:
         print(f"Exact enabled skill discovered={discovered}", flush=True)
         if engine_ok:
             try:
-                require(launcher.stat().st_size <= MAX_RESPONSE
-                        and digest(launcher.read_bytes()) == receipt.get("launcher_sha256"),
+                expected_launcher = launcher_script(engine).encode()
+                require(launcher.stat().st_size == len(expected_launcher)
+                        and launcher.read_bytes() == expected_launcher
+                        and digest(expected_launcher) == receipt.get("launcher_sha256"),
                         "Installed engine launcher differs from its receipt.")
-                alias = generation / LAUNCHER_ALIAS
-                require(alias.is_symlink() and os.readlink(alias) == LAUNCHER_LINK
-                        and alias.resolve() == launcher,
-                        "The compatible ADP launcher path no longer points to the managed launcher.")
+                if modern_layout:
+                    alias = generation / LAUNCHER_ALIAS
+                    require(alias.is_symlink() and os.readlink(alias) == LAUNCHER_LINK
+                            and alias.resolve() == launcher,
+                            "The compatible ADP launcher path no longer points to the managed launcher.")
                 probe = ("import importlib.util, json, sys; "
                          "print(json.dumps([sys.prefix, importlib.util.find_spec('adp').origin]))")
                 identity = command([str(engine / "bin/python"), "-I", "-B", "-c", probe],

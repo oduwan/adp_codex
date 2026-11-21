@@ -243,7 +243,7 @@ class InstallerTests(unittest.TestCase):
         metadata.write_text("Name: adp-codex\nVersion: 0.1.0\n")
         launcher = engine.parent / "bin/adp"
         launcher.parent.mkdir()
-        launcher.write_text("#!/missing/interpreter\n")
+        launcher.write_text(installer.launcher_script(engine))
         alias = engine.parent / installer.LAUNCHER_ALIAS
         alias.parent.mkdir(parents=True)
         alias.symlink_to(installer.LAUNCHER_LINK)
@@ -293,6 +293,35 @@ class InstallerTests(unittest.TestCase):
                 result = installer.command([str(current / relative), "--help"], foreign.parent,
                                            "Managed launcher", env=dict(os.environ, PYTHONPATH=str(foreign.parent)))
                 self.assertEqual(result, b"managed ADP\n")
+
+    def test_verify_reuses_healthy_isolated_launcher_from_earlier_layout(self):
+        records, current = self.active()
+        source = self.source()
+        generation = self.install.root / current
+        engine = generation / "engine"
+        sites = engine / "lib/python3.11/site-packages"
+        catalog = self.install.catalog(current)
+        cache = self.codex.home / "plugins/cache" / current / installer.NAME / self.receipt["version"]
+        for parent, section in ((sites, "engine"), (catalog / installer.CATALOG_PLUGIN, "plugin"), (cache, "plugin")):
+            for name in self.receipt[section]:
+                path = parent / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(source.files[name])
+        manifest = catalog / ".agents/plugins/marketplace.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps(installer.marketplace_payload(current)))
+        metadata = sites / "adp_codex-0.1.0.dist-info/METADATA"
+        metadata.parent.mkdir()
+        metadata.write_text("Name: adp-codex\nVersion: 0.1.0\n")
+        launcher = generation / "bin/adp"
+        launcher.parent.mkdir()
+        launcher.write_text(installer.launcher_script(engine))
+        receipt = records[current] | {"launcher_sha256": installer.digest(launcher.read_bytes())}
+        self.codex.observe.return_value = installer.PluginState(True, True, True, True)
+        self.codex.skills.return_value = [{"name": installer.NAME, "path": str(cache / installer.SKILL), "enabled": True}]
+        with patch.object(installer, "command", side_effect=[
+                json.dumps([str(engine), str(sites / "adp/__init__.py")]).encode(), b"help"]):
+            self.assertTrue(self.install.report(current, receipt))
 
     def test_subprocess_output_is_bounded(self):
         with patch.object(installer, "MAX_RESPONSE", 1024):
