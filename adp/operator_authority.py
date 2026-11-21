@@ -64,6 +64,11 @@ class OperatorAuthority:
         return self.store.attest(purpose,subject,source.principal,
             provenance=(self.store.source(source),),binding=binding)
 
+    def preview_sources(self, domain: str) -> set[str]:
+        require(not self.mutating, 'Preview sources are available only from read-only observations')
+        return {source.fingerprint for (_, purpose, _), source in self._ephemeral.items()
+                if purpose.startswith(domain)}
+
     def request_data(self, kind, purpose, context):
         from .operator_decisions import exchange
         require(kind in ('policy','assessment','project-evidence'),'Unsupported installed project data request')

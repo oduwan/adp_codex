@@ -26,11 +26,59 @@ class Memory:
     exceptional takeover. Git is an optimistic checkpoint transport, not a lease.
     """
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, *, pinned_local_remote: Path | None = None):
         self.config = config
+        self.pinned_local_remote = pinned_local_remote
         self.branch, self.path = config.require_storage()
-        common = Path(value(config.root, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-        self.control = safe_path(common / "adp" / key(self.branch))
+        self.common = safe_path(Path(value(config.root, "rev-parse", "--path-format=absolute", "--git-common-dir")))
+        self.control = safe_path(self.common / "adp" / key(self.branch))
+
+    def _write_git(self, cwd: Path, *args: str, input: bytes | None = None) -> bytes:
+        if self.pinned_local_remote is None:
+            return git(cwd, *args, input=input)
+        self.verify_pinned_remote()
+        if cwd == self.config.root:
+            directory = self.common
+            prefix = ("--git-dir", str(directory))
+        else:
+            require(cwd == self.path, "Unexpected guided memory Git working directory")
+            directory = self._registered()
+            prefix = ("--git-dir", str(directory), "--work-tree", str(cwd))
+        return git(cwd, *prefix, *args, input=input)
+
+    def _remote_git(self, cwd: Path, args: tuple[str, ...], refspec: str) -> bytes:
+        if self.pinned_local_remote is None:
+            return git(cwd, *args, self.config.remote, refspec)
+        endpoint = safe_path(self.pinned_local_remote).as_uri()
+        # A private one-use alias prevents a selected remote name or an
+        # existing URL rewrite from redirecting the approved local endpoint.
+        alias = "adp-local-" + secrets.token_hex(16) + ":"
+        return self._write_git(cwd, "-c", "protocol.allow=never", "-c", "protocol.file.allow=always",
+                               "-c", f"url.{endpoint}.insteadOf={alias}", "-c", f"url.{endpoint}.pushInsteadOf={alias}",
+                               *args, alias, refspec)
+
+    def verify_pinned_remote(self) -> None:
+        if self.pinned_local_remote is not None:
+            path = safe_path(self.pinned_local_remote)
+            require(safe_path(self.common) == self.common
+                    and Path(value(self.config.root, "rev-parse", "--path-format=absolute", "--git-common-dir")) == self.common,
+                    "The approved coordination Git directory changed")
+            require(value(self.config.root, 'remote', 'get-url', '--all', self.config.remote) in (str(path), path.as_uri())
+                    and value(self.config.root, 'remote', 'get-url', '--push', '--all', self.config.remote) in (str(path), path.as_uri()),
+                    'The approved local coordination destination changed')
+
+    def _remote_head(self) -> str | None:
+        if self.pinned_local_remote is None:
+            return self.config.remote_head()
+        lines = self._remote_git(self.config.root, ("ls-remote", "--refs"),
+                                 "refs/heads/" + self.branch).decode("ascii").splitlines()
+        require(len(lines) <= 1, "Ambiguous pinned local memory ref")
+        if not lines:
+            return None
+        revision, name = lines[0].split()
+        require(SHA.fullmatch(revision) and name == "refs/heads/" + self.branch,
+                "Invalid pinned local memory ref")
+        return revision
 
     def _read_ref(self, ref: str) -> tuple[dict, dict[str, dict]]:
         entries = git(self.config.root, "ls-tree", "-rz", ref).split(b"\0")
@@ -57,16 +105,28 @@ class Memory:
         bundle(state, tasks, self.config.identity)
         return state, tasks
 
-    def _registered(self) -> None:
+    def _registered(self) -> Path | None:
         safe_path(self.path)
         require(self.path.is_dir(), "Memory worktree is absent; use authorized init --apply")
-        require((self.path / ".git").is_file() and not (self.path / ".git").is_symlink(),
+        gitfile = self.path / ".git"
+        require(gitfile.is_file() and not gitfile.is_symlink(),
                 "Storage is not a registered linked memory worktree; unexpected files are refused")
-        actual = value(self.path, "rev-parse", "--show-toplevel")
-        require(Path(actual) == self.path, "Storage is not the selected memory worktree")
-        common = value(self.path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        directory, prefix = None, ()
+        if self.pinned_local_remote is None:
+            actual = value(self.path, "rev-parse", "--show-toplevel")
+            require(Path(actual) == self.path, "Storage is not the selected memory worktree")
+        else:
+            directory = safe_path(Path(value(self.path, "rev-parse", "--absolute-git-dir")))
+            require(directory.parent == self.common / "worktrees", "Guided memory worktree administration changed")
+            backlink = safe_path(directory / "gitdir")
+            require(backlink.is_file() and backlink.stat().st_size <= 4096
+                    and safe_path(directory / backlink.read_text().removesuffix("\n")) == gitfile,
+                    "Git administration does not belong to the selected memory worktree")
+            prefix = ("--git-dir", str(directory), "--work-tree", str(self.path))
+        common = value(self.path, *prefix, "rev-parse", "--path-format=absolute", "--git-common-dir")
         require(Path(common) == self.control.parent.parent, "Memory belongs to another repository")
-        require(value(self.path, "symbolic-ref", "HEAD") == "refs/heads/" + self.branch, "Memory branch mismatch")
+        require(value(self.path, *prefix, "symbolic-ref", "HEAD") == "refs/heads/" + self.branch, "Memory branch mismatch")
+        return directory
 
     def _layout(self) -> None:
         self._registered()
@@ -105,7 +165,7 @@ class Memory:
 
     def inspect(self) -> dict:
         """Observe only: no locks, fetch, token creation, index refresh or refs."""
-        remote = self.config.remote_head()
+        remote = self._remote_head()
         if not self.path.exists():
             return {"health": "REMOTE_AVAILABLE" if remote else "UNINITIALIZED",
                     "remote_head": remote, "owner": None}
@@ -118,12 +178,15 @@ class Memory:
                 "tasks": tasks, "local_owner": self._owns(state["owner"]),
                 "inbox_count": len(self._inbox())}
 
-    def initialize(self, *, authorized: bool = False) -> dict:
+    def initialize(self, *, authorized: bool = False, initial_only: bool = False) -> dict:
         if not authorized:
             raise AuthorityError("init --apply requires explicit --authorize-memory-write")
         author(self.config.root)
         with locked(self.control):
-            remote = self.config.remote_head()
+            remote = self._remote_head()
+            if initial_only:
+                require(remote is None and not self.path.exists(),
+                        "Guided enrollment cannot adopt an existing checkpoint or memory worktree")
             if self.path.exists() and any(self.path.iterdir()):
                 head, _, _ = self._local()
                 if remote != head:
@@ -132,7 +195,7 @@ class Memory:
             refs = value(self.config.root, "for-each-ref", "--format=%(refname)", "refs/heads/" + self.branch).splitlines()
             require("refs/heads/" + self.branch not in refs, "Memory branch already exists locally; select its worktree or recover explicitly")
             if remote:
-                git(self.config.root, "fetch", "--no-tags", self.config.remote, "refs/heads/" + self.branch)
+                self._remote_git(self.config.root, ("fetch", "--no-tags"), "refs/heads/" + self.branch)
                 require(value(self.config.root, "rev-parse", "FETCH_HEAD") == remote, "Remote changed during initialization; inspect and retry")
                 self._read_ref(remote)  # Validate before any checkout of remote data.
                 commit = remote
@@ -140,23 +203,22 @@ class Memory:
                 state = {"schema_version": 1, "repository_id": self.config.identity,
                          "revision": 1, "generation": 0, "owner": None,
                          "task_keys": [], "assignment_sequence": 0}
-                state_blob = git(
+                state_blob = self._write_git(
                     self.config.root, "hash-object", "-w", "--stdin", input=encode(state)).decode().strip()
-                ignore_blob = git(self.config.root, "hash-object", "-w", "--stdin", input=IGNORE).decode().strip()
-                tree = git(self.config.root, "mktree", input=(
+                ignore_blob = self._write_git(self.config.root, "hash-object", "-w", "--stdin", input=IGNORE).decode().strip()
+                tree = self._write_git(self.config.root, "mktree", input=(
                     f"100644 blob {ignore_blob}\t.gitignore\n100644 blob {state_blob}\tstate.json\n").encode()).decode().strip()
-                commit = git(self.config.root, "commit-tree", tree, "-m", "Initialize coordination memory").decode().strip()
-            git(self.config.root, "worktree", "add", "-b", self.branch, str(self.path), commit)
+                commit = self._write_git(self.config.root, "commit-tree", tree, "-m", "Initialize coordination memory").decode().strip()
+            self._write_git(self.config.root, "worktree", "add", "-b", self.branch, str(self.path), commit)
             if not remote:
                 self._push(None)
             return self.inspect()
 
     def _push(self, expected: str | None) -> None:
-        if self.config.remote_head() != expected:
+        if self._remote_head() != expected:
             raise Conflict("Remote memory changed; local checkpoint retained, no automatic reconciliation")
-        git(self.path, "push", "--no-verify", "--no-follow-tags", self.config.remote,
-            "HEAD:refs/heads/" + self.branch)
-        if self.config.remote_head() != value(self.path, "rev-parse", "HEAD"):
+        self._remote_git(self.path, ("push", "--no-verify", "--no-follow-tags"), "HEAD:refs/heads/" + self.branch)
+        if self._remote_head() != value(self.path, "rev-parse", "HEAD"):
             raise Conflict("Remote moved after push; publication is not confirmed")
 
     def _owns(self, owner: dict | None) -> bool:
@@ -177,7 +239,7 @@ class Memory:
         if (self.control / "pending.json").exists():
             raise Conflict("An interrupted checkpoint requires explicit recover")
         head, state, tasks = self._local()
-        if head != self.config.remote_head():
+        if head != self._remote_head():
             raise Conflict("Remote memory differs; use explicit recovery, never auto-merge")
         if owned:
             self._owner(state)
@@ -213,26 +275,30 @@ class Memory:
         current = value(self.path, "rev-parse", "HEAD")
         if current == base:
             self._write_files(state, tasks)
-            git(self.path, "add", "--all", "--", "state.json", "tasks")
-            git(self.path, "commit", "-m", f"Checkpoint coordination revision {state['revision']}")
+            self._write_git(self.path, "add", "--all", "--", "state.json", "tasks")
+            self._write_git(self.path, "commit", "-m", f"Checkpoint coordination revision {state['revision']}")
         else:
             require(value(self.path, "rev-parse", "HEAD^") == base, "Pending checkpoint parent mismatch")
             stored_state, stored_tasks = self._read_ref(current)
             require(stored_state == state and stored_tasks == tasks, "Pending checkpoint differs from local commit")
             require(not value(self.path, "status", "--porcelain", "--untracked-files=all"), "Pending committed checkpoint has dirty files")
-        remote = self.config.remote_head()
+        remote = self._remote_head()
         if remote != value(self.path, "rev-parse", "HEAD"):
             self._push(base)
         (self.control / "pending.json").unlink()
         sync_directory(self.control)
 
     def claim(self, label: str, *, takeover: bool = False,
-              confirmed_stopped_owner: str | None = None) -> dict:
+              confirmed_stopped_owner: str | None = None, initial_only: bool = False) -> dict:
         string(label, 128)
         with locked(self.control):
             head, state, tasks = self._start(owned=False)
             if self._owns(state["owner"]):
                 return self.inspect()
+            if initial_only:
+                require(state["owner"] is None and state["generation"] == 0 and state["revision"] == 1
+                        and state["schema_version"] == 1 and not tasks and not takeover,
+                        "Guided enrollment cannot reclaim previously released ownership")
             if state["owner"] is not None:
                 if not takeover or confirmed_stopped_owner != state["owner"]["id"]:
                     raise Conflict("Takeover requires --takeover and --confirm-stopped-owner matching the current owner ID")
@@ -301,7 +367,7 @@ class Memory:
                     for assignment_id in task["assignments"]:
                         clear_slot(self.path / "inbox" / (key(assignment_id) + ".json"), MAX_RESULT)
                 head, state, _ = self._local()
-                remote = self.config.remote_head()
+                remote = self._remote_head()
                 if remote == head:
                     return self.inspect()
                 if remote is None:
@@ -311,7 +377,7 @@ class Memory:
                             "Remote memory is missing; explicit operator reconciliation required")
                     self._push(None)
                 else:
-                    git(self.config.root, "fetch", "--no-tags", self.config.remote, "refs/heads/" + self.branch)
+                    self._remote_git(self.config.root, ("fetch", "--no-tags"), "refs/heads/" + self.branch)
                     require(value(self.config.root, "rev-parse", "FETCH_HEAD") == remote, "Remote changed while recovering")
                     self._read_ref(remote)
                     # --is-ancestor returns nonzero on divergence, surfaced as a
@@ -322,7 +388,7 @@ class Memory:
                         raise Conflict("Divergent memory histories require operator reconciliation") from exc
                     if self._inbox():
                         raise Conflict("Local inbox would be stranded by synchronization")
-                    git(self.path, "merge", "--ff-only", "--no-edit", remote)
+                    self._write_git(self.path, "merge", "--ff-only", "--no-edit", remote)
             return self.inspect()
 
     def add_task(self, identifier: str, source_revision: str | None = None) -> dict:

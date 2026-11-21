@@ -23,6 +23,9 @@ from .discovery_types import (Coverage, Identity, Issue, PullRequest, Relation,
 API = "https://api.github.com"
 MAX_RESPONSE = 1024 * 1024
 PATH = re.compile(r"/repos/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}(?:/(?:issues|pulls)(?:/[1-9][0-9]*(?:/(?:comments|timeline|sub_issues|dependencies/blocked_by))?)?)?(?:\?[A-Za-z0-9_=&-]+)?\Z")
+ENROLLMENT_PATH = re.compile(
+    r"/repos/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}"
+    r"/(?:rules/)?branches/(?:[A-Za-z0-9_.~-]|%[0-9A-F]{2}){1,768}\Z")
 
 
 @dataclass(frozen=True)
@@ -50,7 +53,8 @@ class GitHubHTTPTransport:
         self._opener = urllib.request.build_opener(_NoRedirect())
 
     def get(self, path: str) -> Response:
-        require(type(path) is str and PATH.fullmatch(path), "Unsupported read-only GitHub path")
+        require(type(path) is str and (PATH.fullmatch(path) or ENROLLMENT_PATH.fullmatch(path)),
+                "Unsupported read-only GitHub path")
         request = urllib.request.Request(API + path, method="GET", headers={
             "Authorization": "Bearer " + self._token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "adp-codex-read-only"})
@@ -77,7 +81,7 @@ class FixtureTransport:
         self._positions: dict[str, int] = {}
 
     def get(self, path: str) -> Response:
-        require(PATH.fullmatch(path), "Unsupported fixture GET path")
+        require(PATH.fullmatch(path) or ENROLLMENT_PATH.fullmatch(path), "Unsupported fixture GET path")
         self.calls.append(path)
         item = self.responses.get(path, Response(404, None))
         if type(item) is tuple:

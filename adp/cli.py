@@ -71,6 +71,8 @@ def parser() -> argparse.ArgumentParser:
     add_execution_commands(commands, common)
     from .operator_cli import add_commands as add_operator_commands
     add_operator_commands(commands, common)
+    from .enrollment_cli import add_commands as add_enrollment_commands
+    add_enrollment_commands(commands)
     return root
 
 
@@ -91,6 +93,11 @@ def check_product_worktrees(config: Config) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
+        if args.command == "enroll":
+            from .enrollment_cli import run as enrollment_run
+            report, code = enrollment_run(args)
+            emit(report)
+            return code
         if args.command in ('setup','preview') or getattr(args,'operator_profile',None) is not None or getattr(args,'operator_trust',None) is not None:
             from .operator_cli import run as operator_run
             report,code=operator_run(args)
