@@ -14,22 +14,15 @@ never authorizes execution, merge, deployment or release.
 
 ## Installation and first inspection
 
-Python 3.11+ is required. The engine has no third-party runtime dependencies.
-Install into a fresh virtual environment from the explicitly selected source:
+Install the Python 3.11+ engine and Codex plugin together from a selected local
+development archive. The [installer guide](docs/operations/INSTALL_ADP.md)
+covers the one-command install, verification, upgrades and removal.
 
-```bash
-python3.11 -m venv /tmp/adp-example-venv
-/tmp/adp-example-venv/bin/python -m pip install .
-/tmp/adp-example-venv/bin/adp --help
-```
+Installing the read-only skill does not configure a Conductor or grant
+execution authority. Versions identify local package metadata.
 
-The Python wheel and portable planning plugin are separate installations. The
-plugin keeps root `plugin.json`, `skills/` and its referenced documentation together;
-see [installation qualification](docs/qualification/INSTALLATION.md). Installing
-that read-only skill does not configure a Conductor or grant execution authority.
-Versions identify local package metadata, not an authorized public release.
-
-Inspect an explicitly selected disposable project without initializing memory:
+With the managed engine on PATH, inspect an explicitly selected disposable
+project without initializing memory:
 
 ```bash
 adp init --repo ./project --remote team --memory-branch coordination/state --storage ../project-memory --dry-run
