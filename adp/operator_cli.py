@@ -76,14 +76,15 @@ def run(args, *, expected_binding=None, before_effects=None):
 
     def invoke(lease=None):
         controller=InstalledProject(p,mutating=True).build()
-        if before_effects is not None: before_effects()
+        recovery_head=before_effects() if before_effects is not None else None
         selected=controller.track
         if command=='resume' and getattr(args,'adopt_generation',False): selected.adopt_generation(authorized=True)
         scoped={'lease':lease} if lease is not None else {}
         if command=='handoff': result=selected.handoff(authorized=True, **scoped)
         else:
             method=selected.resume if command=='resume' else selected.run
-            if command=='resume' and before_effects is not None: scoped['recovery_check']=before_effects
+            if command=='resume' and before_effects is not None:
+                scoped.update(recovery_check=before_effects,recovery_head=recovery_head)
             result=method(rounds=rounds,maximum_parallel=parallel,authorized=True, **scoped)
         report=exit_report(p,controller,result,command)
         return report,0 if report['status'] in ('COMPLETE','HANDOFF_RECORDED') else 7 if report['status'] in ('UNSUPPORTED','UNSUPPORTED_RUNTIME') else 4

@@ -222,7 +222,8 @@ class AutonomousTrack:
         self._slot(spec, packet=result.packet_reference, status="ACTIVE")
         return self._attach(spec, result.packet_reference)
 
-    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False, lease=None, recovery_check=None):
+    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False,
+            lease=None, recovery_check=None, recovery_head=None):
         if not authorized:
             raise AuthorityError("Autonomous track requires explicit finite execution authority")
         parallel = self.window.maximum_parallel if maximum_parallel is None else maximum_parallel
@@ -236,7 +237,8 @@ class AutonomousTrack:
                     if recovery_check is not None:
                         recovery_check()
                     c._privacy_preflight()
-                c.memory.recover(before_effects=check_recovery)
+                scope = {"expected_remote": recovery_head} if recovery_check is not None else {}
+                c.memory.recover(before_effects=check_recovery, **scope)
             c._privacy_preflight()
             self._window(create=True)
             try:

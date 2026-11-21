@@ -17,6 +17,7 @@ from .schema import (KEY, MAX_ASSIGNMENTS, MAX_JOURNAL, MAX_JSON, MAX_RESULT,
 from .storage import atomic, clear_slot, locked, sync_directory
 
 IGNORE = b"/inbox/\n"
+_UNREVIEWED_REMOTE = object()
 
 
 class Memory:
@@ -270,8 +271,10 @@ class Memory:
         self._finish(pending)
         return self.inspect()
 
-    def _finish(self, pending: dict) -> None:
+    def _finish(self, pending: dict, *, expected_remote=_UNREVIEWED_REMOTE) -> None:
         base, state, tasks = pending["base"], pending["state"], pending["tasks"]
+        if expected_remote is not _UNREVIEWED_REMOTE:
+            require(self._remote_head() == expected_remote, "Reviewed remote checkpoint changed before recovery")
         current = value(self.path, "rev-parse", "HEAD")
         if current == base:
             self._write_files(state, tasks)
@@ -283,6 +286,8 @@ class Memory:
             require(stored_state == state and stored_tasks == tasks, "Pending checkpoint differs from local commit")
             require(not value(self.path, "status", "--porcelain", "--untracked-files=all"), "Pending committed checkpoint has dirty files")
         remote = self._remote_head()
+        require(expected_remote is _UNREVIEWED_REMOTE or remote == expected_remote,
+                "Reviewed remote checkpoint changed during recovery")
         if remote != value(self.path, "rev-parse", "HEAD"):
             self._push(base)
         (self.control / "pending.json").unlink()
@@ -336,7 +341,7 @@ class Memory:
             state["owner"] = None
             return self._checkpoint(head, state, tasks)
 
-    def recover(self, *, before_effects=None) -> dict:
+    def recover(self, *, before_effects=None, expected_remote=_UNREVIEWED_REMOTE) -> dict:
         """Explicitly publish a validated pending transaction or fast-forward sync.
 
         A missing owner is never repaired by recovery. Released/foreign owners
@@ -362,7 +367,10 @@ class Memory:
                 clear_slot(self.path / "state.json", MAX_JSON)
                 for task_key in pending["tasks"]:
                     clear_slot(self.path / "tasks" / (task_key + ".json"), MAX_JSON)
-                self._finish(pending)
+                if expected_remote is _UNREVIEWED_REMOTE:
+                    self._finish(pending)
+                else:
+                    self._finish(pending, expected_remote=expected_remote)
             else:
                 _, committed_tasks = self._read_ref(value(self.path, "rev-parse", "HEAD"))
                 for task in committed_tasks.values():
@@ -370,6 +378,8 @@ class Memory:
                         clear_slot(self.path / "inbox" / (key(assignment_id) + ".json"), MAX_RESULT)
                 head, state, _ = self._local()
                 remote = self._remote_head()
+                require(expected_remote is _UNREVIEWED_REMOTE or remote == expected_remote,
+                        "Reviewed remote checkpoint changed before recovery")
                 if remote == head:
                     return self.inspect()
                 if remote is None:

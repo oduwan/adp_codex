@@ -332,6 +332,7 @@ def execution(args):
         # heads again locally, and repeat this check after native port assembly.
         if state(observe("status")) != approved_state:
             raise changed
+        return approved_state["invocation"]["remote_checkpoint"]
 
     try:
         selected = local_checkout(args.repo, args.remote)

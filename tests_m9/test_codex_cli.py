@@ -11,7 +11,7 @@ from adp.cli import main
 from adp.errors import ADPError
 from adp.memory import Memory
 from adp.operator_profile import OperatorProfile, load_profile, private_file
-from adp.schema import MAX_JOURNAL, encode
+from adp.schema import MAX_JOURNAL, bundle, encode, key
 import test_enrollment
 
 FAKE_REVIEW = "v1." + ".".join(["1" * 64] * 3)
@@ -299,7 +299,14 @@ class CodexGuidedFlowTests(unittest.TestCase):
                 memory.add_task("synthetic-interrupted-update")
         pending = memory.control / "pending.json"
         document = private_file(pending, limit=MAX_JOURNAL)
-        document["state"]["execution"]["actions"]["synthetic"] = "ghp_" + "a" * 40
+        task = "synthetic-interrupted-update"
+        document["state"]["execution"]["tasks"][key(task)] = {
+            "task_id": task, "identity": {"repository_id": f.rid, "issue_id": "issue-1", "forge": "github"},
+            "workspace_key": "ghp_" + "a" * 40, "admission": "a" * 64, "issue_digest": "b" * 64,
+            "revision": f.head, "source_ref": "refs/heads/work/one", "product_iteration": 1,
+            "kind": "PRODUCT", "stage": "DEVELOP", "jobs": {}, "review": None,
+        }
+        bundle(document["state"], document["tasks"], f.rid)
         content = encode(document, MAX_JOURNAL)
         pending.write_bytes(content)
         previous = memory.inspect()
@@ -313,6 +320,36 @@ class CodexGuidedFlowTests(unittest.TestCase):
         publish.assert_not_called()
         self.assertEqual(memory.inspect(), previous)
         self.assertEqual(pending.read_bytes(), content)
+
+    def test_resume_refuses_a_late_remote_advance_before_fetch(self):
+        self.apply()
+        f = self.fixture
+        memory = Memory(load_profile(f.directory / "profile.json", f.trust).memory_config())
+        before = memory.inspect()
+        code, examined = invoke("status", *self.retained, "--for-operation", "resume")
+        self.assertEqual(code, 0, examined)
+        previous_local, previous_remote = Memory._local, Memory._remote_head
+        advanced = False
+
+        def after_clean_read(instance, *, dirty=False):
+            nonlocal advanced
+            current = previous_local(instance, dirty=dirty)
+            if not dirty:
+                advanced = True
+            return current
+
+        def remote_head(instance):
+            return "a" * 40 if advanced else previous_remote(instance)
+
+        with (patch("adp.codex_cli.runtime", return_value={"status": "SUPPORTED"}),
+              patch.object(Memory, "_local", after_clean_read), patch.object(Memory, "_remote_head", remote_head),
+              patch.object(Memory, "_remote_git", autospec=True, side_effect=Memory._remote_git) as transport):
+            code, view = invoke("resume", *self.retained, "--reviewed", examined["invocation_review"], "--authorize-execution")
+        self.assertTrue(advanced)
+        self.assertEqual(code, 4, view)
+        self.assertEqual(view["blockers"][0]["code"], "OPERATOR_REFUSED")
+        self.assertFalse(any("fetch" in call.args[2] for call in transport.call_args_list))
+        self.assertEqual(memory.inspect(), before)
 
     def test_resume_rechecks_review_at_m1_lock_before_recovering_late_journal(self):
         from adp.storage import locked
