@@ -14,9 +14,10 @@ from .git import SHA, author, git, value
 from .schema import (KEY, MAX_ASSIGNMENTS, MAX_JOURNAL, MAX_JSON, MAX_RESULT,
                      MAX_TASKS, bundle, decode, encode, fields, key, require,
                      result_schema, string)
-from .storage import atomic, clear_slot, locked, sync_directory
+from .storage import atomic, clear_slot, interrupted_slot, locked, sync_directory
 
 IGNORE = b"/inbox/\n"
+_UNREVIEWED_REMOTE = object()
 
 
 class Memory:
@@ -128,11 +129,13 @@ class Memory:
         require(value(self.path, *prefix, "symbolic-ref", "HEAD") == "refs/heads/" + self.branch, "Memory branch mismatch")
         return directory
 
-    def _layout(self) -> None:
+    def _layout(self, slots=()) -> None:
         self._registered()
         # os.scandir does not follow directory symlinks. Reject before recursion.
         for top in self.path.iterdir():
             require(not top.is_symlink(), "Symlinked memory entry")
+            if top in slots:
+                continue
             if top.name == ".git":
                 require(top.is_file(), "Unexpected Git directory in linked memory")
             elif top.name in ("state.json", ".gitignore"):
@@ -141,6 +144,8 @@ class Memory:
                 require(top.is_dir(), "Invalid memory directory")
                 count = 0
                 for item in top.iterdir():
+                    if item in slots and not item.is_symlink():
+                        continue
                     count += 1
                     require(count <= (MAX_TASKS if top.name == "tasks" else MAX_ASSIGNMENTS), "Memory file count exceeded")
                     require(not item.is_symlink() and item.is_file(), "Unsafe memory child")
@@ -163,20 +168,50 @@ class Memory:
             require((self.path / ".gitignore").read_bytes() == IGNORE, "Ignore rules differ from commit")
         return head, state, tasks
 
-    def inspect(self) -> dict:
+    def _recovery_document(self, *, protected=False) -> dict | None:
+        path = safe_path(self.control / "pending.json")
+        if not path.exists():
+            return None
+        pending = load_json(path, MAX_JOURNAL, protected=True) if protected else load_json(path, MAX_JOURNAL)
+        fields(pending, "base state tasks")
+        require(isinstance(pending["base"], str) and SHA.fullmatch(pending["base"]), "Invalid recovery base")
+        bundle(pending["state"], pending["tasks"], self.config.identity)
+        return pending
+
+    def _recovery_slots(self, pending, tasks):
+        if pending is not None:
+            return [(self.path / "state.json", MAX_JSON),
+                    *((self.path / "tasks" / (task_key + ".json"), MAX_JSON) for task_key in pending["tasks"])]
+        return [(self.path / "inbox" / (key(assignment) + ".json"), MAX_RESULT)
+                for task in tasks.values() for assignment in task["assignments"]]
+
+    def inspect(self, *, recovery=False) -> dict:
         """Observe only: no locks, fetch, token creation, index refresh or refs."""
         remote = self._remote_head()
         if not self.path.exists():
             return {"health": "REMOTE_AVAILABLE" if remote else "UNINITIALIZED",
                     "remote_head": remote, "owner": None}
-        head, state, tasks = self._local(dirty=True)
+        slots = set()
+        extra = {}
+        if recovery:
+            self._registered()
+            head = value(self.path, "rev-parse", "HEAD")
+            state, tasks = self._read_ref(head)
+            pending = self._recovery_document(protected=True)
+            slots = {slot for path, limit in self._recovery_slots(pending, tasks)
+                     if (slot := interrupted_slot(path, limit)) is not None}
+            self._layout(slots)
+            extra = {"recovery_slots": sorted(str(slot.relative_to(self.path)) for slot in slots),
+                     "recovery_journal": hashlib.sha256(encode(pending, MAX_JOURNAL)).hexdigest() if pending is not None else None}
+        else:
+            head, state, tasks = self._local(dirty=True)
         dirty = bool(value(self.path, "status", "--porcelain", "--untracked-files=all"))
         pending = (self.control / "pending.json").exists()
-        return {"health": "RECOVERY_REQUIRED" if pending or dirty else
+        return {"health": "RECOVERY_REQUIRED" if pending or dirty or slots else
                 "SYNCED" if head == remote else "REMOTE_MISMATCH",
                 "local_head": head, "remote_head": remote, "state": state,
                 "tasks": tasks, "local_owner": self._owns(state["owner"]),
-                "inbox_count": len(self._inbox())}
+                "inbox_count": sum(item not in slots for item in self._inbox()), **extra}
 
     def initialize(self, *, authorized: bool = False, initial_only: bool = False) -> dict:
         if not authorized:
@@ -270,8 +305,10 @@ class Memory:
         self._finish(pending)
         return self.inspect()
 
-    def _finish(self, pending: dict) -> None:
+    def _finish(self, pending: dict, *, expected_remote=_UNREVIEWED_REMOTE) -> None:
         base, state, tasks = pending["base"], pending["state"], pending["tasks"]
+        if expected_remote is not _UNREVIEWED_REMOTE:
+            require(self._remote_head() == expected_remote, "Reviewed remote checkpoint changed before recovery")
         current = value(self.path, "rev-parse", "HEAD")
         if current == base:
             self._write_files(state, tasks)
@@ -283,6 +320,8 @@ class Memory:
             require(stored_state == state and stored_tasks == tasks, "Pending checkpoint differs from local commit")
             require(not value(self.path, "status", "--porcelain", "--untracked-files=all"), "Pending committed checkpoint has dirty files")
         remote = self._remote_head()
+        require(expected_remote is _UNREVIEWED_REMOTE or remote == expected_remote,
+                "Reviewed remote checkpoint changed during recovery")
         if remote != value(self.path, "rev-parse", "HEAD"):
             self._push(base)
         (self.control / "pending.json").unlink()
@@ -336,7 +375,7 @@ class Memory:
             state["owner"] = None
             return self._checkpoint(head, state, tasks)
 
-    def recover(self) -> dict:
+    def recover(self, *, before_effects=None, expected_remote=_UNREVIEWED_REMOTE, validate_states=None) -> dict:
         """Explicitly publish a validated pending transaction or fast-forward sync.
 
         A missing owner is never repaired by recovery. Released/foreign owners
@@ -344,30 +383,38 @@ class Memory:
         """
         author(self.config.root)
         with locked(self.control):
+            if before_effects is not None:
+                before_effects()
             self._registered()
-            pending_path = self.control / "pending.json"
-            if pending_path.exists():
-                pending = load_json(pending_path, MAX_JOURNAL)
-                fields(pending, "base state tasks")
-                require(isinstance(pending["base"], str) and SHA.fullmatch(pending["base"]), "Invalid recovery base")
-                bundle(pending["state"], pending["tasks"], self.config.identity)
+            guarded = expected_remote is not _UNREVIEWED_REMOTE
+            if guarded:
+                require(self._remote_head() == expected_remote, "Reviewed remote checkpoint changed before recovery")
+            pending = self._recovery_document(protected=guarded)
+            if pending is not None:
                 previous, _ = self._read_ref(pending["base"])
                 require(pending["state"]["revision"] == previous["revision"] + 1, "Invalid pending revision")
                 if not (self._owns(previous["owner"]) or self._owns(pending["state"]["owner"])):
                     raise Conflict("Recovery requires the original local owner credential")
+                if validate_states is not None:
+                    validate_states(previous, pending["state"])
                 # Only destinations named in this validated owned transaction
                 # may have their private scratch slots removed.
-                clear_slot(self.path / "state.json", MAX_JSON)
-                for task_key in pending["tasks"]:
-                    clear_slot(self.path / "tasks" / (task_key + ".json"), MAX_JSON)
-                self._finish(pending)
+                for path, limit in self._recovery_slots(pending, {}):
+                    clear_slot(path, limit)
+                if guarded:
+                    self._finish(pending, expected_remote=expected_remote)
+                else:
+                    self._finish(pending)
             else:
-                _, committed_tasks = self._read_ref(value(self.path, "rev-parse", "HEAD"))
-                for task in committed_tasks.values():
-                    for assignment_id in task["assignments"]:
-                        clear_slot(self.path / "inbox" / (key(assignment_id) + ".json"), MAX_RESULT)
+                committed, committed_tasks = self._read_ref(value(self.path, "rev-parse", "HEAD"))
+                if validate_states is not None:
+                    validate_states(committed)
+                for path, limit in self._recovery_slots(None, committed_tasks):
+                    clear_slot(path, limit)
                 head, state, _ = self._local()
                 remote = self._remote_head()
+                require(expected_remote is _UNREVIEWED_REMOTE or remote == expected_remote,
+                        "Reviewed remote checkpoint changed before recovery")
                 if remote == head:
                     return self.inspect()
                 if remote is None:
@@ -377,9 +424,16 @@ class Memory:
                             "Remote memory is missing; explicit operator reconciliation required")
                     self._push(None)
                 else:
-                    self._remote_git(self.config.root, ("fetch", "--no-tags"), "refs/heads/" + self.branch)
-                    require(value(self.config.root, "rev-parse", "FETCH_HEAD") == remote, "Remote changed while recovering")
-                    self._read_ref(remote)
+                    if guarded:
+                        self._remote_git(self.config.root, ("fetch", "--no-tags", "--no-recurse-submodules",
+                                         "--refmap=", "--no-prune", "--no-write-fetch-head", "--no-auto-maintenance"), remote)
+                        require(self._remote_head() == remote, "Reviewed remote checkpoint changed while fetching")
+                    else:
+                        self._remote_git(self.config.root, ("fetch", "--no-tags"), "refs/heads/" + self.branch)
+                        require(value(self.config.root, "rev-parse", "FETCH_HEAD") == remote, "Remote changed while recovering")
+                    recovered, _ = self._read_ref(remote)
+                    if validate_states is not None:
+                        validate_states(recovered)
                     # --is-ancestor returns nonzero on divergence, surfaced as a
                     # controlled conflict rather than an automatic merge.
                     try:

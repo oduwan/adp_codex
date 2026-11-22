@@ -14,7 +14,7 @@ from .discovery_types import Status
 from .errors import ADPError, AuthorityError, Conflict
 from .execution_memory import ExecutionJournal, QueuedMemory, invocation_lock
 from .execution_containment import source_seal, admin_seal
-from .execution_privacy import credential_shaped
+from .execution_privacy import credential_shaped, require_clean_execution
 from .execution_policy import M4ReadinessService, ReservedSafety, policy_task
 from .execution_schema import worker_result
 from .execution_types import Admission, ExternalObservation, GitEffectPort, Role, RuntimeStatus, WorkerRequest, WorkerResult
@@ -485,8 +485,7 @@ class Conductor:
         if pending.exists():
             from .config import load_json
             snapshots.append(load_json(pending, MAX_JOURNAL).get("state", {}))
-        require(not any(credential_shaped(state.get("execution", {})) for state in snapshots),
-                "Existing execution evidence contains credential-shaped content; no automatic checkpoint/recovery; operator remediation required")
+        require_clean_execution(*snapshots)
 
     def _public_worker_output(self, admission, job, payload, *, cached=False):
         if credential_shaped(payload):
@@ -954,10 +953,10 @@ class Conductor:
         self.journal.change(lambda execution, state, tasks: execution["tasks"][key(admission.task_id)]["jobs"][assignment_id].update(status="COMPLETE"))
         return {"status": "FORENSIC_REVIEWED", "revision": self._task(admission)["revision"]}
 
-    def handoff(self, *, authorized=False):
+    def handoff(self, *, authorized=False, lease=None):
         if not authorized:
             raise AuthorityError("Conductor handoff requires explicit stop/handoff authority")
-        with invocation_lock(self.memory.control):
+        with invocation_lock(self.memory.control, lease=lease):
             return self._handoff()
 
     def _handoff(self):

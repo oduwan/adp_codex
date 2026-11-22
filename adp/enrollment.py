@@ -643,12 +643,39 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
             "Persisted profile or trust does not match the enrollment intent")
     effects, writer = local_effects(profile, directory, checkout)
     require(effects == intent["effects"], "Local coordination no longer matches the retained enrollment destination")
-    observed = status(profile, bound_memory=writer)
+    observed = status(profile, bound_memory=writer, recovery=True)
     report = {key: observed[key] for key in ("repository_id", "memory_health", "local_owner", "generation", "enrollment", "execution_liveness")}
-    memory = writer.inspect()
+    memory = writer.inspect(recovery=True)
     report["status"] = "ENROLLED" if completed(profile, memory) else "PENDING"
     if report["status"] == "ENROLLED":
         require(binding is not None, "Restore the original guided enrollment provenance")
+    state = memory.get("state", {})
+    journal = memory.get("recovery_journal")
+    slots = memory.get("recovery_slots", [])
+    recoverable = (command == "status" and binding is not None and observed["enrollment"] == "MATCHED"
+                   and state.get("schema_version") == 3 and state["execution"]["schema_version"] == 3
+                   and memory.get("local_owner") is True
+                   and (memory["health"] == "REMOTE_MISMATCH" and memory["remote_head"] is not None
+                        or memory["health"] == "RECOVERY_REQUIRED" and (journal is not None or bool(slots))))
+    if report["status"] == "ENROLLED" or recoverable:
+        require(memory["health"] == observed["memory_health"] and memory["local_owner"] == observed["local_owner"]
+                and state["generation"] == observed["generation"], "Coordination observation changed")
+        if recoverable:
+            verify_enrollment(profile)
+        track = state["execution"].get("track")
+        report["invocation"] = {"profile_digest": profile.fingerprint, "trust_digest": profile.trust.fingerprint,
+                                "checkout": checkout,
+                                "checkpoint": memory["local_head"], "remote_checkpoint": memory["remote_head"],
+                                "recovery_journal": journal,
+                                "recovery_slots": digest(slots),
+                                "issues": [task.number for task in profile.tasks],
+                                "operations": profile.delegation["operations"],
+                                "merge_mode": profile.delegation["merge_mode"],
+                                "checks": [{"name": check.name, "phase": str(check.phase)} for check in profile.checks],
+                                "window": profile.payload["window"],
+                                "track_current": (track is not None and track["id"] == profile.payload["window"]["id"]
+                                                  and track["generation"] == state["generation"]),
+                                "used_rounds": track["used_rounds"] if track else 0}
     if command == "reconnect":
         verify_enrollment(profile)
         require(report["status"] == "ENROLLED", "Restore synchronized memory before reconnecting")
@@ -665,6 +692,7 @@ def read_enrollment(directory: Path | None, profile_path: Path | None, trust: Pa
             inspected = preview(profile, installed=installed)
             report["configuration"] = inspected["status"]
             report["tasks"] = [{"issue_id": row["issue_id"],
+                                "status": row["status"],
                                 "assessment": "AVAILABLE" if row.get("packet_preview") else "UNKNOWN"}
                                for row in inspected["tasks"]]
         except Blocked as exc:

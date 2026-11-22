@@ -77,7 +77,7 @@ def validate(root: Path = ROOT) -> list[str]:
                 if not re.search(r"(?m)^description:\s*\S", header):
                     errors.append("SKILL.md requires a nonempty description")
             if "read-only" not in body.lower() or "does not grant execution authority" not in body.lower():
-                errors.append("Planning skill must explicitly remain read-only and grant no execution authority")
+                errors.append("Skill must start with read-only observation and explicitly grant no execution authority")
 
     for path in sorted(root.rglob("*.md")):
         if any(p in (".git", ".venv") for p in path.parts):

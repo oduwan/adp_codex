@@ -24,7 +24,7 @@ def add_commands(commands,common):
             command.add_argument('--authorize-memory-write',action='store_true')
 
 
-def run(args):
+def run(args, *, expected_binding=None, before_effects=None):
     from .operator_setup import setup,preview,status,verify_enrollment
     from .operator_controller import InstalledProject
     require(getattr(args,'operator_profile',None) is not None and getattr(args,'operator_trust',None) is not None,
@@ -33,9 +33,11 @@ def run(args):
     # Mixing legacy flags with a signed profile is an authority ambiguity.
     require(all(getattr(args,k,None) is None for k in ('config','remote','repository_id','branch','storage')),
         'Memory/remote overrides cannot modify an installed delegation')
-    p=load_profile(args.operator_profile,args.operator_trust,retain_revocation=(
+    retain=(
         args.command in ('run','resume','handoff') and getattr(args,'authorize_execution',False)
-        or args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False)),
+        or args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False))
+    p=load_profile(args.operator_profile,args.operator_trust,retain_revocation=retain,
+        expected_binding=expected_binding,
         recover_initial_setup=(args.command=='setup' and getattr(args,'apply',False) and getattr(args,'authorize_memory_write',False)))
     command=args.command
     if command=='status': return status(p),0
@@ -71,15 +73,29 @@ def run(args):
     require(type(parallel) is int and 1<=parallel<=w['maximum_parallel'] and type(rounds) is int and 1<=rounds<=4,
         'Invocation exceeds the unchanged finite project delegation')
     verify_enrollment(p)
-    controller=InstalledProject(p,mutating=True).build()
-    selected=controller.track
-    if command=='resume' and getattr(args,'adopt_generation',False): selected.adopt_generation(authorized=True)
-    if command=='handoff': result=selected.handoff(authorized=True)
-    else:
-        method=selected.resume if command=='resume' else selected.run
-        result=method(rounds=rounds,maximum_parallel=parallel,authorized=True)
-    report=exit_report(p,controller,result,command)
-    return report,0 if report['status'] in ('COMPLETE','HANDOFF_RECORDED') else 7 if report['status'] in ('UNSUPPORTED','UNSUPPORTED_RUNTIME') else 4
+
+    def invoke(lease=None):
+        controller=InstalledProject(p,mutating=True).build()
+        recovery_head=before_effects() if before_effects is not None else None
+        selected=controller.track
+        if command=='resume' and getattr(args,'adopt_generation',False): selected.adopt_generation(authorized=True)
+        scoped={'lease':lease} if lease is not None else {}
+        if command=='handoff': result=selected.handoff(authorized=True, **scoped)
+        else:
+            method=selected.resume if command=='resume' else selected.run
+            if command=='resume' and before_effects is not None:
+                scoped.update(recovery_check=before_effects,recovery_head=recovery_head)
+            result=method(rounds=rounds,maximum_parallel=parallel,authorized=True, **scoped)
+        report=exit_report(p,controller,result,command)
+        return report,0 if report['status'] in ('COMPLETE','HANDOFF_RECORDED') else 7 if report['status'] in ('UNSUPPORTED','UNSUPPORTED_RUNTIME') else 4
+
+    if before_effects is None:
+        return invoke()
+    from .execution_memory import invocation_lock
+    from .memory import Memory
+    with invocation_lock(Memory(p.memory_config()).control) as lease:
+        before_effects()
+        return invoke(lease)
 
 
 def exit_report(profile,controller,result,command):

@@ -55,9 +55,10 @@ def verify_enrollment(profile):
     profile.live()
 
 
-def status(profile, *, bound_memory: Memory | None = None):
+def status(profile, *, bound_memory: Memory | None = None, recovery=False):
     profile.live()
-    memory=(bound_memory or Memory(profile.memory_config())).inspect()
+    reader=bound_memory or Memory(profile.memory_config())
+    memory=reader.inspect(recovery=True) if recovery else reader.inspect()
     state=memory.get('state',{})
     execution=state.get('execution',{})
     # No runtime construction, recovery, lock, discovery, or migration.

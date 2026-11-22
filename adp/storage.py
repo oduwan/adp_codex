@@ -28,13 +28,20 @@ def temporary_slot(path: Path) -> Path:
     return path.parent / (".adp-tmp-" + hashlib.sha256(path.name.encode()).hexdigest())
 
 
-def clear_slot(path: Path, limit: int) -> bool:
+def interrupted_slot(path: Path, limit: int) -> Path | None:
     temporary = safe_path(temporary_slot(path))
     if not temporary.exists():
-        return False
+        return None
     info = temporary.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
         raise ADPError("Unsafe interrupted atomic-write slot")
+    return temporary
+
+
+def clear_slot(path: Path, limit: int) -> bool:
+    temporary = interrupted_slot(path, limit)
+    if temporary is None:
+        return False
     temporary.unlink()
     sync_directory(temporary.parent)
     return True

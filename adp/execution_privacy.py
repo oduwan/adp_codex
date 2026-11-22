@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from .schema import require
+
 _CREDENTIAL = re.compile(
     r"(?:\bgh[pousr]_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{30,}"
     r"|\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}|\bAKIA[0-9A-Z]{16}\b"
@@ -25,3 +27,8 @@ def credential_shaped(value: object) -> bool:
     if isinstance(value, (list, tuple)):
         return any(credential_shaped(v) for v in value)
     return False
+
+
+def require_clean_execution(*states: dict) -> None:
+    require(not any(credential_shaped(state.get("execution", {})) for state in states),
+            "Existing execution evidence contains credential-shaped content; no automatic checkpoint/recovery; operator remediation required")

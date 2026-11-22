@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import os
 from pathlib import Path
-import stat
 import time
 
 from .config import Config, load_json, remote_identity, safe_path
@@ -31,10 +30,7 @@ SUPPORTED = {Operation.INSPECT, Operation.EDIT, Operation.STAGE, Operation.COMMI
 def private_file(path, *, limit=1048576):
     string(str(path),4096)
     path = safe_path(Path(path).absolute())
-    info = path.lstat()
-    require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077
-            and info.st_nlink == 1 and info.st_size <= limit, 'Use an owned protected regular operator file')
-    return load_json(path, limit)
+    return load_json(path, limit, protected=True)
 
 
 def file_digest(path):
@@ -199,17 +195,21 @@ class OperatorProfile:
         return cfg
 
 
-def load_profile(path, trust_path, *, clock=None, retain_revocation=False, recover_initial_setup=False):
+def load_profile(path, trust_path, *, clock=None, retain_revocation=False, recover_initial_setup=False, expected_binding=None):
     try:
-        return _load_profile(path,trust_path,clock=clock,retain_revocation=retain_revocation,recover_initial_setup=recover_initial_setup)
+        return _load_profile(path,trust_path,clock=clock,retain_revocation=retain_revocation,
+                             recover_initial_setup=recover_initial_setup,expected_binding=expected_binding)
     except (TypeError,ValueError,KeyError,AttributeError,OverflowError):
         raise AuthorityError('Malformed protected operator configuration; inspect the closed schema') from None
 
 
-def _load_profile(path, trust_path, *, clock=None, retain_revocation=False,recover_initial_setup=False):
+def _load_profile(path, trust_path, *, clock=None, retain_revocation=False,recover_initial_setup=False,expected_binding=None):
     trust = Trust(trust_path, clock=clock)
     path = safe_path(Path(path).absolute()); raw = private_file(path, limit=65536)
     profile = _validate_profile(path, trust, raw)
+    if expected_binding is not None:
+        require((profile.fingerprint,trust.fingerprint)==expected_binding,
+                'The installed profile or trust changed after the execution preview')
     if retain_revocation and (profile.state/'enrollment.json').exists():
         if (profile.state/'revocation.json').exists(): profile.live(retain=True)
         else:

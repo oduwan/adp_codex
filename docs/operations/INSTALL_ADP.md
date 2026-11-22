@@ -34,9 +34,9 @@ the skill picker. The CLI may display its namespaced name
 To use the short command name, prepend
 `$HOME/.local/share/adp-codex-install/current/bin` to the PATH of the
 shell where you launch Codex. The installer leaves shell startup files alone.
-The skill provides read-only guidance. Project enrollment, authenticated
-providers, execution authority and memory operations still follow the
-[operator setup contract](OPERATOR_SETUP.md).
+Follow the [Codex first-use walkthrough](CODEX_FIRST_USE.md) for inspection,
+guided enrollment, and deliberate execution. The [operator setup contract](OPERATOR_SETUP.md)
+governs authenticated providers, authority and memory operations.
 
 ## Verify, repair, upgrade or remove
 

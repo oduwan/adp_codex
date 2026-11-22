@@ -18,8 +18,9 @@ Install the Python 3.11+ engine and Codex plugin together from a selected local
 development archive. The [installer guide](docs/operations/INSTALL_ADP.md)
 covers the one-command install, verification, upgrades and removal.
 
-Installing the read-only skill does not configure a Conductor or grant
-execution authority. Versions identify local package metadata.
+Open your project in a fresh Codex session and invoke `$adp-codex` for guided
+inspection and setup. The [first-use walkthrough](docs/operations/CODEX_FIRST_USE.md)
+covers explicit setup approval, diagnostics and bounded execution.
 
 With the managed engine on PATH, inspect an explicitly selected disposable
 project without initializing memory:

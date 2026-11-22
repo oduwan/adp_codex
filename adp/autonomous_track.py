@@ -222,16 +222,20 @@ class AutonomousTrack:
         self._slot(spec, packet=result.packet_reference, status="ACTIVE")
         return self._attach(spec, result.packet_reference)
 
-    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False):
+    def run(self, *, rounds=1, maximum_parallel=None, authorized=False, recover=False,
+            lease=None, recovery_check=None, recovery_head=None):
         if not authorized:
             raise AuthorityError("Autonomous track requires explicit finite execution authority")
         parallel = self.window.maximum_parallel if maximum_parallel is None else maximum_parallel
         require(type(rounds) is int and 1 <= rounds <= 4 and type(parallel) is int
                 and 1 <= parallel <= self.window.maximum_parallel, "Invocation exceeds finite track limits")
         c, admissions = self.c, []
-        with invocation_lock(c.memory.control):
+        lock = invocation_lock(c.memory.control, lease=lease) if lease is not None else invocation_lock(c.memory.control)
+        with lock:
             if recover:
-                c.memory.recover()
+                from .execution_privacy import require_clean_execution
+                scope = {"expected_remote": recovery_head} if recovery_check is not None else {}
+                c.memory.recover(before_effects=recovery_check, validate_states=require_clean_execution, **scope)
             c._privacy_preflight()
             self._window(create=True)
             try:
@@ -372,7 +376,7 @@ class AutonomousTrack:
             c.journal.change(adopt)
             return self.status()
 
-    def handoff(self, *, authorized=False):
+    def handoff(self, *, authorized=False, lease=None):
         # A new generation cannot inherit this window's execution grants or
         # counters by silently changing configuration. Retain it as evidence.
         row = self._window()
@@ -383,4 +387,6 @@ class AutonomousTrack:
                 admission = self._attach(spec, slot["packet"])
                 life = self.c._project(admission).lifecycle
                 life._admission = admission
-        return self.c.handoff(authorized=authorized)
+        if lease is None:
+            return self.c.handoff(authorized=authorized)
+        return self.c.handoff(authorized=authorized, lease=lease)
