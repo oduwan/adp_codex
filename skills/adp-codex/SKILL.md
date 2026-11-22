@@ -50,15 +50,42 @@ Use the returned exact plan, setup consent and later invocation consent. No
 manual JSON or memory initialization is needed. A default-branch checkout
 offers local feature preparation; it remains deferred until the separately
 approved run and real independent scope/policy review. Never develop on main.
-Personal mode permits one issue, one task iteration, one concurrent context,
-manual merge and local work only. Show all per-role upper limits and expiry;
+Personal setup/run permits one issue, one task iteration, one concurrent context,
+manual merge and local work. Show all per-role upper limits and expiry;
 do not mistake sequential independent contexts for extra parallelism. It has
-no push, PR, report or merge rights. Missing/pending/403 CI is not PASS; an
+no implicit push, PR, report or merge rights. Missing/pending/403 CI is not PASS; an
 exact-SHA code-reviewed local draft remains NOT_ACCEPTED. Existing governance
 requiring unsupported precommit evidence blocks commit. Reconnect to the
 original directory/window; never re-enroll to renew counters or reuse an
 uncertain effect. Stop on unknown process/effect evidence or M2 refusal.
 Actual Developer/Reviewer runtime qualification is separate from offline tests.
+
+The publication backend preserves M7's unsigned UTC-commit object envelope.
+For an intended later publication, explain that restriction before the approved
+local run and use its UTC environment (`TZ=UTC`). Never rewrite a preexisting
+unsupported commit or transfer review to a new SHA merely to make upload pass.
+
+For a separately requested feature publication, follow
+[personal publication](../../docs/operations/PERSONAL_PUBLICATION.md).
+Require `publication-preview` in personal capabilities; run it with the same
+project and original directory. Read all current project governance and show the
+exact issue, independently reviewed SHA/tree, nondefault ref, expected old SHA or
+verified absence, observed checks/rules, credential provenance and finite expiry.
+Unknown policy is not absence. Do not offer confirmation if any project-required
+prepublication condition is unmet or unrepresentable.
+
+Explain the distinct personal-mode limitation: ordinary gh credentials rely on
+the operator guaranteeing no repository rename, transfer, name reuse or
+credential-scope changes during that publication window; they do not acquire
+the signed mode's server-enforced repository confinement. Show the exact warrant
+and project-policy assent. Ask for explicit confirmation of both and the effect.
+Only after that reply, call `publish` once with the exact `--reviewed` token,
+`--authorize-publication --assume-administrative-quiescence
+--confirm-project-publication-rules`. Each Codex verb also needs `--personal`.
+Silence, setup/run approval or a green check is insufficient. On lost delivery,
+use `publication-status` and retain the original intent; never republish blindly.
+Report actual `PUBLISHED_UNACCEPTED`, guard stop or UNKNOWN. This slice grants no
+PR, merge, report, issue-change or next-ticket operation and no M8 pilot authority.
 
 For the existing independently signed backend, keep the following flow:
 

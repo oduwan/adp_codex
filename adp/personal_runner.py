@@ -660,6 +660,16 @@ class PersonalCoordinator:
             try:
                 if operation == "handoff":
                     self.workers.fence()
+                    execution = self.memory.inspect()["state"]["execution"]
+                    external = [a for a in execution["actions"].values() if a["task_key"] == key(self.task_id)]
+                    require(all(a["status"] == "OBSERVED" for a in external)
+                            and not list(self.memory.control.glob("network-stop-*.json")),
+                            "Reconcile canonical external effects and confirmed transport stops before handoff")
+                    if (self.personal.state / "publication.json").exists() or external:
+                        from .personal_publication import PersonalPublication
+                        current = PersonalPublication(self).status()
+                        require(current["status"] in ("PUBLICATION_PRESENT", "PUBLICATION_PRESENT_GUARD_STOPPED") and current["canonical_status"] == "OBSERVED"
+                                and not current["unconfirmed_transport"], "Reobserve exact publication before ownership release")
                     require(all(r["phase"] == "ACCOUNTED" for r in self.workers.records())
                             and (self.record() is None or self.record()["coordination"] is None)
                             and (self.record() is None or all(a["status"] == "OBSERVED"

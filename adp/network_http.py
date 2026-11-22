@@ -232,37 +232,54 @@ class GitHubHTTPTransport:
             require(len(payload) <= MAX_INPUT_BYTES, "Private request exceeds bound")
         except Exception:
             raise NetworkTransportError("UNSUPPORTED_ATOMIC_REF: operator credential unavailable") from None
-        child = _child_argv() if self.child == "network_http_child.py" else _child_argv(self.child)
-        with supervised_validation(child, max(1, math.ceil(seconds))) as (argv, stop_path, subject):
+        try:
+            output = supervised_output(payload, seconds, child=self.child)
+            reply = decode(output, MAX_OUTPUT_BYTES)
+            fields(reply, "status body_base64")
+            require(type(reply["status"]) is int and 100 <= reply["status"] <= 599
+                    and not 300 <= reply["status"] <= 399 and type(reply["body_base64"]) is str,
+                    "Invalid trusted HTTP response")
+            raw = base64.b64decode(reply["body_base64"], validate=True)
+            require(len(raw) <= MAX_RESPONSE_BYTES, "HTTP response exceeds bound")
+            return Response(reply["status"], raw)
+        except (UnconfirmedValidation, NetworkTransportError):
+            raise
+        except (ADPError, ValueError, TypeError, OSError):
+            raise NetworkTransportError("UNKNOWN_NETWORK_OUTCOME: trusted HTTP response unavailable") from None
+
+
+def supervised_output(payload: bytes, seconds: float, *, child="network_http_child.py", environment=None) -> bytes:
+    """Shared bounded private pipe/stop primitive; supplies no credential authority.
+
+    Each trusted child bounds its own output; the caller validates its closed
+    response grammar. Signed credential verification stays in the original port.
+    """
+    if environment is not None:
+        require(type(environment) is dict and set(environment) <= {"LANG", "LC_ALL", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}
+                and all(type(v) is str and len(v) <= 4096 and "\0" not in v for v in environment.values()),
+                "Unsupported private credential environment")
+    child_argv = _child_argv() if child == "network_http_child.py" else _child_argv(child)
+    with supervised_validation(child_argv, max(1, math.ceil(seconds))) as (argv, stop_path, subject):
+        try:
+            process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, env=_environment() if environment is None else environment, start_new_session=True)
+        except OSError:
+            raise NetworkTransportError("UNSUPPORTED_ATOMIC_REF: HTTPS process unavailable") from None
+        try:
             try:
-                process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL, env=_environment(), start_new_session=True)
-            except OSError:
-                raise NetworkTransportError("UNSUPPORTED_ATOMIC_REF: HTTPS process unavailable") from None
-            try:
-                try:
-                    output, _ = process.communicate(input=payload, timeout=seconds)
-                except subprocess.TimeoutExpired:
-                    _stop(process, stop_path, subject)
-                    raise NetworkTransportError("UNKNOWN_NETWORK_OUTCOME: whole-request deadline reached") from None
-                observed = validation_stopped(stop_path, subject, process.pid)
-                require(observed["status"] == "EXITED" and observed["cli_exit"] == 0
-                        and process.returncode == 0, "Trusted HTTP request did not return a confirmed result")
-                require(len(output) <= MAX_OUTPUT_BYTES, "Trusted HTTP output exceeds bound")
-                reply = decode(output, MAX_OUTPUT_BYTES)
-                fields(reply, "status body_base64")
-                require(type(reply["status"]) is int and 100 <= reply["status"] <= 599
-                        and not 300 <= reply["status"] <= 399 and type(reply["body_base64"]) is str,
-                        "Invalid trusted HTTP response")
-                raw = base64.b64decode(reply["body_base64"], validate=True)
-                require(len(raw) <= MAX_RESPONSE_BYTES, "HTTP response exceeds bound")
-                return Response(reply["status"], raw)
-            except UnconfirmedValidation:
-                raise
-            except NetworkTransportError:
-                raise
-            except (ADPError, ValueError, TypeError, OSError):
-                raise NetworkTransportError("UNKNOWN_NETWORK_OUTCOME: trusted HTTP response unavailable") from None
-            finally:
-                if process.poll() is None:
-                    _stop(process, stop_path, subject)
+                output, _ = process.communicate(input=payload, timeout=seconds)
+            except subprocess.TimeoutExpired:
+                _stop(process, stop_path, subject)
+                raise NetworkTransportError("UNKNOWN_NETWORK_OUTCOME: whole-request deadline reached") from None
+            observed = validation_stopped(stop_path, subject, process.pid)
+            require(observed["status"] == "EXITED" and observed["cli_exit"] == 0
+                    and process.returncode == 0, "Trusted HTTP request did not return a confirmed result")
+            require(len(output) <= MAX_OUTPUT_BYTES, "Trusted HTTP output exceeds bound")
+            return output
+        except (UnconfirmedValidation, NetworkTransportError):
+            raise
+        except (ADPError, ValueError, TypeError, OSError):
+            raise NetworkTransportError("UNKNOWN_NETWORK_OUTCOME: trusted HTTP response unavailable") from None
+        finally:
+            if process.poll() is None:
+                _stop(process, stop_path, subject)

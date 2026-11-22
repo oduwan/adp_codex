@@ -1,0 +1,5 @@
+[
+  "test_personal_publication_cli.PersonalPublicationCLITests.test_both_cli_families_dispatch_to_the_same_existing_personal_port",
+  "test_personal_publication_cli.PersonalPublicationCLITests.test_publication_commands_are_explicitly_personal_and_separately_approved",
+  "test_personal_publication_cli.PersonalPublicationCLITests.test_raw_credential_or_transport_errors_are_not_in_operator_output"
+]

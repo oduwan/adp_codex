@@ -27,7 +27,11 @@ For a personally owned GitHub.com project, the explicit
 local coordination setup and one finite local-draft workflow without external
 providers or hand-written JSON. Existing governance applies; unknown checks
 remain unknown. Setup and execution need separate exact operator approvals.
-It grants no push, PR, report or merge rights and never marks a draft accepted.
+Setup/run grants no push, PR, report or merge rights and never marks a draft accepted.
+The separate [personal publication](docs/operations/PERSONAL_PUBLICATION.md)
+approval can publish one exact independently reviewed nondefault feature SHA
+through the accepted GitHub CAS, under its explicit finite operator warrant.
+PR, merge, reporting and next-issue admission remain separate dependency-gated work.
 Genuine runtime/pilot qualification remains a separately authorized M8 gate.
 
 With the managed engine on PATH, inspect an explicitly selected disposable

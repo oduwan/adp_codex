@@ -89,9 +89,11 @@ CAS. A fresh exact-committed-SHA Reviewer supplies code approval. Requests,
 results, context IDs and bound stop receipts remain private and generation
 fenced. Unknown delivery or stop evidence never permits replacement dispatch.
 
-This backend produces **local drafts only**. No Git network write or forge
-mutation port is wired: no push, PR, issue edit, product comment, merge, release
-or deployment is possible. Explicitly absent rules remain optional; selected
+The original setup/run delegation produces **local drafts only**. M10-A adds a
+separate [feature publication approval](PERSONAL_PUBLICATION.md), requiring its
+explicit project-policy assent and personal administrative-quiescence warrant;
+setup/run consent never grants that right. No PR, issue edit, product comment,
+merge, release or deployment port is wired by this slice. Explicitly absent rules remain optional; selected
 local branch/commit choices are not invented project conventions. Present
 governance applies. The original-scope and staged-scope reviews must reject
 unsupported requirements, including mandatory precommit checks that the native
