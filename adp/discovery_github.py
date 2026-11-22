@@ -22,6 +22,13 @@ from .discovery_types import (Coverage, Identity, Issue, PullRequest, Relation,
 
 API = "https://api.github.com"
 MAX_RESPONSE = 1024 * 1024
+HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
+# Never combine or select among competing discovery controls, HTTP framing,
+# representation metadata or redirect destinations, even if values agree.
+SINGLETON_HEADERS = frozenset({
+    "link", "retry-after", "x-ratelimit-remaining", "x-ratelimit-reset",
+    "content-length", "transfer-encoding", "content-type", "content-encoding", "location",
+})
 PATH = re.compile(r"/repos/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}(?:/(?:issues|pulls)(?:/[1-9][0-9]*(?:/(?:comments|timeline|sub_issues|dependencies/blocked_by))?)?)?(?:\?[A-Za-z0-9_=&-]+)?\Z")
 ENROLLMENT_PATH = re.compile(
     r"/repos/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}"
@@ -166,20 +173,30 @@ class GitHubDiscoveryAdapter:
             require(type(response) is Response and type(response.status) is int
                     and type(response.headers) is tuple, "Malformed GitHub transport response")
             require(len(response.headers) <= 128, "Too many HTTP headers")
-            headers = {}
+            headers, controls = [], {}
             for name, value in response.headers:
                 string(name, 128)
-                string(value, 4096)
-                require(name.lower() not in headers, "Duplicate HTTP header")
-                headers[name.lower()] = value
+                require(HEADER_NAME.fullmatch(name), "Malformed HTTP header name")
+                name = name.lower()
+                require(isinstance(value, str), "Malformed HTTP header value")
+                # Empty benign metadata is valid; shared portable strings and
+                # control values retain their existing nonempty validation.
+                if value or name in SINGLETON_HEADERS:
+                    string(value, 4096)
+                if name in SINGLETON_HEADERS:
+                    require(name not in controls, "Duplicate HTTP control header")
+                    controls[name] = value
+                # Preserve benign repetitions without coalescing their values.
+                # Only unique controls can affect discovery decisions below.
+                headers.append((name, value))
             # Bound even injected responses; credentials and error bodies are
             # never included in the observation or diagnostics.
             if response.status == 200:
                 from .schema import encode
                 encode(response.body, MAX_RESPONSE)
-            if response.status in (401, 403, 429) or headers.get("x-ratelimit-remaining") == "0":
+            if response.status in (401, 403, 429) or controls.get("x-ratelimit-remaining") == "0":
                 self._halt = True
-            return Response(response.status, response.body, tuple(headers.items()))
+            return Response(response.status, response.body, tuple(headers))
         except (ADPError, OSError, ValueError, TypeError):
             return Response(0, None)
 
