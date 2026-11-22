@@ -14,6 +14,26 @@ from test_config import run, snapshot
 
 
 class PersonalEnrollmentTests(PersonalFixture):
+    def test_owner_numeric_types_cannot_be_coerced_into_authority(self):
+        before = snapshot(self.base)
+        original = self.transport.api.responses[self.prefix]
+        for account, owner in ((91, 91.0), (1, True)):
+            with self.subTest(account=account, owner=owner):
+                self.transport.account = Response(200, {"id": account})
+                self.transport.api.responses[self.prefix] = Response(200, {**original.body,
+                    "owner": {**original.body["owner"], "id": owner}})
+                with self.assertRaises(ADPError):
+                    self.plan()
+        for account in (91, 1):
+            with self.subTest(valid_integer=account):
+                self.transport.account = Response(200, {"id": account})
+                self.transport.api.responses[self.prefix] = Response(200, {**original.body,
+                    "owner": {**original.body["owner"], "id": account}})
+                plan, _, _ = self.plan()
+                self.assertEqual(plan["owner"]["account_id"], account)
+                self.assertTrue(plan["owner"]["read_access"])
+        self.assertEqual(snapshot(self.base), before)
+
     def test_expiry_during_remote_observation_prevents_first_write(self):
         plan, original, docs = self.plan()
         before = snapshot(self.base)

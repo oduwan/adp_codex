@@ -51,7 +51,7 @@ def owned_repository(transport, name, expected_id=None):
             and repo.get("full_name") == name and expected_id in (None, str(repo["id"])),
             "Canonical repository identity changed")
     owner, permissions = repo.get("owner"), repo.get("permissions")
-    if (type(owner) is not dict or owner.get("type") != "User" or owner.get("id") != user["id"]
+    if (type(owner) is not dict or owner.get("type") != "User" or type(owner.get("id")) is not int or owner["id"] != user["id"]
             or type(permissions) is not dict or permissions.get("pull") is not True):
         raise PersonalBlocked("PERSONAL_OWNER_REQUIRED", "Use personal mode only for an observed personally owned repository with current read access.")
     return {"account_id": user["id"], "repository_id": str(repo["id"]),
