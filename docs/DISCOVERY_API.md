@@ -95,6 +95,17 @@ follows only validated, sequential same-endpoint links or explicitly constructed
 next page numbers. A full terminal page is checked with another page rather than
 assuming it is complete. Bounds stop collection with PARTIAL/NOTRUN coverage.
 
+HTTP metadata is bounded to 128 fields, 128 characters per token-shaped field
+name and 4096 characters per value, excluding control characters. Empty values
+and repeated case-insensitive names are accepted for benign, unconsumed metadata;
+their values are preserved separately, never combined into discovery controls.
+`link`, `retry-after`, `x-ratelimit-remaining` and `x-ratelimit-reset` must remain
+nonempty and unique, including identical repeated values. Framing, representation
+and redirect fields (`content-length`, `transfer-encoding`, `content-type`,
+`content-encoding`, `location`) retain the same restriction. Malformed or
+ambiguous fields produce an unsuccessful observation, never a complete empty
+inventory. Raw header values are not included in portable snapshots or reports.
+
 Unsupported native endpoints, including 404, mean UNKNOWN. They never prove an
 issue has no prerequisites. A repository identity failure refuses discovery
 instead of inventing a repository or returning an apparently complete empty list.
