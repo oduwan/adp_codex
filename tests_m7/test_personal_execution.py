@@ -11,6 +11,7 @@ from adp.errors import ADPError
 from adp.execution_types import Capabilities, RuntimeObservation, RuntimeStatus, WorkerResult
 from adp.git import value
 from adp.execution_containment import admin_seal
+from adp.execution_ports import index_digest, tree_index_digest
 from adp.guard_types import Outcome, DecisionKind
 from adp.personal_enrollment import apply_personal
 from adp.personal_runner import PersonalCoordinator
@@ -23,6 +24,36 @@ from test_config import run, snapshot
 
 
 class PersonalExecutionTests(PersonalFixture):
+    def test_commit_recovery_selects_current_attempt_not_sorted_action_order(self):
+        run(self.a, "checkout", "-b", "work/issue-1")
+        self.enroll()
+        self.c.initialize_run()
+        base = value(self.a, "rev-parse", "HEAD")
+        message = self.personal.plan["commit_message"]
+        (self.a / "product").write_text("first admitted fixture change\n")
+        run(self.a, "add", "product")
+        run(self.a, "commit", "-m", message)
+        first = value(self.a, "rev-parse", "HEAD")
+        self.c.memory.set_revision(self.c.task_id, first)
+        row = self.c.record()
+        row.update(revision=first, phase="COMMIT", developer="0" * 64)
+        old = {"operation": "COMMIT", "revision": base, "source_ref": "refs/heads/work/issue-1",
+            "target": "refs/heads/work/issue-1", "expected_target": None,
+            "payload": {"subject": message, "body": "", "index_digest": tree_index_digest(self.a, first)},
+            "status": "OBSERVED", "observation": {"status": "PRESENT", "reference": "commit:" + first, "revision": first, "body_digest": None}}
+        (self.a / "product").write_text("second admitted fixture change\n")
+        run(self.a, "add", "product")
+        current = {**old, "revision": first, "status": "PREPARED", "observation": None,
+            "payload": {"subject": message, "body": "", "index_digest": index_digest(self.a)}}
+        row["actions"] = {"commit:" + "f" * 64: old, "commit:" + "0" * 64: current}
+        self.c.save(row)
+        run(self.a, "commit", "-m", message)
+        second = value(self.a, "rev-parse", "HEAD")
+        self.assertEqual(self.c.fresh().checkout["head"], second)
+        self.assertEqual(self.c.record()["revision"], first)
+        self.assertEqual(self.c.memory.inspect()["tasks"][key(self.c.task_id)]["source_revision"], first)
+        self.assertEqual(self.requests, [])
+
     def test_same_valued_git_redirection_after_construction_is_refused(self):
         original_root = self.a
         self.a = self.base / "enrollment-checkout"
@@ -84,6 +115,33 @@ class PersonalExecutionTests(PersonalFixture):
         self.assertIsNone(self.c.record()["coordination"])
         self.assertEqual(self.c.record()["phase"], "LOCAL_DRAFT_CODE_REVIEWED")
 
+    def test_check_entry_recovers_a_permit_missing_after_canonical_allocation(self):
+        self.enroll()
+        self.c.initialize_run()
+        row = self.c.record()
+        row.update(phase="CHECKS", developer="synthetic-only-accounting-fixture")
+        self.c.save(row)
+        original_save = self.c.save
+        def interrupted(row):
+            if row["coordination"] is not None and row["coordination"]["permit"] is not None:
+                raise OSError("Synthetic check-stage permit persistence failure")
+            return original_save(row)
+        with patch.object(self.c, "save", side_effect=interrupted), self.assertRaises(OSError):
+            self.c.check_stage()
+        self.assertEqual(self.c.record()["phase"], "CHECKS")
+        self.assertIsNone(self.c.record()["coordination"]["permit"])
+        item = self.c.guard._snapshot(self.c.task_id, self.c.requirement("develop"))[2]
+        token = item["active"]["id"]
+        with patch.object(self.c.guard, "begin", side_effect=AssertionError("Never allocate another check permit")), \
+             patch.object(self.c, "observe_checks", return_value={"status": "UNKNOWN", "qualified": False}) as observer:
+            self.c.check_stage()
+        observer.assert_called_once()
+        item = self.c.guard._snapshot(self.c.task_id, self.c.requirement("develop"))[2]
+        self.assertIsNone(item["active"])
+        self.assertEqual(item["last"]["action"]["hypothesis"], "personal:checks:synthetic-only-accounting-fixture")
+        self.assertEqual(self.c.record()["coordination"], None)
+        self.assertEqual(observer.call_args.args[0].token, token)
+
     def test_lost_check_delivery_stays_unknown_without_reobserving(self):
         self.enroll()
         self.c.initialize_run()
@@ -131,15 +189,40 @@ class PersonalExecutionTests(PersonalFixture):
         self.c.save(row)
         from adp.git import git as actual_git
         def interrupted(root, *args, **kwargs):
-            if args[:2] == ("worktree", "add"):
+            if "worktree" in args and args[args.index("worktree") + 1] == "add":
                 raise OSError("Synthetic loss before known worktree outcome")
             return actual_git(root, *args, **kwargs)
-        with patch("adp.personal_runner.git", side_effect=interrupted), self.assertRaises(OSError):
+        with patch("adp.execution_ports.git", side_effect=interrupted), self.assertRaises(OSError):
             self.c.prepare_feature()
         self.assertFalse(self.personal.feature.exists())
-        with patch("adp.personal_runner.git", side_effect=interrupted) as launch, self.assertRaises(ADPError):
+        with patch("adp.execution_ports.git", side_effect=interrupted) as launch, self.assertRaises(ADPError):
             self.c.prepare_feature()
-        self.assertFalse(any(call.args[1:3] == ("worktree", "add") for call in launch.call_args_list))
+        self.assertFalse(any("worktree" in call.args and call.args[call.args.index("worktree") + 1] == "add" for call in launch.call_args_list))
+
+    def test_feature_worktree_write_ignores_a_late_git_redirection(self):
+        original_root = self.a
+        self.a = self.base / "enrollment-checkout"
+        run(original_root, "worktree", "add", "-b", "selected", str(self.a))
+        self.enroll()
+        self.c.initialize_run()
+        reviewed = self.c.workers.execute("original", self.c.context("original"), self.a)
+        row = self.c.record()
+        row.update(original_review=reviewed["request"]["id"], phase="FEATURE")
+        self.c.save(row)
+        common = original_root / ".git"
+        original_directory = Path(value(self.a, "rev-parse", "--absolute-git-dir"))
+        copied = self.base / "foreign-feature-administration"
+        from adp.git import git as actual_git
+        def redirected(root, *args, **kwargs):
+            if "worktree" in args and args[args.index("worktree") + 1] == "add":
+                shutil.copytree(common, copied)
+                (self.a / ".git").write_text("gitdir: " + str(copied / original_directory.relative_to(common)) + "\n")
+            return actual_git(root, *args, **kwargs)
+        with patch("adp.execution_ports.git", side_effect=redirected), self.assertRaises(ADPError):
+            self.c.prepare_feature()
+        registered = value(original_root, "worktree", "list", "--porcelain")
+        self.assertIn("worktree " + str(self.personal.feature), registered)
+        self.assertNotIn("worktree " + str(self.personal.feature), value(copied, "worktree", "list", "--porcelain"))
 
     def enroll(self, ci_transport=None):
         p, original, docs = self.plan(ci_transport=ci_transport)

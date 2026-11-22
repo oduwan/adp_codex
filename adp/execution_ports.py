@@ -106,6 +106,8 @@ class GitExecutionPort:
         return git(self.root, *prefix, *args, **kwargs)
 
     def _value(self, *args):
+        if self.bound_git_directory is None:
+            return value(self.root, *args)
         return self._git(*args).decode("utf-8", "strict").strip()
 
     def _reader(self, root, *args, **kwargs):
@@ -116,6 +118,8 @@ class GitExecutionPort:
         return hashlib.sha256(self._git("ls-files", "--stage", "-z")).hexdigest()
 
     def _working_tree_digest(self):
+        if self.bound_git_directory is None:
+            return working_tree_digest(self.root)
         return working_tree_digest(self.root, git_reader=self._reader)
 
     def _remote(self):

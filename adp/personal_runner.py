@@ -132,12 +132,12 @@ class PersonalCoordinator:
         expected_checkout = dict(plan["checkout"])
         if not plan["feature"]["prepare"] and self.record() is not None:
             expected_checkout["head"] = self.revision()
-            pending = self.record()["actions"].values()
-            commits = [a for a in pending if a["operation"] == Operation.COMMIT]
-            if commits and observation.checkout["head"] != expected_checkout["head"]:
+            current = self.record()["actions"].get("commit:" + (self.record()["developer"] or ""))
+            if current is not None and observation.checkout["head"] != expected_checkout["head"]:
                 observed = GitExecutionPort(Config.discover(Path(expected_checkout["path"]), remote=plan["checkout"]["remote"],
-                    repository_id=self.personal.repository_id)).observe(commits[-1])
-                require(observed.status == "PRESENT", "Source advanced without a bound observed commit")
+                    repository_id=self.personal.repository_id), bound_git_directory=Path(plan["administration"]["directory"]["path"])).observe(current)
+                require(observed.status == "PRESENT" and observed.revision == observation.checkout["head"],
+                        "Source advanced without the exact current bound commit")
                 expected_checkout["head"] = observed.revision
         require(observation.checkout == expected_checkout and owner == plan["owner"] and len(original) == 1
                 and digest(data(original[0])) == plan["original_digest"]
@@ -447,7 +447,9 @@ class PersonalCoordinator:
                 row = self.record()
                 row["actions"]["feature"]["worktree"] = {"path": str(root), "status": "SUBMITTED"}
                 self.save(row)
-                git(Path(p["checkout"]["path"]), "worktree", "add", "--", str(root), p["feature"]["branch"])
+                port = GitExecutionPort(provider.adapter.config,
+                    bound_git_directory=Path(p["administration"]["directory"]["path"]))
+                port._git("worktree", "add", "--", str(root), p["feature"]["branch"])
             row = self.record()
             bound = administration(root)
             require(bound["common"] == p["administration"]["common"], "Prepared feature belongs to different Git administration")
@@ -586,10 +588,7 @@ class PersonalCoordinator:
             # It can remain pending without accepting the original requirement.
             if self.memory.inspect()["tasks"][key(self.task_id)]["source_revision"] != row["revision"]:
                 self.memory.set_revision(self.task_id, row["revision"])
-            if row["coordination"] is None:
-                permit = self.reserve("checks:" + attempt)
-            else:
-                permit = typed(Permit, row["coordination"]["permit"])
+            permit = self.reserve("checks:" + attempt)
             row = self.record()
             if row["coordination"]["check_state"] is None:
                 row["coordination"]["check_state"] = "SUBMITTED"
