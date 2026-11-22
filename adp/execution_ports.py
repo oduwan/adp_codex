@@ -64,9 +64,10 @@ def index_digest(root):
     return hashlib.sha256(git(root, "ls-files", "--stage", "-z")).hexdigest()
 
 
-def tree_index_digest(root, revision):
+def tree_index_digest(root, revision, *, git_reader=None):
+    git_reader = git_reader or git
     entries = []
-    for entry in filter(None, git(root, "ls-tree", "-rz", revision).split(b"\0")):
+    for entry in filter(None, git_reader(root, "ls-tree", "-rz", revision).split(b"\0")):
         metadata, path = entry.split(b"\t", 1)
         mode, kind, sha = metadata.split()
         require(kind in (b"blob", b"commit"), "Unsupported tree entry")
@@ -81,13 +82,44 @@ class GitExecutionPort:
     Immutable object transfer is followed by update-ref's exact old-SHA CAS.
     No force/lease option or unadvertised temporary ref is used.
     """
-    def __init__(self, config, *, local_remotes=()):
+    def __init__(self, config, *, local_remotes=(), bound_git_directory=None):
         self.config = config
         self.root = config.root
+        self.bound_git_directory = safe_path(bound_git_directory) if bound_git_directory is not None else None
+        if self.bound_git_directory is not None:
+            require(value(self.root, "rev-parse", "--absolute-git-dir") == str(self.bound_git_directory),
+                    "Explicit product Git directory differs from the selected checkout")
+            self._bound_common = safe_path(Path(value(self.root, "rev-parse", "--path-format=absolute", "--git-common-dir")))
+            self._bound_identities = tuple((p.stat().st_dev, p.stat().st_ino) for p in
+                (self.root, self.bound_git_directory, self._bound_common))
         self.local_remotes = tuple(safe_path(Path(p)) for p in local_remotes)
 
+    def _git(self, *args, **kwargs):
+        if self.bound_git_directory is not None:
+            require(tuple((safe_path(p).stat().st_dev, p.stat().st_ino) for p in
+                    (self.root, self.bound_git_directory, self._bound_common)) == self._bound_identities
+                    and value(self.root, "rev-parse", "--absolute-git-dir") == str(self.bound_git_directory)
+                    and value(self.root, "rev-parse", "--path-format=absolute", "--git-common-dir") == str(self._bound_common),
+                    "Pinned product Git administration changed")
+        prefix = (("--git-dir", str(self.bound_git_directory), "--work-tree", str(self.root))
+                  if self.bound_git_directory is not None else ())
+        return git(self.root, *prefix, *args, **kwargs)
+
+    def _value(self, *args):
+        return self._git(*args).decode("utf-8", "strict").strip()
+
+    def _reader(self, root, *args, **kwargs):
+        require(root == self.root, "Pinned product reader changed workspace")
+        return self._git(*args, **kwargs)
+
+    def _index_digest(self):
+        return hashlib.sha256(self._git("ls-files", "--stage", "-z")).hexdigest()
+
+    def _working_tree_digest(self):
+        return working_tree_digest(self.root, git_reader=self._reader)
+
     def _remote(self):
-        endpoint = value(self.root, "remote", "get-url", self.config.remote)
+        endpoint = self._value("remote", "get-url", self.config.remote)
         identity = remote_identity(endpoint, self.root)
         require(identity.startswith("file:"), "UNSUPPORTED_ATOMIC_REF: network push needs an exact-CAS backend")
         path = safe_path(Path(identity[5:]))
@@ -96,35 +128,35 @@ class GitExecutionPort:
         return path
 
     def remote_revision(self, ref):
-        lines = value(self.root, "ls-remote", "--refs", self.config.remote, ref).splitlines()
+        lines = self._value("ls-remote", "--refs", self.config.remote, ref).splitlines()
         require(len(lines) <= 1, "Ambiguous remote branch")
         return lines[0].split()[0] if lines else None
 
     def observe(self, action):
         root, operation, payload = self.root, action["operation"], action["payload"]
-        head = value(root, "rev-parse", "HEAD")
-        source = value(root, "symbolic-ref", "HEAD")
+        head = self._value("rev-parse", "HEAD")
+        source = self._value("symbolic-ref", "HEAD")
         if source != action["source_ref"]:
             return ExternalObservation("UNKNOWN")
         if operation == Operation.STAGE:
-            unstaged = git(root, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "--", *payload["paths"])
-            new = git(root, "ls-files", "--others", "--exclude-standard", "--", *payload["paths"])
+            unstaged = self._git("diff", "--no-ext-diff", "--no-textconv", "--name-only", "--", *payload["paths"])
+            new = self._git("ls-files", "--others", "--exclude-standard", "--", *payload["paths"])
             if not unstaged and not new and head == action["revision"]:
-                return ExternalObservation("PRESENT", "index:" + index_digest(root), head)
-            if head == action["revision"] and index_digest(root) == payload["index_digest"] and working_tree_digest(root) == payload["worktree_digest"]:
+                return ExternalObservation("PRESENT", "index:" + self._index_digest(), head)
+            if head == action["revision"] and self._index_digest() == payload["index_digest"] and self._working_tree_digest() == payload["worktree_digest"]:
                 return ExternalObservation("ABSENT")
             return ExternalObservation("UNKNOWN")
         if operation == Operation.COMMIT:
             if head == action["revision"]:
                 return ExternalObservation("ABSENT")
-            parent = value(root, "rev-parse", "HEAD^")
+            parent = self._value("rev-parse", "HEAD^")
             message = payload["subject"] + ("\n\n" + payload["body"] if payload["body"] else "")
-            if (parent == action["revision"] and tree_index_digest(root, head) == payload["index_digest"]
-                    and value(root, "log", "-1", "--format=%B") == message.strip()):
+            if (parent == action["revision"] and tree_index_digest(root, head, git_reader=self._reader) == payload["index_digest"]
+                    and self._value("log", "-1", "--format=%B") == message.strip()):
                 return ExternalObservation("PRESENT", "commit:" + head, head)
             return ExternalObservation("UNKNOWN")
         if operation == Operation.BRANCH:
-            refs = value(root, "for-each-ref", "--format=%(objectname)", action["target"]).splitlines()
+            refs = self._value("for-each-ref", "--format=%(objectname)", action["target"]).splitlines()
             if refs == [payload["start_revision"]]:
                 return ExternalObservation("PRESENT", action["target"], refs[0])
             return ExternalObservation("ABSENT" if not refs else "UNKNOWN")
@@ -144,26 +176,26 @@ class GitExecutionPort:
                 and plan.task.source_ref == action["source_ref"] and plan.target_ref == action["target"]
                 and plan.expected_target == action["expected_target"] and data(plan.payload) == action["payload"],
                 "Execution effect differs from the exact authorized plan")
-        require(value(self.root, "rev-parse", "HEAD") == action["revision"]
-                and value(self.root, "symbolic-ref", "HEAD") == action["source_ref"], "Source drift before Git mutation")
+        require(self._value("rev-parse", "HEAD") == action["revision"]
+                and self._value("symbolic-ref", "HEAD") == action["source_ref"], "Source drift before Git mutation")
         payload, operation = action["payload"], action["operation"]
         if operation == Operation.STAGE:
-            require(index_digest(self.root) == payload["index_digest"]
-                    and working_tree_digest(self.root) == payload["worktree_digest"], "Staging content/index changed")
+            require(self._index_digest() == payload["index_digest"]
+                    and self._working_tree_digest() == payload["worktree_digest"], "Staging content/index changed")
             require(all(not (self.root / p).is_dir() for p in payload["paths"]), "Stage explicit files, not an unbounded directory")
-            git(self.root, "add", "--", *payload["paths"])
+            self._git("add", "--", *payload["paths"])
         elif operation == Operation.COMMIT:
             author(self.root)
-            require(index_digest(self.root) == payload["index_digest"], "Commit index changed")
-            tree = value(self.root, "write-tree")
-            if tree == value(self.root, "rev-parse", "HEAD^{tree}"):
+            require(self._index_digest() == payload["index_digest"], "Commit index changed")
+            tree = self._value("write-tree")
+            if tree == self._value("rev-parse", "HEAD^{tree}"):
                 return ExternalObservation("PRESENT", "commit:" + action["revision"], action["revision"])
             message = payload["subject"] + ("\n\n" + payload["body"] if payload["body"] else "")
-            commit = git(self.root, "commit-tree", tree, "-p", action["revision"], "-F", "-", input=message.encode()).decode().strip()
-            git(self.root, "update-ref", action["source_ref"], commit, action["revision"])
+            commit = self._git("commit-tree", tree, "-p", action["revision"], "-F", "-", input=message.encode()).decode().strip()
+            self._git("update-ref", action["source_ref"], commit, action["revision"])
         elif operation == Operation.BRANCH:
             require(not payload["reuse"], "Existing branch requires observation, not overwrite")
-            git(self.root, "update-ref", action["target"], payload["start_revision"], "0" * len(action["revision"]))
+            self._git("update-ref", action["target"], payload["start_revision"], "0" * len(action["revision"]))
         elif operation == Operation.PUSH:
             remote = self._remote()
             # Copy immutable objects only; create no FETCH_HEAD or tracking ref.

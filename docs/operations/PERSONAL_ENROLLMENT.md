@@ -58,6 +58,15 @@ the original window's resume; never create a new enrollment to replenish it.
 execution expiry; every process, assignment, action and guard reservation must
 be reconciled first. Released ownership is not automatically reclaimed.
 
+Consent also pins physical checkout, Git common/directory and `.git` entry
+identities. Workers and local effects recheck these bindings. Local Git writes
+use the explicit pinned Git directory and worktree, so a late `.git` redirect
+cannot send the CAS to another repository. Unknown worktree submission is not
+retried: only its complete existing bound result can be observed. Coordinator
+permits and result transitions use write-ahead private intents so interrupted
+allocation/accounting recovers the same canonical M2 token and observation.
+A missing check delivery remains UNKNOWN and does not cause another observation.
+
 The foreground coordinator runs one task iteration with concurrency one. The
 approved upper bounds are one original-scope Reviewer, two Developers, two
 staged-scope Reviewers and two exact-SHA code Reviewers, each at most 300 seconds;

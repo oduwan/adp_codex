@@ -25,6 +25,7 @@ from .guard import ProgressGuard
 from .guard_types import Action, ActionKind, DecisionKind, Observation, Outcome, Permit, Requirement, data
 from .personal_authority import PersonalAuthority
 from .personal_enrollment import governance, selection
+from .personal_git import administration
 from .personal_storage import INTENT, LIMIT, PersonalBlocked, create_private, read_private
 from .personal_workers import PersonalWorkers
 from .policy import PolicyProvider
@@ -67,6 +68,7 @@ class PersonalCoordinator:
         require(observed["health"] == "SYNCED" and observed["local_owner"], "The original synchronized M1 owner is required")
         row = self.record()
         require(row is None or row["generation"] == observed["state"]["generation"], "Personal execution generation changed")
+        self.check_administration(row)
         require(self.personal.intent["phase"] == "ENROLLED", "Complete the original personal setup first")
 
     def seconds_left(self):
@@ -76,17 +78,23 @@ class PersonalCoordinator:
     def record(self):
         row = read_private(self.path, optional=True)
         if row is not None:
-            fields(row, "schema_version approval generation phase revision original_review developer candidate code_review actions coordination gates feedback observations")
+            fields(row, "schema_version approval generation phase revision original_review developer candidate code_review actions coordination gates feedback observations feature_administration")
             require(row["schema_version"] == 1 and type(row["schema_version"]) is int
                     and row["approval"] == self.personal.intent["approval"]
                     and type(row["generation"]) is int and row["generation"] > 0,
                     "Personal execution journal or generation changed")
             require(row["phase"] in ("SCOPE", "FEATURE", "FEATURE_TRANSITION", "DEVELOP", "STAGE", "CANDIDATE", "COMMIT",
-                    "SOURCE_TRANSITION", "CODE", "CHECKS", "LOCAL_DRAFT_CODE_REVIEWED")
+                    "SOURCE_TRANSITION", "CODE", "CHECKS", "CHECKS_TRANSITION", "CANDIDATE_REJECTED", "LOCAL_DRAFT_CODE_REVIEWED")
                     and type(row["observations"]) is int and 0 <= row["observations"] <= self.personal.plan["window"]["maximum_check_observations"]
                     and type(row["feedback"]) is list and len(row["feedback"]) <= 8
                     and type(row["gates"]) is list and len(row["gates"]) <= 3, "Malformed personal phase or finite accounting")
         return row
+
+    def check_administration(self, row=None):
+        require(administration(Path(self.personal.plan["checkout"]["path"])) == self.personal.plan["administration"],
+                "Original product Git administration changed")
+        if row is not None and row["feature_administration"] is not None:
+            require(administration(self.personal.feature) == row["feature_administration"], "Feature Git administration changed")
 
     def save(self, row):
         self.live()
@@ -266,7 +274,7 @@ class PersonalCoordinator:
         self.fresh()
         row = self.record()
         cfg = Config.discover(root, remote=self.personal.plan["checkout"]["remote"], repository_id=self.personal.repository_id)
-        port = GitExecutionPort(cfg)
+        port = GitExecutionPort(cfg, bound_git_directory=Path(administration(root)["directory"]["path"]))
         existing = row["actions"].get(name)
         if existing is not None:
             observation = port.observe(existing)
@@ -331,7 +339,8 @@ class PersonalCoordinator:
             row = {"schema_version": 1, "approval": self.personal.intent["approval"],
                 "generation": self.memory.inspect()["state"]["generation"], "phase": "SCOPE", "revision": self.revision(),
                 "original_review": None, "developer": None, "candidate": None, "code_review": None,
-                "actions": {}, "coordination": None, "gates": [], "feedback": [], "observations": 0}
+                "actions": {}, "coordination": None, "gates": [], "feedback": [], "observations": 0,
+                "feature_administration": None if self.personal.plan["feature"]["prepare"] else self.personal.plan["administration"]}
             self.save(row)
         if key(self.task_id) not in self.memory.inspect()["tasks"]:
             self.memory.add_task(self.task_id, row["revision"])
@@ -339,27 +348,74 @@ class PersonalCoordinator:
 
     def reserve(self, label):
         row = self.record()
-        if row["coordination"] is not None:
-            require(row["coordination"]["label"] == label, "Another finite local operation needs reconciliation")
-            return typed(Permit, row["coordination"]["permit"])
         requirement = self.requirement("feature" if label == "feature" else "develop")
-        permit = self.guard.begin(self.task_id, requirement, Action("personal:coordinator", ActionKind.CHECK,
-            "personal:" + label, "One observed local operation and project-check disposition", seconds=min(300, self.seconds_left())))
-        row["coordination"] = {"label": label, "permit": data(permit)}
+        state, task, item = self.guard._snapshot(self.task_id, requirement)
+        if row["coordination"] is None:
+            action = Action("personal:coordinator", ActionKind.CHECK, "personal:" + label,
+                "One observed local operation and project-check disposition", seconds=min(300, self.seconds_left()))
+            row["coordination"] = {"label": label, "requirement": requirement, "permit": None,
+                "action": data(action), "context": self.guard._context(state, task), "sequence": item["sequence"],
+                "observation": None, "next_phase": None, "check_state": None}
+            self.save(row)  # Intent exists before canonical guard allocation.
+        coordination = row["coordination"]
+        require(coordination["label"] == label and coordination["requirement"] == requirement,
+                "Another finite local operation needs reconciliation")
+        if coordination["permit"] is not None:
+            return typed(Permit, coordination["permit"])
+        state, task, item = self.guard._snapshot(self.task_id, requirement)
+        require(coordination["context"] == self.guard._context(state, task), "Original coordinator context changed")
+        if item["active"] is not None:
+            require(item["active"]["action"] == coordination["action"] and item["active"]["context"] == coordination["context"],
+                    "An unrelated active reservation cannot be adopted")
+            permit = Permit(item["active"]["id"], self.guard.inspect(self.task_id, requirement))
+        else:
+            require(item["sequence"] == coordination["sequence"], "Coordinator guard history advanced without a recoverable permit")
+            permit = self.guard.begin(self.task_id, requirement, typed(Action, coordination["action"]))
+        row["coordination"]["permit"] = data(permit)
         self.save(row)
         return permit
 
-    def conclude(self, permit, reference, outcome=Outcome.PASS):
+    def conclude(self, permit, reference, outcome=Outcome.PASS, *, next_phase=None):
         requirement = permit.decision.baseline.requirement_id
         _, _, item = self.guard._snapshot(self.task_id, requirement)
-        if item["active"] is not None:
-            self.guard.observe(self.task_id, requirement, permit, Observation(outcome, (reference,), tuple(item["unresolved"])))
-        else:
-            require(item["last"] is not None and reference in item["last"]["observation"]["evidence"], "Local operation guard observation is missing")
         row = self.record()
+        coordination = row["coordination"]
+        require(coordination is not None and coordination["permit"]["token"] == permit.token,
+                "Original coordinator permit is unavailable")
+        if coordination["observation"] is None:
+            require(item["active"] is not None and item["active"]["id"] == permit.token,
+                    "Coordinator result has no live original reservation")
+            coordination["observation"] = data(Observation(outcome, (reference,), tuple(item["unresolved"])))
+            coordination["next_phase"] = next_phase
+            self.save(row)  # Preserve the exact intended accounting before M2.
+        measured = typed(Observation, coordination["observation"])
+        require(measured.evidence == (reference,) and measured.outcome == outcome and coordination["next_phase"] == next_phase,
+                "Retained coordinator result differs")
+        if item["active"] is not None:
+            self.guard.observe(self.task_id, requirement, permit, measured)
+        else:
+            require(item["last"] is not None and item["last"]["observation"] == coordination["observation"]
+                    and item["last"]["context"] == coordination["context"], "Local operation guard observation is missing")
         row["coordination"] = None
+        if next_phase is not None:
+            row["phase"] = next_phase
         self.save(row)
         self.allowed(requirement)
+
+    def finish_transition(self):
+        row = self.record()
+        coordination = row["coordination"]
+        require(row["phase"] in ("CANDIDATE_REJECTED", "CHECKS_TRANSITION") and coordination is not None,
+                "No retained result transition to reconcile")
+        if coordination["observation"] is None:
+            gate = row["gates"][-1] if row["phase"] == "CHECKS_TRANSITION" else row["feedback"][-1]
+            reference = "personal:checks:" + digest(gate) if row["phase"] == "CHECKS_TRANSITION" else "personal:candidate-rejected:" + row["candidate"]
+            failed = row["phase"] == "CANDIDATE_REJECTED" or gate["status"] in ("FAIL", "ERROR", "TIMEOUT", "CANCELLED")
+            outcome = Outcome.FAIL if failed else Outcome.UNKNOWN
+            phase = "DEVELOP" if failed else "LOCAL_DRAFT_CODE_REVIEWED"
+        else:
+            reference, outcome, phase = coordination["observation"]["evidence"][0], coordination["observation"]["outcome"], coordination["next_phase"]
+        self.conclude(typed(Permit, coordination["permit"]), reference, outcome, next_phase=phase)
 
     def prepare_feature(self):
         p, row = self.personal.plan, self.record()
@@ -369,12 +425,16 @@ class PersonalCoordinator:
             # A write-ahead exact branch reservation precedes worktree creation.
             root = self.personal.feature
             if root.exists():
+                require(self.record()["actions"]["feature"].get("worktree") == {"path": str(root), "status": "SUBMITTED"},
+                        "An unreserved feature worktree cannot be adopted")
                 actual = local_checkout(root, p["checkout"]["remote"])
                 common = lambda path: value(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
                 require(actual["head"] == p["checkout"]["head"] and actual["ref"] == "refs/heads/" + p["feature"]["branch"]
                         and common(root) == common(Path(p["checkout"]["path"]))
                         and not value(root, "status", "--porcelain", "--untracked-files=all"), "Feature worktree is uncertain; do not overwrite it")
             else:
+                require(self.record()["actions"]["feature"].get("worktree") is None,
+                        "A submitted worktree effect has no complete result; do not launch it again")
                 self.fresh()
                 # Worktree creation is a distinct local mutation under the
                 # original bounded feature reservation, not just an outer lease.
@@ -389,11 +449,15 @@ class PersonalCoordinator:
                 self.save(row)
                 git(Path(p["checkout"]["path"]), "worktree", "add", "--", str(root), p["feature"]["branch"])
             row = self.record()
+            bound = administration(root)
+            require(bound["common"] == p["administration"]["common"], "Prepared feature belongs to different Git administration")
+            row["feature_administration"] = bound
+            row["actions"]["feature"]["worktree"]["status"] = "OBSERVED"
             row["phase"] = "FEATURE_TRANSITION"
             self.save(row)
         row = self.record()
         if row["phase"] == "FEATURE_TRANSITION" and row["coordination"] is not None:
-            self.conclude(typed(Permit, row["coordination"]["permit"]), "personal:feature-prepared")
+            self.conclude(typed(Permit, row["coordination"]["permit"]), "personal:feature-prepared", next_phase="DEVELOP")
         row = self.record()
         row["phase"] = "DEVELOP"
         self.save(row)
@@ -413,6 +477,8 @@ class PersonalCoordinator:
             row.update(original_review=review["request"]["id"], phase="FEATURE")
             self.save(row)
         self.original_approval()
+        if self.record()["phase"] in ("CHECKS_TRANSITION", "CANDIDATE_REJECTED"):
+            self.finish_transition()
         if self.record()["phase"] in ("FEATURE", "FEATURE_TRANSITION"):
             self.prepare_feature()
         # One task iteration; ordinary correction remains in the same M1/M2
@@ -481,10 +547,10 @@ class PersonalCoordinator:
             actual = self.workers.actual(candidate, accounted=True)
             if actual.result.approved is not True or actual.result.outcome != Outcome.PASS:
                 row = self.record()
-                row.update(phase="DEVELOP", candidate=None)
+                row.update(phase="CANDIDATE_REJECTED", candidate=candidate["request"]["id"])
                 row["feedback"].append(data(actual.result))
                 self.save(row)
-                self.conclude(permit, "personal:candidate-rejected:" + candidate["request"]["id"], Outcome.FAIL)
+                self.finish_transition()
                 return
             self.workers.actual(candidate, approval=True, accounted=True)
             row = self.record()
@@ -524,20 +590,35 @@ class PersonalCoordinator:
                 permit = self.reserve("checks:" + attempt)
             else:
                 permit = typed(Permit, row["coordination"]["permit"])
-            gate = self.observe_checks(permit)
             row = self.record()
+            if row["coordination"]["check_state"] is None:
+                row["coordination"]["check_state"] = "SUBMITTED"
+                self.save(row)
+                gate = self.observe_checks(permit)
+            else:
+                require(row["coordination"]["check_state"] == "SUBMITTED", "Unexpected retained check delivery")
+                # The original #21 evidence remains private. A missing caller
+                # delivery is UNKNOWN, never a cached PASS or a new observation.
+                gate = {"status": "UNKNOWN", "qualified": False, "reason": "LOST_CHECK_DELIVERY",
+                        "missing": self.personal.plan["required_check_names"]}
+            row = self.record()
+            row["coordination"]["check_state"] = "RETURNED"
             row["gates"].append(gate)
             # Preserve observed failures as corrective feedback. UNKNOWN and
             # pending checks permit code-only review, never project acceptance.
             failed = gate["status"] in ("FAIL", "ERROR", "TIMEOUT", "CANCELLED")
-            row["phase"] = "DEVELOP" if failed else "LOCAL_DRAFT_CODE_REVIEWED"
+            row["phase"] = "CHECKS_TRANSITION"
             if failed:
                 row["feedback"].append(gate)
             self.save(row)
-            self.conclude(permit, "personal:checks:" + digest(gate), Outcome.FAIL if failed else Outcome.UNKNOWN)
+            self.finish_transition()
 
     def verify_draft(self):
         self.fresh()
+        self.verify_local_review()
+
+    def verify_local_review(self):
+        self.check_administration(self.record())
         row = self.record()
         review = self.worker(row["code_review"])
         require(review["purpose"] == "code" and review["request"]["revision"] == row["revision"]
@@ -582,7 +663,8 @@ class PersonalCoordinator:
                     self.workers.fence()
                     require(all(r["phase"] == "ACCOUNTED" for r in self.workers.records())
                             and (self.record() is None or self.record()["coordination"] is None)
-                            and (self.record() is None or all(a["status"] == "OBSERVED" for a in self.record()["actions"].values()))
+                            and (self.record() is None or all(a["status"] == "OBSERVED"
+                                and ("worktree" not in a or a["worktree"]["status"] == "OBSERVED") for a in self.record()["actions"].values()))
                             and all(item["active"] is None for item in self.memory.inspect()["state"]["progress_guard"]["requirements"].values()),
                             "Reconcile worker/operation intents before handoff")
                     self.memory.handoff()
@@ -602,7 +684,25 @@ class PersonalCoordinator:
         observed = self.memory.inspect()
         row = self.record()
         require(row is None or row["generation"] == observed["state"]["generation"], "Retained generation differs; preserve historical receipts")
-        return {"mode": "PERSONAL", "status": row["phase"] if row else "ENROLLED",
+        phase = row["phase"] if row else "ENROLLED"
+        decisions = []
+        task = observed["tasks"].get(key(self.task_id))
+        if task is not None:
+            decisions = [self.guard._decision(identifier, observed["state"], task, item).kind
+                for identifier, item in observed["state"]["progress_guard"]["requirements"].items() if key(self.task_id) in item["tasks"]]
+        status = ("OWNER_NOT_ACTIVE" if not observed["local_owner"] else "BLOCKED_PROGRESS_GUARD"
+                  if any(d != DecisionKind.ALLOW for d in decisions) else phase)
+        code_review = "NOT_RECORDED"
+        if phase == "LOCAL_DRAFT_CODE_REVIEWED":
+            try:
+                self.verify_local_review()
+                code_review = "CURRENT_LOCAL_SOURCE"
+            except (ADPError, OSError, ValueError, TypeError, KeyError):
+                code_review = "UNVERIFIED_OR_HISTORICAL"
+                if status == phase:
+                    status = "BLOCKED_CODE_REVIEW"
+        return {"mode": "PERSONAL", "status": status, "phase": phase, "progress_guard": decisions,
+            "code_review": code_review, "remote_scope": "NOT_REOBSERVED_BY_STATUS",
             "repository_id": self.personal.repository_id, "issue": self.personal.plan["issue"],
             "local_owner": observed["local_owner"], "generation": observed["state"]["generation"],
             "memory_health": observed["health"], "revision": self.revision(),

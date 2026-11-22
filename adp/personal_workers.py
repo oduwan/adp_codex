@@ -268,6 +268,11 @@ class PersonalWorkers:
         if actual.status != RuntimeStatus.COMPLETED or actual.stopped is not True:
             self.hazard(row, actual, "containment")
             raise PersonalBlocked("WORKER_STOP_OR_RESULT_UNKNOWN", "Retain the runtime receipt; do not start a replacement context.")
+        try:
+            self.c.check_administration(self.c.record())
+        except ADPError:
+            self.hazard(row, actual, "contamination")
+            raise
         require(actual.request_digest == digest(request) and actual.host == row["host"] and actual.result is not None,
                 "Worker completion/request binding differs")
         try:

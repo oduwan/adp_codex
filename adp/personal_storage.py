@@ -33,7 +33,7 @@ ROLE_LIMITS = {"maximum_tasks": 1, "maximum_rounds": 1, "maximum_parallel": 1,
 class PersonalBlocked(ADPError):
     def __init__(self, code, action, *, status="BLOCKED"):
         super().__init__(action)
-        self.code, self.status = code, status
+        self.reason, self.status = code, status
 
 
 def disjoint(a: Path, b: Path) -> bool:
@@ -103,10 +103,10 @@ def validate_plan(plan, directory):
     from .project_validation_types import RequiredCheck, Phase
     from .enrollment import installer_root
     from .schema import integer, string
-    fields(plan, "schema_version mode repository owner checkout issue issue_id original_digest discovery_digest "
+    fields(plan, "schema_version mode repository owner checkout administration issue issue_id original_digest discovery_digest "
         "governance_digest governance native_prerequisites admission feature paths criterion commit_message commit_body "
         "checks check_requirements required_check_names check_identity_status unresolved_check_names accept_native_job_records "
-        "branch_rules operations merge_mode publication author window effects")
+        "branch_rules operations merge_mode publication author window guard effects")
     require(type(plan["schema_version"]) is int and plan["schema_version"] == 1 and plan["mode"] == "PERSONAL",
             "Unsupported personal plan")
     repository, checkout, feature, window, effects = (plan[name] for name in ("repository", "checkout", "feature", "window", "effects"))
@@ -118,6 +118,8 @@ def validate_plan(plan, directory):
     require(plan["owner"]["repository_id"] == repository["repository_id"]
             and plan["owner"]["read_access"] is True, "Personal owner/access identity differs")
     fields(checkout, "path remote repository ref head")
+    from .personal_git import administration
+    require(plan["administration"] == administration(Path(checkout["path"])), "Original product Git administration changed")
     require(repository["name"] == checkout["repository"] and SHA.fullmatch(checkout["head"])
             and checkout["ref"].startswith("refs/heads/"), "Invalid personal source binding")
     fields(feature, "workspace branch prepare preparation")
@@ -133,7 +135,10 @@ def validate_plan(plan, directory):
             and type(window["nonce"]) is str and re.fullmatch("[0-9a-f]{32}", window["nonce"]), "Invalid personal finite window")
     require(all(type(window[name]) is int and window[name] == maximum for name, maximum in ROLE_LIMITS.items()),
             "Personal role/resource limits cannot be expanded")
-    fields(effects, "directory coordination coordination_remote memory private marker")
+    fields(effects, "directory coordination coordination_remote memory private marker memory_ref")
+    from .guard_types import Limits, data
+    require(plan["guard"] == {"limits": data(Limits()), "forensic_backend": "UNSUPPORTED_STOP", "budget_reset": "NOT_PERMITTED"}
+            and effects["memory_ref"] == "refs/heads/adp/personal", "Accepted guard limits or original coordination ref changed")
     require(effects["directory"] == str(directory) and effects["coordination"] == str(directory / "coordination")
             and effects["coordination_remote"] == str(directory / "coordination.git")
             and effects["memory"] == str(directory / "memory") and effects["private"] == str(directory / "private"),

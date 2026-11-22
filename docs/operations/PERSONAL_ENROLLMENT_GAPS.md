@@ -27,21 +27,21 @@ memory schemas and guard thresholds remain unchanged.
 
 | Entry | Current implementation | Enforced contract |
 | --- | --- | --- |
-| Skill / managed CLI | [Skill](../../skills/adp-codex/SKILL.md), [Codex frontend](../../adp/codex_cli.py) | Versioned observations, exact setup digest, a separate reviewed invocation and execution confirmation |
-| `inspect` | [enrollment CLI](../../adp/enrollment_cli.py#L96), [inspection](../../adp/enrollment.py#L152) | GET-only canonical identity and complete native discovery; no setup authority |
-| `plan` | [prepare](../../adp/enrollment.py#L490) | Existing trust root, signed proposal, current independent provider bindings and pre-existing coordination checkout |
-| `apply` | [apply_plan](../../adp/enrollment.py#L579), [setup](../../adp/operator_setup.py#L149) | Exact approved intent, final reobservation, M1 ownership and explicit migrations; no worker start |
-| status / preview / reconnect | [read_enrollment](../../adp/enrollment.py#L621), [operator setup](../../adp/operator_setup.py) | Retained original profile/trust/intent, checkpoints, current providers and no read-side budget reset |
-| finite `run` | [installed composition](../../adp/operator_controller.py), [track](../../adp/autonomous_track.py) | Actual M1/M2/M3/M4, independently prepared ticket, actual worker receipts, project evidence and product effects |
+| Skill / managed CLI | [Skill](../../skills/adp-codex/SKILL.md), [Codex frontend](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/codex_cli.py) | Versioned observations, exact setup digest, a separate reviewed invocation and execution confirmation |
+| `inspect` | [enrollment CLI](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/enrollment_cli.py#L96), [inspection](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/enrollment.py#L152) | GET-only canonical identity and complete native discovery; no setup authority |
+| `plan` | [prepare](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/enrollment.py#L490) | Existing trust root, signed proposal, current independent provider bindings and pre-existing coordination checkout |
+| `apply` | [apply_plan](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/enrollment.py#L579), [setup](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/operator_setup.py#L149) | Exact approved intent, final reobservation, M1 ownership and explicit migrations; no worker start |
+| status / preview / reconnect | [read_enrollment](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/enrollment.py#L621), [operator setup](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/operator_setup.py) | Retained original profile/trust/intent, checkpoints, current providers and no read-side budget reset |
+| finite `run` | [installed composition](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/operator_controller.py), [track](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/autonomous_track.py) | Actual M1/M2/M3/M4, independently prepared ticket, actual worker receipts, project evidence and product effects |
 
 ### G1: verified absence has no accepted check gate
 
-[PolicyProvider.plan](../../adp/policy.py#L302) returns UNKNOWN for VALIDATE with
+[PolicyProvider.plan](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/policy.py#L302) returns UNKNOWN for VALIDATE with
 an empty required-check set, even when a current authenticated policy source
-explicitly contains `checks=()`. [ProjectValidation.policy_subject](../../adp/project_validation.py#L39)
-requires one or more checks. [TaskLifecycle._validator](../../adp/lifecycle.py#L163)
+explicitly contains `checks=()`. [ProjectValidation.policy_subject](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/project_validation.py#L39)
+requires one or more checks. [TaskLifecycle._validator](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/lifecycle.py#L163)
 requires the actual `ProjectValidation` type and the original check inventory;
-[Conductor._policy](../../adp/conductor.py#L387) requires the actual M3 provider.
+[Conductor._policy](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/conductor.py#L387) requires the actual M3 provider.
 Substituting a permissive provider does not preserve these contracts.
 
 A new personal backend cannot truthfully represent “the project prescribes no
@@ -50,7 +50,7 @@ code review a project test, or making empty inventories globally PASS would
 violate Issue #37. UNKNOWN/403 is also not evidence of verified absence.
 
 Optional commit conventions need a similar explicit treatment. Missing scalar
-rules remain UNKNOWN in [M3](../../adp/policy.py#L148), including branch and commit
+rules remain UNKNOWN in [M3](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/policy.py#L148), including branch and commit
 templates. However, M3 already supports authenticated `OPERATOR` claims: an
 explicitly chosen branch/message can be an operation instruction rather than a
 fictitious repository rule. This is a useful existing extension point, not a
@@ -58,10 +58,10 @@ reason to impose ADP's own conventions on a personal project.
 
 ### G2: initial independent semantic review precedes current runtime receipts
 
-[M4](../../adp/discovery.py#L108) rejects readiness receipts from issue authors.
-[TicketPreparer](../../adp/ticket_preparation.py#L324) excludes original authors
+[M4](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/discovery.py#L108) rejects readiness receipts from issue authors.
+[TicketPreparer](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/ticket_preparation.py#L324) excludes original authors
 and the preparer from original-scope and preparation review and requires READY
-before producing a packet. [PreparationAuthority](../../adp/ticket_types.py#L94)
+before producing a packet. [PreparationAuthority](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/ticket_types.py#L94)
 requires actual independent interpretation and scope-conservation judgments;
 schema validity and matching hashes alone cannot supply those judgments.
 
@@ -69,9 +69,9 @@ An owner who authored the issue may approve operations, but that approval cannot
 stand in for the independent semantic reviewer. Generating local HMAC keys under
 different role names would not create independent people or review evidence.
 
-The existing genuine [runtime receipt verifier](../../adp/operator_authority.py#L212)
+The existing genuine [runtime receipt verifier](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/operator_authority.py#L212)
 authenticates stopped, generation-fenced jobs already recorded under an admitted
-execution task. [Conductor._job](../../adp/conductor.py#L346) creates those jobs
+execution task. [Conductor._job](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/conductor.py#L346) creates those jobs
 after admission. Current grant routing still uses independently signed decisions
 for Developer scope and other semantic decisions. A later exact-SHA code review
 cannot retrospectively authenticate initial original-scope interpretation or
@@ -85,10 +85,10 @@ not supplied by removing the trust/socket arguments from the CLI.
 
 ### G3: the installed track has no local-only product disposition
 
-[AutonomousTrack._attach](../../adp/autonomous_track.py#L157) always attaches
+[AutonomousTrack._attach](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/autonomous_track.py#L157) always attaches
 `GitHubProductFlow` and `TaskLifecycle`.
-[Product scope context](../../adp/product_flow.py#L123) requires the qualified
-GitHub forge. Legacy [PRODUCT publication](../../adp/conductor.py#L912) requires
+[Product scope context](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/product_flow.py#L123) requires the qualified
+GitHub forge. Legacy [PRODUCT publication](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/conductor.py#L912) requires
 observed PUSH, PR and REPORT effects. A local draft is not product DONE, and
 calling a user issue INTERNAL would misclassify it.
 
@@ -98,11 +98,11 @@ check status retained, without inventing acceptance or automatic advancement.
 
 ### G4: signed installed credential provisioning is not ordinary gh login
 
-[Provider preflight](../../adp/enrollment.py#L300) requires independently
+[Provider preflight](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/enrollment.py#L300) requires independently
 provisioned policy/scope/issuer roles and read/CAS/forge credentials. The
-[installed readers](../../adp/operator_controller.py#L49) construct CAS credentials
+[installed readers](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/operator_controller.py#L49) construct CAS credentials
 even before a write operation is selected; build also constructs the forge.
-[Profile validation](../../adp/operator_profile.py#L273) requires nonempty checks
+[Profile validation](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/operator_profile.py#L273) requires nonempty checks
 and constrains native GitHub validation to POST_PR.
 
 These are constraints of the signed composition. They must remain intact for
@@ -122,7 +122,7 @@ unapproved or unused mutation ports.
   constraints must be interpreted and honored.
 - Authenticated M3 OPERATOR claims can express exact choices and operation
   permission without a project policy file. An unapproved plan remains UNKNOWN.
-- The general [GitHub evidence source](../../adp/project_validation_github.py#L170)
+- The general [GitHub evidence source](https://github.com/oduwan/adp_codex/blob/84506489802c732bcfc1bf89a5bfdbcba29d78b5/adp/project_validation_github.py#L170)
   can observe checks for an already-published exact SHA before a PR; it verifies
   PR identity only when a PR is supplied. The POST_PR-only restriction belongs
   to the signed installed profile, not this general port. A workflow file alone

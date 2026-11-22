@@ -2,6 +2,7 @@
 from dataclasses import replace
 from pathlib import Path
 import json
+import shutil
 from unittest.mock import patch
 
 from adp.codex_runtime import CodexExecRuntime
@@ -9,6 +10,7 @@ from adp.discovery_schema import digest
 from adp.errors import ADPError
 from adp.execution_types import Capabilities, RuntimeObservation, RuntimeStatus, WorkerResult
 from adp.git import value
+from adp.execution_containment import admin_seal
 from adp.guard_types import Outcome, DecisionKind
 from adp.personal_enrollment import apply_personal
 from adp.personal_runner import PersonalCoordinator
@@ -21,6 +23,124 @@ from test_config import run, snapshot
 
 
 class PersonalExecutionTests(PersonalFixture):
+    def test_same_valued_git_redirection_after_construction_is_refused(self):
+        original_root = self.a
+        self.a = self.base / "enrollment-checkout"
+        run(original_root, "worktree", "add", "-b", "selected", str(self.a))
+        self.enroll()
+        before = admin_seal(self.a)
+        common = original_root / ".git"
+        copied = self.base / "same-valued-administration"
+        shutil.copytree(common, copied)
+        directory = Path(value(self.a, "rev-parse", "--absolute-git-dir"))
+        (self.a / ".git").write_text("gitdir: " + str(copied / directory.relative_to(common)) + "\n")
+        self.assertEqual(admin_seal(self.a), before)
+        # The old value-only seal is unchanged; physical identity must refuse.
+        with self.assertRaises(ADPError):
+            self.c.live()
+        self.assertEqual(self.requests, [])
+
+    def test_coordinator_allocation_recovers_the_original_guard_permit(self):
+        self.enroll()
+        self.c.initialize_run()
+        original_save = self.c.save
+        def interrupted(row):
+            if row["coordination"] is not None and row["coordination"]["permit"] is not None:
+                raise OSError("Synthetic interruption after canonical guard allocation")
+            return original_save(row)
+        with patch.object(self.c, "save", side_effect=interrupted), self.assertRaises(OSError):
+            self.c.reserve("focused-recovery")
+        requirement = self.c.requirement("develop")
+        before = self.c.guard._snapshot(self.c.task_id, requirement)[2]
+        token = before["active"]["id"]
+        self.assertIsNone(self.c.record()["coordination"]["permit"])
+        with patch.object(self.c.guard, "begin", side_effect=AssertionError("Never allocate a second permit")):
+            recovered = self.c.reserve("focused-recovery")
+        self.assertEqual(recovered.token, token)
+        self.assertEqual(self.c.guard._snapshot(self.c.task_id, requirement)[2], before)
+        self.assertEqual(self.requests, [])
+
+    def test_check_transition_recovers_accounting_without_another_observation(self):
+        self.enroll()
+        self.c.initialize_run()
+        permit = self.c.reserve("focused-check-transition")
+        row = self.c.record()
+        gate = {"status": "UNKNOWN", "qualified": False}
+        row.update(phase="CHECKS_TRANSITION", gates=[gate])
+        self.c.save(row)
+        original_save = self.c.save
+        def interrupted(row):
+            if row["coordination"] is None:
+                raise OSError("Synthetic interruption after actual guard accounting")
+            return original_save(row)
+        with patch.object(self.c, "save", side_effect=interrupted), self.assertRaises(OSError):
+            self.c.finish_transition()
+        accounted = self.c.guard._snapshot(self.c.task_id, permit.decision.baseline.requirement_id)[2]
+        self.assertIsNone(accounted["active"])
+        with patch.object(self.c, "observe_checks", side_effect=AssertionError("Never observe a second check")), \
+             patch.object(self.c.guard, "begin", side_effect=AssertionError("Never allocate a second permit")):
+            self.c.finish_transition()
+        self.assertEqual(self.c.guard._snapshot(self.c.task_id, permit.decision.baseline.requirement_id)[2], accounted)
+        self.assertIsNone(self.c.record()["coordination"])
+        self.assertEqual(self.c.record()["phase"], "LOCAL_DRAFT_CODE_REVIEWED")
+
+    def test_lost_check_delivery_stays_unknown_without_reobserving(self):
+        self.enroll()
+        self.c.initialize_run()
+        row = self.c.record()
+        row.update(phase="CHECKS", developer="synthetic-only-accounting-fixture")
+        self.c.save(row)
+        with patch.object(self.c, "observe_checks", side_effect=OSError("Synthetic lost check delivery")) as observer, self.assertRaises(OSError):
+            self.c.check_stage()
+        observer.assert_called_once()
+        self.assertEqual(self.c.record()["coordination"]["check_state"], "SUBMITTED")
+        with patch.object(self.c, "observe_checks", side_effect=AssertionError("Never replay missing check delivery")) as observer:
+            self.c.check_stage()
+        observer.assert_not_called()
+        self.assertEqual(self.c.record()["gates"][-1]["status"], "UNKNOWN")
+        self.assertEqual(self.c.record()["gates"][-1]["reason"], "LOST_CHECK_DELIVERY")
+        self.assertIsNone(self.c.record()["coordination"])
+        # No code receipt was supplied by this accounting-only fixture.
+        self.assertEqual(self.c.status()["status"], "BLOCKED_CODE_REVIEW")
+
+    def test_rejected_candidate_transition_recovers_the_same_observation(self):
+        self.enroll()
+        self.c.initialize_run()
+        permit = self.c.reserve("focused-candidate-transition")
+        row = self.c.record()
+        row.update(phase="CANDIDATE_REJECTED", candidate="synthetic-only-accounting-fixture",
+            feedback=[{"outcome": "FAIL", "approved": False, "criteria": [], "summary": "Synthetic in-scope feedback", "forensic": None}])
+        self.c.save(row)
+        with patch.object(self.c.guard, "observe", side_effect=OSError("Synthetic interruption before guard observation")), self.assertRaises(OSError):
+            self.c.finish_transition()
+        retained = self.c.record()["coordination"]["observation"]
+        self.assertEqual(retained["outcome"], "FAIL")
+        with patch.object(self.c.guard, "begin", side_effect=AssertionError("Never allocate another candidate recovery permit")):
+            self.c.finish_transition()
+        actual = self.c.guard._snapshot(self.c.task_id, permit.decision.baseline.requirement_id)[2]
+        self.assertEqual(actual["last"]["observation"], retained)
+        self.assertIsNone(actual["active"])
+        self.assertEqual(self.c.record()["phase"], "DEVELOP")
+
+    def test_submitted_absent_worktree_is_not_launched_again(self):
+        self.enroll()
+        self.c.initialize_run()
+        original = self.c.workers.execute("original", self.c.context("original"), self.a)
+        row = self.c.record()
+        row.update(original_review=original["request"]["id"], phase="FEATURE")
+        self.c.save(row)
+        from adp.git import git as actual_git
+        def interrupted(root, *args, **kwargs):
+            if args[:2] == ("worktree", "add"):
+                raise OSError("Synthetic loss before known worktree outcome")
+            return actual_git(root, *args, **kwargs)
+        with patch("adp.personal_runner.git", side_effect=interrupted), self.assertRaises(OSError):
+            self.c.prepare_feature()
+        self.assertFalse(self.personal.feature.exists())
+        with patch("adp.personal_runner.git", side_effect=interrupted) as launch, self.assertRaises(ADPError):
+            self.c.prepare_feature()
+        self.assertFalse(any(call.args[1:3] == ("worktree", "add") for call in launch.call_args_list))
+
     def enroll(self, ci_transport=None):
         p, original, docs = self.plan(ci_transport=ci_transport)
         self.personal = apply_personal(p, original, docs, approved=approval(p), authorized=True,
@@ -182,6 +302,26 @@ class PersonalExecutionTests(PersonalFixture):
         with self.assertRaisesRegex(ADPError, "independent"):
             self.c.workers.execute("candidate", self.c.context("candidate"), self.personal.feature)
         self.assertEqual(value(self.personal.feature, "rev-parse", "HEAD"), self.personal.plan["checkout"]["head"])
+        self.assertFalse(any(a["operation"] == "COMMIT" for a in self.c.record()["actions"].values()))
+
+    def test_developer_self_approval_is_a_terminal_authority_violation(self):
+        run(self.a, "checkout", "-b", "work/issue-1")
+        self.enroll()
+        self.c.initialize_run()
+        original = self.c.workers.execute("original", self.c.context("original"), self.a)
+        row = self.c.record()
+        row.update(original_review=original["request"]["id"], phase="DEVELOP")
+        self.c.save(row)
+        original_dispatch = self.dispatch
+        def self_approved(request):
+            observed = original_dispatch(request)
+            observed = replace(observed, result=replace(observed.result, approved=True))
+            self.observed[request.id] = observed
+            return observed
+        self.runtime.dispatch.side_effect = self_approved
+        with self.assertRaisesRegex(ADPError, "self-approve"):
+            self.c.workers.execute("develop", self.c.context("develop"), self.a)
+        self.assertEqual(self.c.guard.inspect(self.c.task_id, self.c.requirement("develop")).kind, DecisionKind.STOP_UNSAFE)
         self.assertFalse(any(a["operation"] == "COMMIT" for a in self.c.record()["actions"].values()))
 
     def test_unavailable_runtime_and_native_blocker_never_launch(self):

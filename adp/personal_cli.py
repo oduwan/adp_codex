@@ -6,6 +6,7 @@ The default signed-provider paths remain separate and unchanged.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from .discovery_schema import digest
 from .enrollment import Blocked, local_checkout
@@ -147,7 +148,8 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None):
                 report.update(status="RECONNECTED" if action == "reconnect" else "ENROLLED", result=c.status())
                 if action == "doctor" and getattr(args, "check_runtime", False):
                     caps = c.runtime.capabilities()
-                    report["result"]["runtime"] = {"supported": caps.independent_contexts, "version": caps.version,
+                    version = caps.version if re.fullmatch(r"(?:codex-cli )?[0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.-]+)?", caps.version) else "UNKNOWN"
+                    report["result"]["runtime"] = {"supported": caps.independent_contexts, "version": version,
                         "qualification": "NOTRUN"}
         assert_public(report)
     except (PersonalBlocked, Blocked) as exc:

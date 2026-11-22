@@ -19,9 +19,10 @@ from .discovery_schema import digest
 from .enrollment import inspect_project, installer_root, local_checkout, product_roots
 from .errors import ADPError
 from .git import author, git, value
-from .guard_types import data
+from .guard_types import Limits, data
 from .personal_ci import native_inventory, prescribed_checks
 from .personal_github import owned_repository
+from .personal_git import administration
 from .personal_storage import (INTENT, LIMIT, PersonalBlocked, PersonalState, approval, assert_public,
     complete_setup, create_private, disjoint, load_state, persist_intent, private_directory,
     read_private, token_parts)
@@ -177,7 +178,7 @@ def plan_personal(observation, owner, choices: PersonalChoices, *, approved=None
                 "An existing enrollment cannot be replaced with another directory, plan or budget")
     proposed = {
         "schema_version": 1, "mode": "PERSONAL", "repository": repository, "owner": owner,
-        "checkout": checkout, "issue": original.number, "issue_id": original.identity.issue_id,
+        "checkout": checkout, "administration": administration(root), "issue": original.number, "issue_id": original.identity.issue_id,
         "original_digest": digest(original_data), "discovery_digest": observation.facts["discovery_digest"],
         "governance_digest": document_digest, "governance": public_docs,
         "native_prerequisites": [data(edge) for edge in original.relations if edge.confidence == "NATIVE" and edge.kind == "BLOCKED_BY"],
@@ -199,9 +200,10 @@ def plan_personal(observation, owner, choices: PersonalChoices, *, approved=None
                    "scope_reviewers": 1, "developers": 2, "candidate_reviewers": 2, "code_reviewers": 2,
                    "forensic_reviewers": 2,
                    "maximum_check_observations": 3, "worker_seconds": 300},
+        "guard": {"limits": data(Limits()), "forensic_backend": "UNSUPPORTED_STOP", "budget_reset": "NOT_PERMITTED"},
         "effects": {"directory": str(directory), "coordination": str(directory / "coordination"),
                     "coordination_remote": str(directory / "coordination.git"), "memory": str(directory / "memory"),
-                    "private": str(directory / "private"), "marker": str(pointer)},
+                    "private": str(directory / "private"), "marker": str(pointer), "memory_ref": "refs/heads/adp/personal"},
     }
     assert_public(proposed)
     validate_plan(proposed, directory)
