@@ -33,4 +33,3 @@ class PersonalGitTests(PersonalFixture):
             port._git("update-ref", "refs/heads/bound-only", sha, "0" * len(sha))
         self.assertEqual(value(self.a, "rev-parse", "refs/heads/bound-only"), sha)
         self.assertEqual(value(copied, "for-each-ref", "--format=%(objectname)", "refs/heads/bound-only"), "")
-
