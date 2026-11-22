@@ -22,6 +22,14 @@ Open your project in a fresh Codex session and invoke `$adp-codex` for guided
 inspection and setup. The [first-use walkthrough](docs/operations/CODEX_FIRST_USE.md)
 covers explicit setup approval, diagnostics and bounded execution.
 
+For a personally owned GitHub.com project, the explicit
+[personal backend](docs/operations/PERSONAL_ENROLLMENT.md) provides automatic
+local coordination setup and one finite local-draft workflow without external
+providers or hand-written JSON. Existing governance applies; unknown checks
+remain unknown. Setup and execution need separate exact operator approvals.
+It grants no push, PR, report or merge rights and never marks a draft accepted.
+Genuine runtime/pilot qualification remains a separately authorized M8 gate.
+
 With the managed engine on PATH, inspect an explicitly selected disposable
 project without initializing memory:
 
@@ -45,7 +53,7 @@ metadata/authority remains UNKNOWN; issue prose never becomes instructions.
 | [Discovery](docs/DISCOVERY_API.md) | discover, plan, refresh | Read-only observations and independently assessed readiness |
 | [Conductor](docs/CONDUCTOR_API.md) | finite run, status, resume, handoff | Explicit trusted controller/operator evidence, qualified runtime/ports |
 
-Execution first requires separately authorized v1→v2→v3 memory migrations. An
+The signed-provider execution path requires separately authorized v1→v2→v3 memory migrations. An
 operator supplies independently verified readiness/policy/evidence services.
 The [installed operator profile](docs/operations/OPERATOR_SETUP.md) wires standard
 ports without a custom Python controller; the advanced trusted controller remains

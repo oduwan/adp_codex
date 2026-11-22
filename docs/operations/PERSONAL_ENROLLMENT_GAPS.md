@@ -1,10 +1,12 @@
 # Issue #37: personal enrollment contract decision
 
-**Disposition: BLOCKED_ARCHITECTURE under the issue's explicit fallback.**
-Personal enrollment is **not implemented** by this change. It records the
-source-level boundary, reusable ports, focused characterization evidence and a
-bounded decomposition for operator review. Passing characterization or legacy
-tests does not satisfy the requested personal-mode acceptance matrix.
+**Historical analysis of the accepted baseline, not implementation acceptance.**
+This packet initially proposed an architecture fallback. Independent review
+confirmed the source gaps but did not establish infeasibility: Issue #37 already
+authorizes an additive personal backend. Implementation therefore continues
+within that scope; the baseline findings below do not require fresh blanket
+authorization. Passing characterization or legacy tests alone does not satisfy
+the requested personal-mode acceptance matrix.
 
 Baseline: `84506489802c732bcfc1bf89a5bfdbcba29d78b5`.
 Scope: the original [Issue #37](https://github.com/oduwan/adp_codex/issues/37),
@@ -16,8 +18,10 @@ The existing composition cannot provide this workflow through a frontend or
 provider-removal adapter alone. This is **not** evidence that a separate personal
 backend is fundamentally impossible or outside the issue's scope. It identifies
 the additive policy, evidence and execution contracts needed before that backend
-can truthfully promise a usable finite lifecycle. No production code, signed
-provider behavior, memory schema, guard threshold or packaged Skill is changed.
+can truthfully promise a usable finite lifecycle. This historical packet itself
+changed no production code. The additive implementation is documented in
+[personal enrollment](PERSONAL_ENROLLMENT.md); signed-provider behavior, accepted
+memory schemas and guard thresholds remain unchanged.
 
 ## Existing call chain and enforced boundaries
 
@@ -162,9 +166,10 @@ project test runner, sandbox, broad scheduler or pilot execution.
 The first two contracts are prerequisites for claiming that the final backend
 supports the finite personal lifecycle. Enrollment/preview can be developed
 separately, but would be **PARTIAL** until those prerequisites are implemented.
-The requested operator decision is whether to proceed with this bounded
-decomposition and its explicit contract changes; no split/dependency edit or
-implementation of those new contracts is claimed here.
+The initial packet proposed an operator decision on this decomposition. That
+proposed stop was superseded by independent review: implementation of a
+scope-conserving personal backend is already authorized. No split/dependency
+edit or execution authority is conferred by this analysis.
 
 ## Qualification and remaining acceptance
 
@@ -183,7 +188,11 @@ unchanged. Exact candidate SHA, Python versions, commands, outcomes, evidence
 hashes, CI results and independent exact-HEAD review belong in Issue #37 and its
 Draft PR; they must not be inferred from this plan.
 
-| Original acceptance | Disposition at this boundary |
+The following table records the **baseline packet-only boundary**, before the
+separate personal backend was implemented. It is retained as historical evidence,
+not the current functionality report.
+
+| Original acceptance | Historical disposition |
 | --- | --- |
 | Fresh provider-free inspect/plan/apply and decline | Inspection primitives exist; personal plan/apply are NOT_IMPLEMENTED, blocked by G1–G4 |
 | Existing governance/checks; absence differs from unknown | Existing strict gates preserved; new verified-absence policy/evidence semantics NOT_IMPLEMENTED |
