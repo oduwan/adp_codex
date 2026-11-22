@@ -119,11 +119,42 @@ class PersonalPublication:
         self.c.workers.fence()
         require(self.c.record()["phase"] == "LOCAL_DRAFT_CODE_REVIEWED" and self.c.record()["coordination"] is None,
                 "Finish the actual reviewed local draft and reconcile its original guard work")
+        review_binding = self.review_binding()
         self.c.original_approval()
         self.c.verify_local_review()
+        require(self.review_binding() == review_binding, "Canonical review evidence changed during genuine verification")
         require(capture.base in capture.observed and all(capture.base + "/" + suffix + "?per_page=100&page=1" in capture.observed
             for suffix in capture.SUFFIXES), "Full preflight did not validate all original-ticket observations")
-        return capture.observed
+        return capture.observed, review_binding
+
+    def review_binding(self):
+        """Current canonical evidence sealed by full genuine batch review.
+
+        Recompare per object; this is not a new approval or a substitute for
+        runtime verification before and after the whole immutable batch.
+        """
+        observed = self.c.memory.inspect()
+        require(observed["health"] == "SYNCED" and observed["local_owner"], "Current review owner is required")
+        state, task = observed["state"], observed["tasks"][key(self.c.task_id)]
+        row, reviews = self.c.record(), {}
+        require(task["source_revision"] == row["revision"], "Canonical reviewed source changed")
+        for name, purpose in (("original_review", "original"), ("code_review", "code")):
+            worker = self.c.worker(row[name])
+            assignment = task["assignments"].get(worker["assignment"]["assignment_id"])
+            require(worker["purpose"] == purpose and worker["phase"] == "ACCOUNTED" and assignment is not None
+                    and assignment["status"] == "accepted" and assignment["worker"] == "worker:" + row[name]
+                    and assignment["generation"] == worker["request"]["generation"] == state["generation"]
+                    and assignment["source_revision"] == worker["request"]["revision"]
+                    and assignment["result"] == self.c.workers.result(worker), "Canonical independent review assignment changed")
+            item = state["progress_guard"]["requirements"][worker["requirement"]]
+            require(self.c.guard._decision(worker["requirement"], state, task, item).kind == DecisionKind.ALLOW,
+                    "Original or code review guard is no longer allowed")
+            if purpose == "code":
+                require(item["approval"] is not None and item["approval"]["context"] == self.c.guard._context(state, task),
+                        "Current canonical code approval is missing")
+            reviews[purpose] = {"assignment": assignment, "guard": item}
+        return digest({"reviews": reviews, "revision": task["source_revision"], "iteration": task["iteration"],
+            "generation": state["generation"], "epoch": state["progress_guard"]["task_epochs"][task["key"]]})
 
     def current_original(self):
         capture = OriginalRead(self.read, self.target.api + "/issues/" + str(self.personal.plan["issue"]))
@@ -166,7 +197,7 @@ class PersonalPublication:
         require(0 <= issued <= now < expires and 0 < expires - issued <= 300
                 and expires <= self.personal.plan["window"]["expires_at"], "Original publication window is expired or invalid")
         with self.service.bounded():
-            original_observation = self.local()
+            original_observation, review_binding = self.local()
             old = self.remote()
             if old is not None:
                 require(self.port._value("--no-replace-objects", "merge-base", old, self.c.revision()) == old,
@@ -178,6 +209,7 @@ class PersonalPublication:
                 "account_id": self.personal.plan["owner"]["account_id"], "issue": self.personal.plan["issue"],
                 "issue_id": self.personal.plan["issue_id"], "original_digest": self.personal.plan["original_digest"],
                 "original_observation": original_observation,
+                "canonical_review_binding": review_binding,
                 "setup_approval": self.personal.intent["approval"], "checkpoint": state["local_head"],
                 "generation": state["state"]["generation"], "source_ref": self.target.ref,
                 "revision": self.c.revision(), "tree": self.port._value("rev-parse", "HEAD^{tree}"),
@@ -202,23 +234,29 @@ class PersonalPublication:
         view, token, _ = self.proposed()
         return {"status": "PUBLICATION_PROPOSED", "result": view, "approval": token}
 
-    def live(self):
+    def live(self, *, review=True):
         row = self.record()
         require(row is not None, "Exact publication consent is missing")
         view = row["view"]
         self.c.live()
         require(view["issued_at"] <= self.clock() < view["expires_at"]
                 and self.port._value("rev-parse", "HEAD") == view["revision"]
+                and self.port._value("--no-replace-objects", "rev-parse", "HEAD^{tree}") == view["tree"]
                 and self.port._value("symbolic-ref", "HEAD") == view["source_ref"]
                 and not self.port._value("status", "--porcelain", "--untracked-files=all")
                 and digest(administration(self.personal.feature)) == view["administration"]
                 and digest(self.c.workers.records()) == view["worker_inventory"]
+                and self.review_binding() == view["canonical_review_binding"]
                 and self.transport.credential_binding == row["credential_binding"], "Publication source, review, credential or finite consent changed")
-        self.c.verify_local_review()
+        if review:
+            self.c.verify_local_review()
         return row
 
     def write_authorized(self):
-        row = self.live()
+        # Full genuine review is performed at both batch boundaries. Recheck
+        # its sealed canonical assignments/approvals and every current source,
+        # owner, credential and guard binding for each exact immutable object.
+        row = self.live(review=False)
         require(self._dispatching and row["requirement"] is not None and row["reservation"] is not None,
                 "Only the fresh one-use publication dispatch can mutate")
         _, _, item = self.guard._snapshot(self.c.task_id, row["requirement"])

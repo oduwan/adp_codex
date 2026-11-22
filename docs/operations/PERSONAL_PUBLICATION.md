@@ -104,6 +104,14 @@ credentials and exact feature ref. Unrelated whole-track inventories are not
 repeated inside each upload boundary. These REST observations do not create an
 atomic lock on issue edits.
 
+Full genuine original/code review verification seals the same canonical accepted
+assignments, review guards and source/epoch before and after that verification.
+Every immutable-object request rechecks those seals plus current source/tree/ref,
+worker records, credentials, ownership, consent and the active publication permit.
+Full runtime/role review is repeated at both batch boundaries before CAS; it is
+not recursively repeated for every object. Revocation of either original-scope
+or code approval stops the next object, without extending dispatch deadlines.
+
 Read-only preflight and settlement each have a finite observation bound. The
 accepted M7 port owns its unchanged dispatch bound; a restored expired preflight
 context cannot be mistaken for the settlement window. Settlement has no mutation

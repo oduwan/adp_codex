@@ -1,0 +1,4 @@
+[
+  "test_personal_publication_review_binding.PersonalPublicationReviewBindingTests.test_code_approval_revocation_stops_before_the_next_object",
+  "test_personal_publication_review_binding.PersonalPublicationReviewBindingTests.test_original_scope_revocation_stops_before_the_next_object"
+]

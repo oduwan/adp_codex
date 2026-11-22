@@ -62,9 +62,10 @@ class PersonalPublicationTests(PublicationFixture):
         proposal = pub.preview()
         self.assertEqual(proposal["result"]["expected_old"], self.initial)
         self.http.server.before_cas = lambda: gv(self.store, "update-ref", pub.target.ref, self.middle, self.initial)
-        with self.assertRaises(ADPError):
+        with self.assertRaises(ADPError) as caught:
             self.publish(proposal["approval"])
-        self.assertEqual(self.http.server.refs()[pub.target.ref], self.middle)
+        self.assertEqual(self.http.server.refs()[pub.target.ref], self.middle,
+            msg="The real CAS interleaving must be reached; caught refusal: " + str(caught.exception)[:512])
         self.assertEqual(gv(self.store, "merge-base", self.middle, self.c.revision()), self.middle)
         before = len(self.http.server.mutations)
         state = self.c.memory.inspect()["state"]["progress_guard"]
