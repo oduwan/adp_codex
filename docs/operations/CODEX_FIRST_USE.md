@@ -1,5 +1,13 @@
 # First use in Codex
 
+For a personally owned GitHub.com project without independent providers,
+choose [personal enrollment](PERSONAL_ENROLLMENT.md) inside `$adp-codex`.
+It uses the same managed launcher with an explicit personal backend, no manual
+JSON, automatic approved local coordination and a separate finite-run approval.
+A main checkout can propose an approved isolated feature worktree. Existing
+rules apply and missing/unknown checks never become PASS. The signed-provider
+walkthrough below remains available unchanged for that mode.
+
 ## Install and open your project
 
 Follow the [installation guide](INSTALL_ADP.md) once using the approved archive,

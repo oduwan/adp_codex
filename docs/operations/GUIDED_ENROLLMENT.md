@@ -1,5 +1,11 @@
 # Guided project enrollment
 
+This page describes the existing independently signed-provider mode. For an
+owned personal repository without those providers, explicitly choose the
+separate [personal backend](PERSONAL_ENROLLMENT.md). It automatically prepares
+local memory after exact consent and supports a bounded code-reviewed local
+draft, without external GitHub write rights or fabricated project acceptance.
+
 Use `adp enroll` from the managed [ADP installation](INSTALL_ADP.md), or use
 its absolute launcher path. Enrollment supports explicitly selected GitHub.com
 projects with canonical HTTPS remotes. First-use setup selects one open issue

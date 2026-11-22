@@ -64,12 +64,23 @@ def add_commands(commands) -> None:
     for name in ENROLLMENT:
         command = stages.add_parser(name)
         enrollment_cli.selectors(command, name)
+        from .personal_cli import choices as personal_choices
+        personal_choices(command)
+        if name not in ("inspect", "plan", "apply"):
+            command.add_argument("--issue", type=int)
+            command.add_argument("--token-env", default="GH_TOKEN")
+        if name == "doctor":
+            command.add_argument("--check-runtime", action="store_true")
         if name in ("preview", "status"):
             command.add_argument("--for-operation", choices=("run",) if name == "preview" else ("resume", "handoff"))
             invocation_limits(command)
     for name in EXECUTION:
         command = stages.add_parser(name)
         enrollment_cli.selectors(command, "status")
+        from .personal_cli import choices as personal_choices
+        personal_choices(command)
+        command.add_argument("--issue", type=int)
+        command.add_argument("--token-env", default="GH_TOKEN")
         command.add_argument("--reviewed", help="Review token from the current preview or status")
         command.add_argument("--authorize-execution", action="store_true")
         if name != "handoff":

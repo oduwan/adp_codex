@@ -75,6 +75,8 @@ def parser() -> argparse.ArgumentParser:
     add_enrollment_commands(commands)
     from .codex_cli import add_commands as add_codex_commands
     add_codex_commands(commands)
+    from .personal_cli import add_commands as add_personal_commands
+    add_personal_commands(commands)
     return root
 
 
@@ -95,6 +97,11 @@ def check_product_worktrees(config: Config) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
+        if args.command == "personal" or getattr(args, "personal", False):
+            from .personal_cli import run as personal_run
+            report, code = personal_run(args)
+            emit(report)
+            return code
         if args.command == "codex":
             from .codex_cli import run as codex_run
             report, code = codex_run(args)

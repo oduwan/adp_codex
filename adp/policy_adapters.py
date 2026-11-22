@@ -14,10 +14,11 @@ from .policy_types import Document, Ref, RepositorySnapshot, Safety, SourceKind,
 from .schema import require, string
 
 
-def working_tree_digest(root) -> str | None:
+def working_tree_digest(root, *, git_reader=None) -> str | None:
     """Opt-in bounded stage precondition; never follows untracked symlinks."""
-    diff = git(root, "diff", "--no-ext-diff", "--no-textconv", "--binary", limit=1048576)
-    paths = git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+    git_reader = git_reader or git
+    diff = git_reader(root, "diff", "--no-ext-diff", "--no-textconv", "--binary", limit=1048576)
+    paths = git_reader(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
     paths = [p for p in paths if p]
     if len(paths) > 32:
         return None
