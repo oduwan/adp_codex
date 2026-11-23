@@ -77,11 +77,11 @@ class PersonalTrackTests(TrackFixture):
     def test_missing_exact_merged_base_blocks_before_next_owner_or_source_effect(self):
         self.enroll_track()
         result = self.merged()
-        before = snapshot(self.base)
+        before = self.observation_snapshot()
         with self.assertRaises(PersonalBlocked) as error:
             self.c.track.next_preview(self.product, self.next_choices(2))
         self.assertEqual(error.exception.reason, "NEXT_BASE_UNAVAILABLE")
-        self.assertEqual(snapshot(self.base), before)
+        self.assertEqual(self.observation_snapshot(), before)
         self.assertTrue(self.c.memory.inspect()["local_owner"])
         self.assertNotEqual(result["merge"], self.personal.plan["checkout"]["head"])
 

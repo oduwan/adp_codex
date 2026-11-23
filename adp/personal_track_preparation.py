@@ -14,8 +14,9 @@ from .personal_runner import LocalPolicyAdapter
 from .personal_storage import read_private
 from .personal_track import immutable, same_observation
 from .policy import PolicyProvider
-from .policy_types import SourceClaim, SourceKind
-from .schema import require
+from .policy_adapters import MockRepositoryAdapter
+from .policy_types import RepositorySnapshot, SourceClaim, SourceKind
+from .schema import key, require
 from .ticket_preparation import (TicketPreparer, original_scope_subject, preparation_subject)
 from .ticket_types import Clause, OriginalScope, Part, PreparationReview, Proposal
 
@@ -77,6 +78,62 @@ def semantic_bundle(track):
             "instructions": [], "exit_conditions": ["Original scope only; missing evidence or authority stops admission."]},
         "completion_observations": completions,
         "judgment": "Independently assess this complete unchanged original, every proposed clause/path/check/policy and actual native prerequisite disposition. An opaque criterion refers to ALL original acceptance, not a reduced replacement. Reject unresolved inferred dependencies, scope additions or unsupported project requirements. This approves preparation only; future Issues need separate operator scope/window and their own original Reviewer."}
+
+
+def historical_policy(track, bundle):
+    """Authenticate the actual old preparation, not an old operation grant.
+
+    Current operations still use PersonalCoordinator.provider's actual Git
+    adapter and M1/M2 safety. The accepted typed snapshot adapter below is only
+    the read-only source for re-deriving a historical scope packet.
+    """
+    c, p = track.c, track.personal.plan
+    _, current, claims = unsigned_policy(c)
+    frozen = typed(RepositorySnapshot, bundle["policy_snapshot"])
+    evidence = {"schema_version": 1, "setup": track.personal.intent["approval"],
+        "frozen": data(frozen), "current": data(current), "compared_fields": list(data(frozen))}
+    from .personal_track import content
+    directory = track.personal.state / "preparation-reobservations"
+    require(not directory.exists() or len(list(directory.glob("*.json"))) < 8
+            or (directory / (digest(evidence) + ".json")).exists(), "Bounded preparation reobservation archive exhausted")
+    content(directory, evidence)  # retain both actual records BEFORE comparison
+    require([data(claim) for claim in claims] == bundle["policy_sources"], "Reviewed policy interpretation changed")
+    if current != frozen:
+        require(replace(current, local_refs=frozen.local_refs) == frozen,
+                "Original preparation source/governance/index/remote changed")
+        old, new = ({r.name: r.revision for r in snapshot.local_refs} for snapshot in (frozen, current))
+        target = "refs/heads/" + p["feature"]["branch"]
+        changed = {name for name in old.keys() | new.keys() if old.get(name) != new.get(name)}
+        require(changed == {target} and target not in old and target in new,
+                "Unapproved foreign ref drift cannot be normalized into preparation")
+        run = c.record()
+        feature = run["actions"].get("feature") if run else None
+        require(feature is not None and feature["operation"] == "BRANCH" and feature["target"] == target
+                and feature["payload"]["start_revision"] == p["checkout"]["head"]
+                and feature["status"] == "OBSERVED" and feature["observation"]["status"] == "PRESENT"
+                and feature["observation"]["revision"] == p["checkout"]["head"], "Actual own feature intent/receipt required")
+        from .execution_ports import GitExecutionPort
+        root = Path(p["checkout"]["path"]) if new[target] == p["checkout"]["head"] else track.personal.feature
+        from .personal_git import administration
+        port = GitExecutionPort(Config.discover(root, remote=p["checkout"]["remote"], repository_id=track.personal.repository_id),
+            bound_git_directory=Path(administration(root)["directory"]["path"]))
+        if new[target] == p["checkout"]["head"]:
+            observed = port.observe(feature)
+            require(observed.status == "PRESENT" and observed.revision == new[target], "Own feature is not currently confirmed")
+        else:
+            candidates = [action for action in run["actions"].values() if action["operation"] == "COMMIT"
+                and action["source_ref"] == target and action["target"] == target]
+            matches = [action for action in candidates if (observed := port.observe(action)).status == "PRESENT"
+                and observed.revision == new[target] and (action["observation"] is None or action["observation"] == data(observed))]
+            require(len(matches) == 1, "Own ref advance needs its actual exact committed intent/observation")
+            git_root = Path(p["checkout"]["path"])
+            from .git import value
+            require(value(git_root, "merge-base", p["checkout"]["head"], new[target]) == p["checkout"]["head"],
+                    "Own committed ref does not descend from the admitted original base")
+    # This provider has no SafetyAdapter and cannot qualify a Git operation.
+    policy = PolicyProvider(MockRepositoryAdapter(frozen), authority=c.authority, clock=c.clock)
+    policy.sources = tuple(c.authority.source(policy, claim, frozen) for claim in claims)
+    return policy
 
 
 class ContextAuthority:
@@ -167,10 +224,7 @@ def prepare(track):
         # Re-derive the actual conserved packet/proof below; an opaque pointer
         # to another valid same-Issue packet cannot substitute for this window.
         c.fresh()
-    adapter, source, claims = unsigned_policy(c)
-    require(data(source) == bundle["policy_snapshot"] and [data(claim) for claim in claims] == bundle["policy_sources"], "Reviewed policy changed")
-    policy = PolicyProvider(adapter, authority=c.authority, clock=c.clock)
-    policy.sources = tuple(c.authority.source(policy, claim, source) for claim in claims)
+    policy = historical_policy(track, bundle)
     inspection = policy.inspect_repository()
     require(not inspection.conflicts and inspection.sources, "Reviewed current policy is not verified")
     authority = ContextAuthority(track, worker, bundle, policy)

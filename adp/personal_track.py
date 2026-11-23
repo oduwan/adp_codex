@@ -190,7 +190,10 @@ class PersonalTrack:
     def original_issue(self, identity, observed):
         require(identity in self.originals and observed.identity == identity, "Wrong original Issue identity")
         expected = self.originals[identity].issue
-        if observed == expected:
+        pointer = read_private(self.root / "links" / (digest(identity) + ".json"), optional=True)
+        known_report = (read_private(Path(pointer["directory"]) / "private" / "report.json", optional=True)
+            if pointer is not None else None)
+        if observed == expected and (known_report is None or known_report["after"] is None):
             return True
         link = next((r for r in self.links() if r["identity"] == data(identity)), None)
         require(link is not None, "An unadmitted original Issue changed")
@@ -207,12 +210,21 @@ class PersonalTrack:
                     and canonical["publications"].get(report["action"], {}).get("reference") == report["observation"]["reference"],
                     "Own comment delta lacks its canonical exact report receipt")
             observed = typed(Issue, report["before"])
+            if observed == expected:
+                return True
         # Own native PR links are the accepted #41 relation-only reconciliation.
         product = read_private(personal.state / "product.json", optional=True)
         require(product is not None and product["pull"] is not None, "Original scope/version changed")
         from .personal_product_review import original_with_own_relation
         original_with_own_relation(data(expected), observed, product["pull"], self.index["repository"]["name"])
         return True
+
+    def require_attachment(self):
+        shared = read_private(self.root / "links" / (digest(self.link["identity"]) + ".json"), optional=True)
+        admission = read_private(self.root / "admissions" / (digest(self.link["identity"]) + ".json"), optional=True)
+        require(shared == self.link and admission is not None,
+                "Complete the original next intent/track attachment before any execution")
+        fields(admission, "policy_snapshot policy_sources completions")
 
     def current(self):
         p = self.personal.plan
@@ -248,6 +260,8 @@ class PersonalTrack:
         memory = personal.memory()
         now = memory.inspect()
         require(now["health"] == "SYNCED", "Historical M1 state is not synchronized")
+        if any(action["operation"] == "REPORT" for action in now["state"]["execution"]["actions"].values()):
+            require((personal.state / "report.json").exists(), "Retain the private receipt for the known canonical report effect")
         git(memory.config.root, "merge-base", "--is-ancestor", receipt["checkpoint"], now["local_head"])
         state, tasks = memory._read_ref(receipt["checkpoint"])
         task_id = "personal:" + digest({"repository": personal.repository_id, "issue": personal.plan["issue_id"]})
@@ -539,6 +553,35 @@ class PersonalTrack:
             sha(view["parent_checkpoint"])
         return row
 
+    def successor(self, view):
+        """Inspect setup AND attachment, not merely personal.json presence."""
+        plan = view["plan"]
+        directory = Path(plan["effects"]["directory"])
+        if not (directory / "personal.json").exists():
+            return None, False
+        child = load_state(directory)
+        require(child.plan == plan and child.intent["approval"] == approval(plan), "Next enrollment differs from durable intent")
+        expected = {"schema_version": 1, "root": str(self.root), "index": self.link["index"],
+            "identity": view["original"]["identity"], "directory": str(directory), "setup": approval(plan),
+            "snapshot": digest(view["snapshot"]), "parent": self.link["identity"]}
+        local = read_private(child.state / LINK, optional=True)
+        shared = read_private(self.root / "links" / (digest(expected["identity"]) + ".json"), optional=True)
+        admission = read_private(self.root / "admissions" / (digest(expected["identity"]) + ".json"), optional=True)
+        require(local in (None, expected) and shared in (None, expected), "Conflicting successor attachment; no adoption")
+        attached = (local == shared == expected and admission is not None
+            and (self.root / "observations" / (expected["snapshot"] + ".json")).exists())
+        if not attached:
+            require(not (child.state / "run.json").exists(), "Execution before full attachment requires explicit reconciliation")
+        if child.intent["phase"] == "ENROLLED" and attached:
+            state = child.memory().inspect()
+            require(state["health"] == "SYNCED" and state["local_owner"] and state["state"]["generation"] == 1,
+                    "Reconcile the original successor M1 owner/state; do not reenroll")
+            from .personal_runner import PersonalCoordinator
+            inspector = PersonalCoordinator(child, self.c.transport, self.c.ci_transport, clock=self.c.clock)
+            inspector.track.require_attachment()
+            return child, True
+        return child, False
+
     def next_preview(self, product, choices, *, approved=None):
         from .git import SHA
         require(type(choices) is PersonalChoices, "Typed explicit next choices required")
@@ -555,9 +598,8 @@ class PersonalTrack:
                     and choices.accept_native_job_records == plan["accept_native_job_records"]
                     and choices.seconds == plan["window"]["expires_at"] - plan["window"]["issued_at"],
                     "Retain the exact original next scope/choices; no replacement window")
-            if (choices.directory / "personal.json").exists():
-                child = load_state(choices.directory)
-                require(child.plan == plan and child.intent["approval"] == retained["setup"], "Next enrollment differs from durable intent")
+            child, complete = self.successor(retained["view"])
+            if complete:
                 return {"status": "NEXT_ALREADY_ENROLLED", "result": {"plan": plan, "original": retained["view"]["original"],
                     "snapshot": retained["view"]["snapshot"], "completions": retained["view"]["completions"],
                     "recovery": "Reconnect to the original next directory/window; no new authority or budget."},
@@ -617,6 +659,7 @@ class PersonalTrack:
                     and retained["view"]["plan"]["effects"]["directory"] == str(choices.directory),
                     "Resume only the original next intent; no replacement window")
             view = retained["view"]
+            self.successor(view)  # incomplete attachment cannot hide execution
             current, observation, completed = self.status(transport=product.transport)
             require(current["next_issue"] in (None, choices.issue)
                     and {digest(i): digest(r) for i, r in completed.items()} == view["completions"]

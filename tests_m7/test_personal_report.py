@@ -125,3 +125,6 @@ class PersonalReportFlowTests(TrackFixture):
         self.assertIn(accepted["source"], self.all_comments[0]["body"])
         self.assertNotIn("SYNTHETIC", self.all_comments[0]["body"])
         self.assertEqual(self.c.track.status(transport=self.http)[0]["next_issue"], 2)
+        identity = next(i for i, original in self.c.track.originals.items() if original.issue.number == 1)
+        with self.assertRaises(ADPError):
+            self.c.track.original_issue(identity, self.c.track.originals[identity].issue)

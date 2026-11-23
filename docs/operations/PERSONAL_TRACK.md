@@ -90,6 +90,14 @@ verification reads these facts without restoring a released/expired owner or
 claiming a new CI PASS. Required private evidence must stay available on its
 supported runtime host. Missing host/stop/artifact/identity proof blocks.
 
+Preparation revalidation authenticates the actual frozen source/policy proof.
+Both current and frozen records and the compared fields are retained privately
+before comparison. Only a canonical own feature creation or exact committed
+intent, reobserved through the existing Git port, may explain its own ref delta.
+Foreign refs, source, governance, index or remote changes remain unknown. This
+historical snapshot provider has no safety adapter and grants no Git operation;
+current effects still use the actual current M3/M1/M2 ports.
+
 Next intent is durable before owner release or successor setup. Original markers,
 directories, generations and windows are retained; recovery cannot select another
 Issue/branch/window or reset counters. Unfinished assignments/reservations,
@@ -99,6 +107,10 @@ Read-only previews/status never launch workers or repeat a mutation.
 directs reconnect to an already enrolled successor. It cannot mint a replacement
 window. Native base is checked again before/after old-owner release and before
 the new original's scope/feature admission.
+An existing `personal.json` is insufficient: only ENROLLED, synchronized owning
+M1 state and complete matching local/shared/admission/snapshot attachments count
+as completed next setup. Partial setup retains the exact original approvals and
+window; no execution can start before attachment is complete.
 
 Reporting reuses the actual M7 forge, M3 REPORT decision, original M2 guard,
 durable canonical intent and exclusive one-use dispatch. One stable per-product
@@ -121,6 +133,7 @@ The additive [focused inventory](PERSONAL_TRACK_TEST_INVENTORY.json),
 [semantic security controls](PERSONAL_TRACK_SECURITY_TEST_INVENTORY.json),
 [operator commands](PERSONAL_TRACK_CLI_TEST_INVENTORY.json),
 [next recovery](PERSONAL_TRACK_RECOVERY_TEST_INVENTORY.json),
+[review-driven attachment/ref regressions](PERSONAL_TRACK_ATTACHMENT_TEST_INVENTORY.json),
 [product reports](PERSONAL_REPORT_TEST_INVENTORY.json) and
 [uncertain report recovery](PERSONAL_REPORT_RECOVERY_TEST_INVENTORY.json) are separate
 from all 577 accepted tests and the existing installation denominator. API and

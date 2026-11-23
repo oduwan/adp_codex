@@ -65,6 +65,8 @@ class PersonalCoordinator:
         # Recheck immutable retained consent and the actual owner. Do not rerun
         # Git configuration discovery for every nested evidence verification.
         p = self.personal.plan
+        if self.track is not None:
+            self.track.require_attachment()
         require(read_private(self.personal.directory / INTENT) == self.personal.intent
                 and read_private(Path(p["effects"]["marker"])) == {"schema_version": 1,
                     "directory": str(self.personal.directory), "approval": self.personal.intent["approval"]}
