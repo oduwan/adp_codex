@@ -93,7 +93,14 @@ Each PR/merge has exact immutable consent, canonical PREPARED/SUBMITTED intent,
 private exclusive one-use claim and authenticated observation. Lost responses
 reconcile only to the exact original effect. Missing history, duplicates,
 alternate PR, changed identity/head/base/permissions, uncertain process stop or
-ambiguous result grants no replay. Status never migrates, resets or writes
+ambiguous result grants no replay. Forge PR/review pagination is checked before
+header-dropping reducers: canonical sequential full pages remain supported;
+short/empty-next, malformed/foreign/duplicate controls refuse completeness.
+A confirmed completed/stopped pending product review can finish only its same
+immutable request/context under the original live permit, approved source/review
+seal and current CI/policy. It cannot redispatch, renew a deadline or allocate
+a replacement role. Normal approval checks run again after accounting.
+Status never migrates, resets or writes
 GitHub. Handoff requires reconciled effects/reservations and confirmed stops.
 Completed execution replay returns `RETAINED_OBSERVATION`, with its actual
 historical disposition nested and `NOT_REOBSERVED` freshness; it never claims

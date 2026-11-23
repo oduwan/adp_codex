@@ -8,6 +8,9 @@ from .discovery_types import Issue
 from .github_product import DelegationProfile, delegation_subject
 from .guard_types import Observation, Permit, ProgressKind, DecisionKind, data
 from .execution_policy import ReservedSafety
+from .execution_types import RuntimeObservation, RuntimeStatus
+from .personal_git import administration
+from .personal_enrollment import governance
 from .personal_authority import PersonalAuthority
 from .personal_runner import PersonalCoordinator
 from .policy import PolicyProvider
@@ -71,6 +74,13 @@ class ProductCoordinator(PersonalCoordinator):
         permit = typed(Permit, coordination["permit"])
         active = self.guard._active(state, task, item, permit.token)
         require(active["action"]["hypothesis"] == "personal:personal-merge:" + effect_id, "Unrelated original action")
+        return self.reserved_code_review(permit)
+
+    def reserved_code_review(self, permit, *, recovering=False):
+        run = self.record()
+        requirement = self.requirement("develop")
+        state, task, item = self.guard._snapshot(self.task_id, requirement)
+        self.guard._active(state, task, item, permit.token)
         self.check_administration(run)
         review = self.worker(run["code_review"])
         port = self.product.port
@@ -78,7 +88,12 @@ class ProductCoordinator(PersonalCoordinator):
                 and port._value("rev-parse", "HEAD") == run["revision"]
                 and port._value("symbolic-ref", "HEAD") == "refs/heads/" + self.personal.plan["feature"]["branch"]
                 and not port._value("status", "--porcelain", "--untracked-files=all"), "Exact current clean code review required")
-        self.workers.actual(review, approval=True, accounted=True)
+        self.workers.actual(review, approval=True, accounted=not recovering)
+        if recovering:
+            assignment = task["assignments"].get(review["assignment"]["assignment_id"])
+            require(review["phase"] == "ACCOUNTED" and assignment is not None
+                    and assignment["status"] == "accepted" and assignment["result"] == self.workers.result(review),
+                    "Prior genuine code delivery is not canonically accounted")
         current = Task(self.personal.repository_id, self.task_id, self.personal.plan["feature"]["branch"].split("/")[-1],
             task["source_revision"], "refs/heads/" + self.personal.plan["feature"]["branch"], requirement,
             state["generation"], state["progress_guard"]["task_epochs"][key(self.task_id)], task["iteration"], tuple(item["authors"]))
@@ -86,6 +101,49 @@ class ProductCoordinator(PersonalCoordinator):
         require(safety.owns_memory is True and safety.guard.kind == DecisionKind.ALLOW
                 and safety.approval == safety.guard.baseline == self.guard._baseline(requirement, state, task, item),
                 "Current original M1/M2 canonical approval required")
+
+    def resume_product_review(self, entry):
+        requirement = self.requirement("product")
+        state, task, item = self.guard._snapshot(self.task_id, requirement)
+        if item["active"] is None:
+            return None
+        self.live()
+        self.workers.fence()  # Every existing process must already be stopped.
+        self.fresh()
+        self.original_approval()
+        view = entry["view"]
+        require(entry["phase"] != "COMPLETE" and view["operation"] == "REVIEW"
+                and self.record()["coordination"] is None
+                and view["revision"] == self.revision() == task["source_revision"]
+                and view["administration"] == digest(administration(self.personal.feature))
+                and view["source_tree"] == self.product.port._value("rev-parse", "HEAD^{tree}")
+                and digest(governance(self.personal.feature)) == self.personal.plan["governance_digest"],
+                "Only this original incomplete exact-source review can recover")
+        context = self.product.review_context()
+        matches = [r for r in self.workers.records() if r["purpose"] == "product" and r["context"] == context]
+        require(len(matches) == 1, "Original product review request/context missing or ambiguous")
+        worker = matches[0]
+        require(worker["phase"] in ("SUBMITTED", "STOPPED") and worker["requirement"] == requirement
+                and worker["request"]["revision"] == view["revision"]
+                and worker["request"]["generation"] == state["generation"]
+                and worker["guard_context"] == item["active"]["context"]
+                and item["active"]["action"]["hypothesis"] == "worker:" + worker["request"]["id"]
+                and item["active"]["action"]["kind"] == "REVIEW"
+                and self.clock() < worker["request"]["deadline"], "Unrelated or expired review reservation")
+        permit = typed(Permit, worker["permit"])
+        self.guard._active(state, task, item, permit.token)
+        observed = self.runtime.observe(worker["request"]["id"])
+        require(type(observed) is RuntimeObservation and observed.status == RuntimeStatus.COMPLETED
+                and observed.stopped is True and observed.request_id == worker["request"]["id"]
+                and observed.request_digest == digest(worker["request"])
+                and observed.host == worker["host"] == self.runtime.host, "Existing stopped genuine review result unavailable")
+        require(view["generation"] == state["generation"]
+                and view["review_binding"] == self.product.review_seal(review_worker=worker),
+                "Original operator-approved code/ownership seal changed")
+        self.reserved_code_review(permit, recovering=True)
+        # Existing execute reconciles the same immutable request and M1/M2
+        # delivery; a SUBMITTED request may never be dispatched again.
+        return self.workers.execute("product", context, self.personal.feature)
 
     def context(self, purpose):
         context = super().context(purpose)

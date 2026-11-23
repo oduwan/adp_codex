@@ -90,3 +90,59 @@ class PersonalProductSecurityTests(unittest.TestCase):
                 t.last_response = (200, b'{}', headers)
                 with self.subTest(headers=headers), self.assertRaises(NetworkTransportError):
                     t.request("GET", "/repos/owned/project", None, seconds=5)
+
+        # Forge consumers intentionally discard headers; qualify controls before
+        # that boundary so an omitted next page cannot appear complete.
+        import json
+        for route in ("/pulls?state=all&per_page=100&page=1", "/pulls/10/reviews?per_page=100&page=1"):
+            path = "/repos/owned/project" + route
+            # replace only the page parameter, not per_page=100.
+            next_url = "https://api.github.com" + path.removesuffix("page=1") + "page=2"
+            for link in ("malformed", ",", ",,", f'<{next_url}>; rel="next",',
+                f'<{next_url}>; rel="next"', f'<{next_url}>; rel="next", <{next_url}>; rel="next"',
+                f'<{next_url.replace("api.github.com", "foreign.example")}>; rel="next"'):
+                t.last_response = (200, b"[]", (("link", link),))
+                with patch.object(PersonalGitHubTransport, "request", return_value=NativeResponse(200, b"[]")):
+                    with self.subTest(route=route, link=link), self.assertRaises(NetworkTransportError):
+                        t.request("GET", path, None, seconds=5)
+            full = json.dumps([{"body": str(i)} for i in range(100)]).encode()
+            t.last_response = (200, full, (("link", f'<{next_url}>; rel="next"'),))
+            with patch.object(PersonalGitHubTransport, "request", return_value=NativeResponse(200, full)):
+                self.assertEqual(t.request("GET", path, None, seconds=5).body, full)
+
+        # Actual accepted inventory and review reducers must consume the second
+        # page: an alternate PR and a rejected review cannot be hidden there.
+        from adp.execution_github import GitHubForgeBackend
+        from adp.github_product import GitHubProductForge
+        from adp.policy_types import Operation
+        calls = []
+        def raw(method, path, body, *, seconds):
+            calls.append(path)
+            if path == "/repos/owned/project":
+                value, headers = {"id": 17, "full_name": "owned/project"}, ()
+            else:
+                page = int(path.rsplit("=", 1)[1])
+                if "/reviews?" in path:
+                    value = [{"id": i + 1, "state": "APPROVED", "user": {"id": i + 10}} for i in range(100)] if page == 1 else [
+                        {"id": 101, "state": "CHANGES_REQUESTED", "user": {"id": 900}}]
+                else:
+                    value = [{"id": i + 1, "body": str(i), "head": {"ref": "unrelated"}} for i in range(100)] if page == 1 else [
+                        {"id": 101, "body": "Alternate", "head": {"ref": "work/task"}}]
+                headers = (("link", '<https://api.github.com' + path.removesuffix("page=1") + 'page=2>; rel="next"'),) if page == 1 else ()
+            payload = json.dumps(value).encode()
+            t.last_response = (200, payload, headers)
+            return NativeResponse(200, payload)
+        class Reads:
+            def request(_, method, path, body=None):
+                reply = t.request(method, path, body, seconds=5)
+                return Response(reply.status, json.loads(reply.body))
+        with patch.object(PersonalGitHubTransport, "request", side_effect=raw):
+            backend = GitHubForgeBackend("owned/project", "17", Reads(), None)
+            rows = backend.inventory(Operation.PR, {"body": "Approved"})
+            self.assertEqual(len(rows), 101)
+            self.assertEqual(rows[-1]["head"]["ref"], "work/task")
+            forge = GitHubProductForge.__new__(GitHubProductForge)
+            forge.repository, forge.transport = "owned/project", Reads()
+            rows = forge.reviews({"number": 10}, "a" * 40)
+            self.assertTrue(any(r["state"] == "CHANGES_REQUESTED" for r in rows))
+        self.assertTrue(any(path.endswith("page=2") for path in calls))

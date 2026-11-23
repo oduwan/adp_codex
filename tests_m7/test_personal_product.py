@@ -64,7 +64,19 @@ class PersonalProductTests(ProductFixture):
         result = self.execute_product("CI", confirm_no_checks=True)
         self.assertEqual(result["status"], "NOT_REQUIRED")
         self.assertFalse(result["qualified"])
-        self.assertEqual(self.execute_product("REVIEW")["status"], "PRODUCT_REVIEWED")
+        proposal = f.execution_preview("REVIEW")
+        with patch.object(self.c.workers, "finish", side_effect=OSError("synthetic interrupted review accounting")):
+            with self.assertRaisesRegex(OSError, "interrupted review accounting"):
+                f.execute("REVIEW", reviewed=proposal["approval"], authorized=True)
+        pending = [r for r in self.c.workers.records() if r["purpose"] == "product"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["phase"], "STOPPED")
+        requirement = pending[0]["requirement"]
+        sequence = self.c.guard._snapshot(self.c.task_id, requirement)[2]["sequence"]
+        before = len(self.c.workers.records())
+        self.assertEqual(f.execute("REVIEW", reviewed=proposal["approval"], authorized=True)["status"], "PRODUCT_REVIEWED")
+        self.assertEqual(len(self.c.workers.records()), before)
+        self.assertEqual(self.c.guard._snapshot(self.c.task_id, requirement)[2]["sequence"], sequence)
         waiting = f.proposed("MERGE", method="merge", delegate=True)
         self.assertEqual(waiting["status"], "WAITING_HUMAN_APPROVAL")
         self.assertIsNone(waiting["approval"])

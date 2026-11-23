@@ -137,7 +137,7 @@ class PersonalProduct:
                 "Current product source/governance changed")
         return self.review_seal()
 
-    def review_seal(self):
+    def review_seal(self, *, review_worker=None):
         state = self.c.memory.inspect()
         task, run = state["tasks"][key(self.c.task_id)], self.c.record()
         reviews = []
@@ -152,7 +152,15 @@ class PersonalProduct:
                 self.c.allowed(worker["requirement"])
             else:
                 coordination = run["coordination"]
-                require(coordination is not None and coordination["permit"]["token"] == guard["active"]["id"], "Unrelated active guard")
+                if coordination is None and review_worker is not None:
+                    require(review_worker["purpose"] == "product" and review_worker["phase"] in ("SUBMITTED", "STOPPED")
+                            and review_worker["requirement"] == worker["requirement"]
+                            and review_worker["permit"]["token"] == guard["active"]["id"]
+                            and guard["active"]["action"]["kind"] == "REVIEW"
+                            and guard["active"]["action"]["hypothesis"] == "worker:" + review_worker["request"]["id"],
+                            "Only this exact stopped product review may inspect its prior approval seal")
+                else:
+                    require(coordination is not None and coordination["permit"]["token"] == guard["active"]["id"], "Unrelated active guard")
                 self.c.guard._active(s, t, guard, guard["active"]["id"])
                 require(self.clock() < guard["active"]["deadline"] and guard["mode"] in ("normal", "running"), "Guard deadline/stop")
             reviews.append({"request": worker["request"], "assignment": assignment, "observation": worker["observation"], "approval": guard["approval"]})
@@ -539,13 +547,16 @@ class PersonalProduct:
                 try:
                     if operation == "REVIEW":
                         require(entry["view"]["revision"] == self.c.revision(), "Original review consent source changed")
-                        self.local()
                         with self.service.bounded():
                             require(self.facts() == entry["view"]["facts"], "Current product policy or base changed")
                             self.pull(expected_base=entry["view"]["facts"]["base_sha"])
                         require(self.validation_binding() == entry["view"]["validation"], "Approved CI binding changed")
-                        context = self.review_context()
-                        worker = self.c.workers.execute("product", context, self.personal.feature)
+                        worker = self.c.resume_product_review(entry)
+                        if worker is None:
+                            self.local()
+                            context = self.review_context()
+                            worker = self.c.workers.execute("product", context, self.personal.feature)
+                        self.local()  # Normal approval must hold after accounting.
                         observed = self.c.workers.actual(worker, accounted=True)
                         row = self.record()
                         row["review"] = worker["request"]["id"]; self.save(row)

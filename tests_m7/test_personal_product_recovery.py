@@ -18,7 +18,7 @@ class PersonalProductRecoveryTests(unittest.TestCase):
         f.personal = SimpleNamespace(feature=Path(directory) / "product")
         f.clock = lambda: 1000
         f.c = SimpleNamespace(memory=SimpleNamespace(control=Path(directory)), revision=lambda: revision,
-            workers=SimpleNamespace(execute=Mock(side_effect=OSError("synthetic interrupted worker wait"))), stop_workers=Mock())
+            workers=SimpleNamespace(execute=Mock(side_effect=OSError("synthetic interrupted worker wait"))), stop_workers=Mock(), resume_product_review=Mock(return_value=None))
         view = {"operation": "REVIEW", "issued_at": 1000, "expires_at": 1300, "nonce": "b" * 32, "revision": "a" * 40, "facts": {}, "validation": "binding"}
         token = f.token(view, "c" * 64)
         entry = {"view": view, "approval": token, "binding": "c" * 64, "phase": "PREPARED", "checks": [], "result": None, "reservation": None}
