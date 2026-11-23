@@ -166,7 +166,29 @@ class TrackFixture(ProductFixture):
         current["draft"] = False  # Explicit separate synthetic actor.
         proposal = self.product.proposed("MERGE", method="merge", delegate=True)
         self.http.loss = loss_merge
-        self.merge_product(proposal)
+        try:
+            self.merge_product(proposal)
+        except Exception as error:
+            # Preserve the actual failed gate before TemporaryDirectory cleanup.
+            # No reobservation, altered exception/assertion, or extra allowance.
+            try:
+                from adp.schema import encode
+                record = self.product.record()
+                state = self.c.memory.inspect()["state"]
+                latest = next((e for e in reversed(record["execution"]) if e["view"]["operation"] == "CI"), None)
+                evidence = {"kind": "SYNTHETIC_COMPONENT_FAILURE", "issue": self.personal.plan["issue"],
+                    "task": self.c.task_id, "source": self.c.record()["revision"], "pull": record["pull"],
+                    "latest_ci": None if latest is None else {"phase": latest["phase"], "result": latest["result"]},
+                    "observations": self.c.record()["observations"],
+                    "maximum_observations": self.personal.plan["window"]["maximum_check_observations"],
+                    "guards": {i: {k: row[k] for k in ("sequence", "mode", "counters", "limits")}
+                        for i, row in state["progress_guard"]["requirements"].items()},
+                    "http_calls": self.product.service._budget.get().calls if self.product.service._budget.get() else None,
+                    "effects": [method for method, _, _ in self.http.effects]}
+                error.add_note(encode(evidence, 32768).decode("utf-8"))
+            except Exception as unavailable:
+                error.add_note("Bounded private gate evidence unavailable: " + type(unavailable).__name__)
+            raise
         preview = self.c.track.completion_preview(self.product)
         return self.c.track.complete(self.product, reviewed=preview["approval"], authorized=True, confirm_acceptance=True)
 
