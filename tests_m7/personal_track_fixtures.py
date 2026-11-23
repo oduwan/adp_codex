@@ -3,6 +3,8 @@ import copy
 import json
 from pathlib import Path
 import re
+import sys
+import traceback
 from unittest.mock import patch
 
 from adp.codex_runtime import CodexExecRuntime
@@ -166,8 +168,21 @@ class TrackFixture(ProductFixture):
         current["draft"] = False  # Explicit separate synthetic actor.
         proposal = self.product.proposed("MERGE", method="merge", delegate=True)
         self.http.loss = loss_merge
+        from adp.project_validation import ProjectValidation
+        original_unknown, rejections = ProjectValidation._unknown, []
+        def retain_unknown(validation, request, reason):
+            if reason == "UNVERIFIED_OR_UNAVAILABLE_PROJECT_EVIDENCE" and len(rejections) < 4:
+                # Called only after the accepted handler has already rejected:
+                # no observer work is added to the successful/timed path.
+                cause = sys.exception()
+                rejections.append({"reason": reason, "type": type(cause).__name__,
+                    "message": str(cause)[:512], "frames": [
+                        {"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
+                        for frame in traceback.extract_tb(cause.__traceback__)[-8:]] if cause else []})
+            return original_unknown(validation, request, reason)
         try:
-            self.merge_product(proposal)
+            with patch.object(ProjectValidation, "_unknown", retain_unknown):
+                self.merge_product(proposal)
         except Exception as error:
             # Preserve the actual failed gate before TemporaryDirectory cleanup.
             # No reobservation, altered exception/assertion, or extra allowance.
@@ -178,6 +193,7 @@ class TrackFixture(ProductFixture):
                 latest = next((e for e in reversed(record["execution"]) if e["view"]["operation"] == "CI"), None)
                 evidence = {"kind": "SYNTHETIC_COMPONENT_FAILURE", "issue": self.personal.plan["issue"],
                     "task": self.c.task_id, "source": self.c.record()["revision"], "pull": record["pull"],
+                    "validation_rejections": rejections,
                     "latest_ci": None if latest is None else {"phase": latest["phase"], "result": latest["result"]},
                     "observations": self.c.record()["observations"],
                     "maximum_observations": self.personal.plan["window"]["maximum_check_observations"],
