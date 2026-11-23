@@ -225,6 +225,7 @@ class PersonalTrack:
         require(shared == self.link and admission is not None,
                 "Complete the original next intent/track attachment before any execution")
         fields(admission, "policy_snapshot policy_sources completions")
+        self.seed()  # Existence alone is not a qualified immutable snapshot.
 
     def current(self):
         p = self.personal.plan
@@ -678,12 +679,13 @@ class PersonalTrack:
             plan = view["plan"]
             with product.service.bounded():
                 require(product.facts()["base_sha"] == plan["checkout"]["head"], "Current native base changed after previous owner release")
-            personal = apply_personal(plan, view["original"], view["governance"], approved=setup_approval,
-                authorized=True, transport=self.c.transport, ci_transport=self.c.ci_transport, clock=self.c.clock)
             snapshot_reference = content(self.root / "observations", view["snapshot"])
             link = {"schema_version": 1, "root": str(self.root), "index": self.link["index"],
-                "identity": view["original"]["identity"], "directory": str(personal.directory), "setup": setup_approval,
+                "identity": view["original"]["identity"], "directory": plan["effects"]["directory"], "setup": setup_approval,
                 "snapshot": snapshot_reference, "parent": self.link["identity"]}
+            personal = apply_personal(plan, view["original"], view["governance"], approved=setup_approval,
+                authorized=True, transport=self.c.transport, ci_transport=self.c.ci_transport, clock=self.c.clock,
+                _track_link=link)
             from .personal_runner import PersonalCoordinator
             from .personal_track_preparation import unsigned_policy
             c = PersonalCoordinator(personal, self.c.transport, self.c.ci_transport, clock=self.c.clock)

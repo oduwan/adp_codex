@@ -110,7 +110,10 @@ the new original's scope/feature admission.
 An existing `personal.json` is insufficient: only ENROLLED, synchronized owning
 M1 state and complete matching local/shared/admission/snapshot attachments count
 as completed next setup. Partial setup retains the exact original approvals and
-window; no execution can start before attachment is complete.
+window; no execution can start before attachment is complete. The exact local
+track binding and its immutable snapshot are retained while setup is PREPARED,
+before the successor can become ENROLLED. Even an independent successor without
+native prerequisites cannot fall back to standalone execution after a crash.
 
 Reporting reuses the actual M7 forge, M3 REPORT decision, original M2 guard,
 durable canonical intent and exclusive one-use dispatch. One stable per-product

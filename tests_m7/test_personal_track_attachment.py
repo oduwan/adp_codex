@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from adp.errors import ADPError
-from adp.personal_storage import load_state
+from adp.personal_storage import load_state, read_private
 from adp.personal_track import immutable
 from adp.personal_track_preparation import prepare
 from personal_track_fixtures import TrackFixture
@@ -43,6 +43,10 @@ class PersonalTrackAttachmentTests(TrackFixture):
                 self.c.track.next(self.product, choices, reviewed=proposed["approval"],
                     setup_approval=proposed["setup_approval"], authorized=True)
         self.assertEqual(load_state(choices.directory).intent["phase"], "PREPARED")
+        link = read_private(choices.directory / "private" / "track-link.json")
+        self.assertEqual(link["setup"], proposed["setup_approval"])
+        self.assertEqual(read_private(Path(link["root"]) / "observations" / (link["snapshot"] + ".json")),
+            proposed["result"]["snapshot"])
         held = self.c.track.next_preview(self.product, choices)
         self.assertEqual(held["status"], "NEXT_PROPOSED_RETAINED")
         self.assertEqual((held["approval"], held["setup_approval"]), (proposed["approval"], proposed["setup_approval"]))
@@ -81,3 +85,42 @@ class PersonalTrackAttachmentTests(TrackFixture):
         complete = self.c.track.next_preview(self.product, choices)
         self.assertEqual(complete["status"], "NEXT_ALREADY_ENROLLED")
         self.assertIsNone(complete["approval"])
+
+    def test_enrolled_independent_successor_is_track_bound_before_policy_attachment(self):
+        from adp.discovery_github import Response
+        from adp.personal_runner import PersonalCoordinator
+        from adp.personal_track_preparation import unsigned_policy
+        # Freeze a genuine native inventory where #2 has no prerequisite. Its
+        # restart fence must not depend on the standalone prerequisite refusal.
+        self.transport.api.responses[self.prefix + "/issues/2/dependencies/blocked_by?per_page=100&page=1"] = Response(200, [])
+        self.enroll_track()
+        accepted = self.merged()
+        self.synchronize(accepted["merge"])
+        choices = self.next_choices(2)
+        proposed = self.c.track.next_preview(self.product, choices)
+        def interrupted(c):
+            if c.personal.plan["issue"] == 2:
+                raise OSError("Synthetic crash after enrollment before admission")
+            return unsigned_policy(c)
+        with patch("adp.personal_track_preparation.unsigned_policy", side_effect=interrupted):
+            with self.assertRaises(OSError):
+                self.c.track.next(self.product, choices, reviewed=proposed["approval"],
+                    setup_approval=proposed["setup_approval"], authorized=True)
+        child = load_state(choices.directory)
+        self.assertEqual(child.intent["phase"], "ENROLLED")
+        self.assertFalse(child.plan["native_prerequisites"])
+        state = child.memory().inspect()
+        requests = len(self.requests)
+        incomplete = PersonalCoordinator(child, self.c.transport, None, clock=lambda: self.now)
+        self.assertIsNotNone(incomplete.track)
+        with self.assertRaises(ADPError):
+            incomplete.live()
+        self.assertEqual(len(self.requests), requests)
+        self.assertEqual(child.memory().inspect(), state)
+        held = self.c.track.next_preview(self.product, choices)
+        self.assertEqual(held["status"], "NEXT_PROPOSED_RETAINED")
+        self.assertEqual(held["approval"], proposed["approval"])
+        self.c.track.next(self.product, choices, reviewed=held["approval"],
+            setup_approval=held["setup_approval"], authorized=True)
+        self.assertEqual(child.memory().inspect(), state)
+        self.assertEqual(self.c.track.next_preview(self.product, choices)["status"], "NEXT_ALREADY_ENROLLED")
