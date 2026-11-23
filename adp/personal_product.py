@@ -611,7 +611,32 @@ class PersonalProduct:
                 permit = self.guard.begin(self.c.task_id, requirement, Action("personal:coordinator", ActionKind.CHECK,
                     digest(entry["view"]), "One actual project CI disposition", seconds=min(45, entry["view"]["expires_at"] - self.clock())))
             reservation["permit"] = data(permit); self.save_execution(entry)
-        return typed(Permit, reservation["permit"])
+        permit = typed(Permit, reservation["permit"])
+        state, task, current = self.guard._snapshot(self.c.task_id, requirement)
+        if current["active"] is None:
+            require(entry["phase"] == "SUBMITTED" and reservation["observation"] is not None
+                    and current["last"] is not None and current["last"]["context"] == reservation["context"]
+                    and current["last"]["observation"] == reservation["observation"], "Original CI accounting missing")
+        else:
+            active = self.guard._active(state, task, current, permit.token)
+            require(current["mode"] in ("normal", "running") and active["started"] <= self.clock() < active["deadline"]
+                    and active["action"]["hypothesis"] == digest(entry["view"]), "Original CI permit expired or changed")
+        return permit
+
+    def charge_ci(self, entry):
+        run = self.c.record()
+        reservation = entry["reservation"]
+        if "observation_before" not in reservation:
+            reservation["observation_before"] = run["observations"]
+            self.save_execution(entry)  # Recover the same charge across either file checkpoint.
+        before = reservation["observation_before"]
+        require(type(before) is int and 0 <= before < self.personal.plan["window"]["maximum_check_observations"]
+                and run["observations"] in (before, before + 1), "Original check-observation charge differs")
+        if run["observations"] == before:
+            run["observations"] += 1
+            self.c.save(run)
+        entry["phase"] = "SUBMITTED"
+        self.save_execution(entry)  # Before the first identity read; no replay after lost delivery.
 
     def conclude_ci(self, entry, result):
         reservation = entry["reservation"]
@@ -627,17 +652,23 @@ class PersonalProduct:
         self.c.allowed(reservation["requirement"])
 
     def observe_ci(self, entry):
-        row = self.record()
         v = entry["view"]
         permit = self.reserve_ci(entry)
+        if entry["phase"] == "SUBMITTED":
+            # A consumed observation is never restarted, even when its caller
+            # result was lost. Already-accounted results may reconcile locally.
+            result = entry["result"] or {"status": "UNKNOWN", "qualified": False, "reason": "LOST_CHECK_DELIVERY",
+                "revision": self.c.revision(), "observed_at": self.clock()}
+            self.retain_ci(entry, result)
+            self.conclude_ci(entry, result)
+            return result
         with self.service.bounded():
-            require(self.facts()["policy"] == v["facts"]["policy"] and self.facts()["base_sha"] == v["facts"]["base_sha"], "CI project policy/base changed")
+            facts = self.facts()
+            require(facts["policy"] == v["facts"]["policy"] and facts["base_sha"] == v["facts"]["base_sha"], "CI project policy/base changed")
             self.pull(expected_base=v["facts"]["base_sha"])
             if not v["facts"]["checks"]:
                 require(not self.personal.plan["required_check_names"], "Unknown original check requirements")
-                if entry["phase"] == "SUBMITTED":
-                    result = entry["result"] or {"status": "UNKNOWN", "qualified": False, "reason": "LOST_CHECK_DELIVERY", "revision": self.c.revision(), "observed_at": self.clock()}
-                elif self.personal.plan["check_requirements"] != "VERIFIED_ABSENT" and v.get("confirm_no_required_checks") is not True:
+                if self.personal.plan["check_requirements"] != "VERIFIED_ABSENT" and v.get("confirm_no_required_checks") is not True:
                     result = {"status": "UNKNOWN", "qualified": False, "reason": "PROJECT_CHECK_REQUIREMENTS_UNVERIFIED",
                         "revision": self.c.revision(), "policy": v["facts"]["policy"]["digest"], "observed_at": self.clock()}
                 else:
@@ -648,7 +679,8 @@ class PersonalProduct:
                 self.retain_ci(entry, result)
                 self.conclude_ci(entry, result)
                 return result
-            if entry["phase"] == "PREPARED":
+            self.charge_ci(entry)
+            try:
                 inventory = native_inventory(self.personal.plan["repository"]["name"], self.personal.repository_id,
                     self.target.ref, self.c.revision(), self.read)
                 checks = prescribed_checks(v["facts"]["checks"], inventory,
@@ -656,22 +688,19 @@ class PersonalProduct:
                 for check in checks:
                     required_origin = v["facts"]["policy"]["origins"].get(check.name)
                     require(required_origin is None or check.origin == "github-app:" + str(required_origin), "Native required check origin differs")
-                entry["checks"] = [data(replace(check, phase=Phase.AFTER_PR)) for check in checks]
-                self.save_execution(entry)
-        run = self.c.record()
-        require(run["observations"] < self.personal.plan["window"]["maximum_check_observations"] or entry["phase"] == "SUBMITTED",
-                "Original project observation budget exhausted")
-        if entry["phase"] == "PREPARED":
-            run["observations"] += 1; self.c.save(run)
-            entry["phase"] = "SUBMITTED"; self.save_execution(entry)
-            with self.service.bounded():
-                validation, authorization = self.validation_context(entry, permit)
-                gate = validation.observe(Phase.AFTER_PR, authorization=authorization, pull=self.ci_identity(), budget_ms=5000)
-            result = {"status": str(gate.status), "qualified": gate.qualified, "gate": data(gate), "observed_at": self.clock(), "policy": v["facts"]["policy"]["digest"]}
-        elif entry.get("result") is not None:
-            result = entry["result"]
-        else:
-            result = {"status": "UNKNOWN", "qualified": False, "reason": "LOST_CHECK_DELIVERY", "revision": self.c.revision()}
+            except (ADPError, OSError):
+                self.service._check_stop()  # Unknown process stop is a hard fence, not availability feedback.
+                result = {"status": "UNKNOWN", "qualified": False, "reason": "NATIVE_CHECK_IDENTITY_UNAVAILABLE",
+                    "revision": self.c.revision(), "observed_at": self.clock(), "policy": v["facts"]["policy"]["digest"]}
+                self.retain_ci(entry, result)
+                self.conclude_ci(entry, result)
+                return result
+            entry["checks"] = [data(replace(check, phase=Phase.AFTER_PR)) for check in checks]
+            self.save_execution(entry)
+        with self.service.bounded():
+            validation, authorization = self.validation_context(entry, permit)
+            gate = validation.observe(Phase.AFTER_PR, authorization=authorization, pull=self.ci_identity(), budget_ms=5000)
+        result = {"status": str(gate.status), "qualified": gate.qualified, "gate": data(gate), "observed_at": self.clock(), "policy": v["facts"]["policy"]["digest"]}
         self.retain_ci(entry, result)
         self.conclude_ci(entry, result)
         return result

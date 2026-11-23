@@ -60,7 +60,13 @@ to independent product review. Workflow YAML alone prescribes no status.
 ID from the same verified detail. Current SHA/repository/PR/origin, run identity,
 completeness, timestamps and unknown denominators are preserved. PENDING, FAIL,
 ERROR, SKIP, TIMEOUT, CANCELLED, UNKNOWN, missing, stale, partial and foreign
-records cannot merge. Native evidence is freshly observed again before merge,
+records cannot merge. Native identity attempts consume the same original
+observation before their first read. Missing, ambiguous or unavailable origins
+retain UNKNOWN and close that exact M2 attempt; no policy/result is invented.
+Saved live permits are validated before reads. Lost delivery never restarts the
+observation; a saved accounted result reconciles locally without another HTTP
+request, charge or begin. Counter checkpoints recover the same original charge.
+Native evidence is freshly observed again before merge,
 charged to the original aggregate observation cap. Changed native result
 identities invalidate review; a new nonce for identical results invents none.
 ADP never executes or changes target CI.
@@ -135,7 +141,10 @@ The [original focused inventory](PERSONAL_PRODUCT_TEST_INVENTORY.json) freezes
 [security](PERSONAL_PRODUCT_SECURITY_TEST_INVENTORY.json),
 [recovery](PERSONAL_PRODUCT_RECOVERY_TEST_INVENTORY.json) and
 [own-PR relation](PERSONAL_PRODUCT_RELATION_TEST_INVENTORY.json) inventories freeze
-5, 3 and 2 methods respectively (41 new methods total). Exact source, failures, Python3.11/3.12,
+5, 3 and 2 methods respectively. Three direct
+[CI availability and recovery](PERSONAL_PRODUCT_AVAILABILITY_TEST_INVENTORY.json)
+regressions cover the independently confirmed missing-origin accounting boundary
+(44 new methods total). The original 31/5/3/2 inventories remain unchanged. Exact source, failures, Python3.11/3.12,
 CI and independent review are reported in Issue #41 and its Draft PR. Synthetic
 workers/API records are not genuine Codex/GitHub qualification. Engineering
 merge, installation, pilot, release and deployment remain unauthorized.
