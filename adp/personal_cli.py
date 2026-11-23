@@ -21,6 +21,7 @@ from .project_validation_github import GitHubValidationHTTP
 from .schema import require
 
 ACTIONS = ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect", "run", "resume", "handoff")
+PUBLICATION = ("publication-preview", "publish", "publication-status")
 
 
 def choices(parser):
@@ -54,6 +55,24 @@ def add_commands(commands):
         parser.add_argument("--for-operation", choices=("run", "resume", "handoff"))
         parser.add_argument("--check-runtime", action="store_true")
         choices(parser)
+    publication_commands(stages)
+
+
+def publication_commands(stages, *, codex=False):
+    for action in PUBLICATION:
+        parser = stages.add_parser(action, help="Separately approved personal GitHub feature publication")
+        parser.add_argument("--repo", type=Path, required=True)
+        parser.add_argument("--remote", required=True)
+        parser.add_argument("--directory", type=Path, required=True)
+        parser.add_argument("--github-id")
+        parser.add_argument("--issue", type=int)
+        if codex:
+            parser.add_argument("--personal", action="store_true", required=True)
+        if action == "publish":
+            parser.add_argument("--reviewed", required=True)
+            parser.add_argument("--authorize-publication", action="store_true")
+            parser.add_argument("--assume-administrative-quiescence", action="store_true")
+            parser.add_argument("--confirm-project-publication-rules", action="store_true")
 
 
 def retained(args):
@@ -85,23 +104,42 @@ def retained(args):
     return personal
 
 
-def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None):
+def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
     action = args.enroll_command
     report = {"schema_version": 1, "backend": "PERSONAL", "command": action,
-        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff") else "READ_ONLY",
+        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish") else "READ_ONLY",
         "status": "UNKNOWN", "questions": [], "plan": None, "approval": None, "result": None, "blockers": [],
         "runtime_qualification": "NOTRUN"}
     try:
         if action == "capabilities":
-            report.update(status="AVAILABLE", result={"actions": list(ACTIONS), "scope": "LOCAL_DRAFT",
-                "providers": "NOT_REQUIRED", "external_operations": "NOT_DELEGATED"})
+            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION), "scope": "LOCAL_DRAFT",
+                "providers": "NOT_REQUIRED", "external_operations": "NOT_DELEGATED",
+                "publication": {"status": "AVAILABLE_UNDER_SEPARATE_EXACT_APPROVAL", "credential_envelope": "OPERATOR_ADMINISTRATIVE_QUIESCENCE"}})
             assert_public(report)
             return report, 0
-        require(action in ACTIONS, "Unsupported personal command")
+        require(action in ACTIONS + PUBLICATION, "Unsupported personal command")
         require(not any(getattr(args, name, None) for name in ("operator_trust", "operator_socket", "operator_profile")),
                 "Choose personal mode or the unchanged signed-provider mode; never convert an enrollment")
         require(getattr(args, "rounds", 1) == 1 and getattr(args, "maximum_parallel", 1) == 1,
                 "Personal mode admits exactly one issue, one task iteration and one concurrent worker")
+        if action in PUBLICATION:
+            from .personal_publication import PersonalPublication
+            personal = retained(args)
+            coordinator = PersonalCoordinator(personal, None, None, runtime=runtime, clock=clock)
+            publication = PersonalPublication(coordinator, transport=publication_transport)
+            if action == "publication-preview":
+                proposed = publication.preview()
+                report.update(status=proposed["status"], result=proposed["result"], approval=proposed["approval"])
+            elif action == "publication-status":
+                result = publication.status()
+                report.update(status=result["status"], result=result)
+            else:
+                result = publication.publish(reviewed=args.reviewed, authorized=args.authorize_publication,
+                    assume_quiescence=args.assume_administrative_quiescence,
+                    confirm_project_rules=args.confirm_project_publication_rules)
+                report.update(status=result["status"], result=result)
+            assert_public(report)
+            return report, 0 if report["status"] in ("PUBLICATION_PROPOSED", "PUBLISHED_UNACCEPTED", "PUBLICATION_PRESENT", "NOT_DELEGATED") else 4
         if transport is None and (action in ("inspect", "plan", "apply", "preview", "run", "resume", "reconnect", "doctor")
                                   or (getattr(args, "for_operation", None) in ("run", "resume"))):
             token = discovery_token(getattr(args, "token_env", "GH_TOKEN"))

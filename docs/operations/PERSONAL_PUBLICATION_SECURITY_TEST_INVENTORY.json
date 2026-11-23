@@ -1,0 +1,4 @@
+[
+  "test_personal_publication_security.PersonalExecutableSecurityTests.test_privilege_changing_gh_modes_and_file_capabilities_are_unsupported",
+  "test_personal_publication_security.PersonalGuardSettlementSecurityTests.test_present_ref_preserves_and_reports_terminal_guard_accounting"
+]

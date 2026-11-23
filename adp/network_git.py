@@ -304,8 +304,8 @@ class GitHubGitExecutionPort(GitExecutionPort):
     Caller status and possession of an authorization never permit a second try.
     A SUBMITTED action with no exact observed result remains UNKNOWN on restart.
     """
-    def __init__(self, config: Config, service: GitHubCAS, journal: ExecutionJournal):
-        super().__init__(config)
+    def __init__(self, config: Config, service: GitHubCAS, journal: ExecutionJournal, *, bound_git_directory=None):
+        super().__init__(config, bound_git_directory=bound_git_directory)
         require(type(service) is GitHubCAS and type(journal) is ExecutionJournal, "Actual GitHub service and M5 journal required")
         self.service, self.journal = service, journal
         self._dispatches = {}
@@ -373,11 +373,11 @@ class GitHubGitExecutionPort(GitExecutionPort):
                 "Network effect differs from the exact authorized M3 plan")
         _endpoint(self.config, self.service.target)
         require(action["target"] == self.service.target.ref and action["source_ref"] == action["target"]
-                and value(self.root, "rev-parse", "HEAD") == oid(action["revision"])
-                and value(self.root, "symbolic-ref", "HEAD") == action["source_ref"], "Network source/ref changed")
+                and self._value("rev-parse", "HEAD") == oid(action["revision"])
+                and self._value("symbolic-ref", "HEAD") == action["source_ref"], "Network source/ref changed")
         if action["expected_target"] is not None:
             oid(action["expected_target"])
-            require(value(self.root, "--no-replace-objects", "merge-base", action["expected_target"], action["revision"])
+            require(self._value("--no-replace-objects", "merge-base", action["expected_target"], action["revision"])
                     == action["expected_target"], "Non-fast-forward network update refused")
         observed, key, row = self._intent(action)
         require(observed["local_owner"] and observed["state"]["generation"] == action["generation"]
@@ -397,8 +397,8 @@ class GitHubGitExecutionPort(GitExecutionPort):
             _endpoint(self.config, self.service.target)
             require(action["target"] == self.service.target.ref and action["source_ref"] == self.service.target.ref,
                     "Network ref binding differs")
-            require(value(self.root, "rev-parse", "HEAD") == action["revision"]
-                    and value(self.root, "symbolic-ref", "HEAD") == action["source_ref"], "Local source changed")
+            require(self._value("rev-parse", "HEAD") == action["revision"]
+                    and self._value("symbolic-ref", "HEAD") == action["source_ref"], "Local source changed")
             _, action_id, row = self._intent(action)
             remote = self.service.inspect_ref()
             if remote == action["revision"]:
@@ -409,7 +409,7 @@ class GitHubGitExecutionPort(GitExecutionPort):
             pass
         return ExternalObservation("UNKNOWN")
 
-    def submit(self, action, provider, plan, authorization, *, dispatch=None):
+    def submit(self, action, provider, plan, authorization, *, dispatch=None, validate=None):
         if action["operation"] != Operation.PUSH:
             return super().submit(action, provider, plan, authorization)
         require(dispatch in self._dispatches, "Fresh one-use network dispatch capability required")
@@ -418,12 +418,17 @@ class GitHubGitExecutionPort(GitExecutionPort):
                 "Network claim is missing, corrupt or belongs to another intent")
         with self.service.bounded():
             require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
+            if validate is not None:
+                validate()
             require(self.service.inspect_ref(writable=True) == action["expected_target"], "Remote changed before immutable object transfer")
-            objects = closure(self.root, action["revision"], self.service.known_commit)
+            objects = (closure(self.root, action["revision"], self.service.known_commit, git_reader=self._git)
+                       if self.bound_git_directory is not None else closure(self.root, action["revision"], self.service.known_commit))
             self._authorize(action, provider, plan, authorization)
             self.service.upload(objects)
             # Upload latency/source/ownership/policy drift cannot authorize late CAS.
             self._authorize(action, provider, plan, authorization)
+            if validate is not None:
+                validate()
             require(self.service.inspect_ref(writable=True) == action["expected_target"], "Remote changed before atomic CAS")
             try:
                 self.service.cas(action["expected_target"], action["revision"], action_id)

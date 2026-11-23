@@ -85,6 +85,8 @@ def add_commands(commands) -> None:
         command.add_argument("--authorize-execution", action="store_true")
         if name != "handoff":
             invocation_limits(command)
+    from .personal_cli import publication_commands
+    publication_commands(stages, codex=True)
 
 
 def invocation_limits(command):

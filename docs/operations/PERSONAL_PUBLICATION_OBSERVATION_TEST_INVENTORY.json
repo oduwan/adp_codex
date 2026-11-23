@@ -1,0 +1,4 @@
+[
+  "test_personal_publication_observation.PersonalPublicationObservationTests.test_targeted_partial_forbidden_conflicting_and_unstable_records_fail_closed",
+  "test_personal_publication_observation.PersonalPublicationObservationTests.test_targeted_receipts_are_the_actual_validated_original_and_detect_changes"
+]

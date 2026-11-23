@@ -110,10 +110,12 @@ def tree_payload(raw: bytes) -> dict:
     return {"tree": entries}
 
 
-def closure(root: Path, revision: str, known_commit: Callable[[str], bool]) -> tuple[ObjectPayload, ...]:
+def closure(root: Path, revision: str, known_commit: Callable[[str], bool], *, git_reader=None) -> tuple[ObjectPayload, ...]:
     """Preflight the entire missing closure before any object POST is possible."""
     oid(revision)
-    require(value(root, "rev-parse", "--show-object-format") == "sha1", "UNSUPPORTED_ATOMIC_REF: SHA1 repository required")
+    def text(*args):
+        return git_reader(*args).decode("utf-8", "strict").strip() if git_reader is not None else value(root, *args)
+    require(text("rev-parse", "--show-object-format") == "sha1", "UNSUPPORTED_ATOMIC_REF: SHA1 repository required")
     result, visited, commits, total = [], set(), 0, 0
     def visit(sha, kind, depth):
         nonlocal commits, total
@@ -124,9 +126,10 @@ def closure(root: Path, revision: str, known_commit: Callable[[str], bool]) -> t
         visited.add(sha)
         if kind == "commit" and known_commit(sha):
             return
-        size = int(value(root, "--no-replace-objects", "cat-file", "-s", sha))
+        size = int(text("--no-replace-objects", "cat-file", "-s", sha))
         require(size <= MAX_OBJECT_BYTES and total + size <= MAX_TOTAL_BYTES, "UNSUPPORTED_ATOMIC_REF: object byte bound")
-        raw = git(root, "--no-replace-objects", "cat-file", kind, sha, limit=MAX_OBJECT_BYTES)
+        raw = (git_reader("--no-replace-objects", "cat-file", kind, sha, limit=MAX_OBJECT_BYTES) if git_reader is not None
+               else git(root, "--no-replace-objects", "cat-file", kind, sha, limit=MAX_OBJECT_BYTES))
         require(object_oid(kind, raw) == sha, "UNSUPPORTED_ATOMIC_REF: object identity changed")
         total += len(raw)
         if kind == "commit":
