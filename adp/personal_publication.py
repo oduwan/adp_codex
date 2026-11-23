@@ -109,6 +109,11 @@ class PersonalPublication:
         create_private(self.personal.state)
         atomic(self.path, encode(row, LIMIT))
 
+    def admit_task(self, execution, task_key, task):
+        existing = execution["tasks"].get(task_key)
+        require(existing is None or existing == task, "Canonical publication task differs")
+        execution["tasks"][task_key] = task
+
     def local(self):
         capture = OriginalRead(self.read, self.target.api + "/issues/" + str(self.personal.plan["issue"]))
         self.c.transport = capture
@@ -367,9 +372,7 @@ class PersonalPublication:
         # Genuine personal worker evidence stays in its original ledger/M1
         # assignments. Never synthesize canonical M5 Reviewer/check jobs.
         def admit(execution, state, tasks):
-            existing = execution["tasks"].get(task_key)
-            require(existing is None or existing == task, "Canonical publication task differs")
-            execution["tasks"][task_key] = task
+            self.admit_task(execution, task_key, task)
         self.journal.change(admit)
         proof = self.proof("admission", self.guard.admission_subject(self.c.task_id, self.specification), "admission", data(self.specification))
         requirement = self.guard.register(self.c.task_id, self.specification, proof)

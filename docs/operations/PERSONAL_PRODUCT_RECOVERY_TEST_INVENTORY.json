@@ -1,0 +1,5 @@
+[
+  "test_personal_product_recovery.PersonalProductRecoveryTests.test_native_manual_merge_without_ci_review_is_event_only",
+  "test_personal_product_recovery.PersonalProductRecoveryTests.test_pending_review_approval_cannot_be_rebound_to_changed_source",
+  "test_personal_product_recovery.PersonalProductRecoveryTests.test_worker_exception_reuses_foreground_stop_cleanup"
+]

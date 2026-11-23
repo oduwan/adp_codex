@@ -273,3 +273,17 @@ request, plan/effect and window/run facts for the installed verifier. Existing
 subject bytes, serialized memory and authority method signatures are unchanged.
 A grant remains an independently verified approval request, never a permission
 inferred from the additional context.
+
+## Personal single-Issue GitHub composition (#41)
+
+[Personal product flow](operations/PERSONAL_PRODUCT.md) directly composes actual
+`GitHubProductForge`, `GitHubCAS`, `ProjectValidation` and original personal
+M1/M2/M3/runtime records. It does not fabricate Conductor jobs, signatures or
+PreparedScope attestations. Real personal worker assignments stay in their
+original ledger; canonical execution jobs remain empty. The existing explicit
+internal execution-v2 migration admits native MERGE intents without modifying
+accepted task, guard or outer schemas. Separate PR/CI functional requirements
+preserve original counters and aggregate observation/role/window limits.
+Independent product review verifies the original criterion and actual CI; the
+older code-only receipt is never relabeled. Source changes require new consent,
+CAS, CI and review. No reporting, issue closure or next-task execution is added.

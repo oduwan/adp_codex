@@ -140,7 +140,7 @@ class PersonalCoordinator:
                         "Source advanced without the exact current bound commit")
                 expected_checkout["head"] = observed.revision
         require(observation.checkout == expected_checkout and owner == plan["owner"] and len(original) == 1
-                and digest(data(original[0])) == plan["original_digest"]
+                and self.original_matches(original[0])
                 and digest(governance(Path(plan["checkout"]["path"]))) == plan["governance_digest"],
                 "The original source, issue, native prerequisites, ownership or governance changed")
         require(not plan["native_prerequisites"], "Native prerequisites need independent acceptance before this task can be READY")
@@ -152,6 +152,9 @@ class PersonalCoordinator:
         require(current_rules == plan["branch_rules"], "Branch requirements changed; preserve this enrollment and obtain an operator disposition")
         self.live()
         return observation
+
+    def original_matches(self, issue):
+        return digest(data(issue)) == self.personal.plan["original_digest"]
 
     def context(self, purpose):
         plan, row = self.personal.plan, self.record()
@@ -665,7 +668,13 @@ class PersonalCoordinator:
                     require(all(a["status"] == "OBSERVED" for a in external)
                             and not list(self.memory.control.glob("network-stop-*.json")),
                             "Reconcile canonical external effects and confirmed transport stops before handoff")
-                    if (self.personal.state / "publication.json").exists() or external:
+                    if (self.personal.state / "product.json").exists():
+                        from .personal_product import PersonalProduct
+                        product = getattr(self, "product", None) or PersonalProduct(self)
+                        current = product.status()
+                        require(current["status"] in ("PR_DRAFT", "WAITING_HUMAN_APPROVAL", "MERGED_DELEGATED_VERIFIED", "MERGED_EXTERNALLY_VERIFIED")
+                                and not product.service.unconfirmed_contexts(), "Reobserve exact product effects before ownership release")
+                    elif (self.personal.state / "publication.json").exists() or external:
                         from .personal_publication import PersonalPublication
                         current = PersonalPublication(self).status()
                         require(current["status"] in ("PUBLICATION_PRESENT", "PUBLICATION_PRESENT_GUARD_STOPPED") and current["canonical_status"] == "OBSERVED"
@@ -680,14 +689,17 @@ class PersonalCoordinator:
                     return {"status": "HANDED_OFF", "execution": "STOPPED", "authority": "REVOKED"}
                 return self._run()
             finally:
-                # A foreground exit must not leave an invented background job.
-                for row in self.workers.records():
-                    if row["phase"] == "SUBMITTED":
-                        observation = self.runtime.observe(row["request"]["id"])
-                        if observation.status == RuntimeStatus.RUNNING:
-                            observation = self.runtime.cancel(row["request"]["id"])
-                        if observation.stopped is not True:
-                            raise PersonalBlocked("WORKER_STOP_UNCONFIRMED", "Retain the original runtime evidence and reconcile its stop before any later work.")
+                self.stop_workers()
+
+    def stop_workers(self):
+        # A foreground exit must not leave an invented background job.
+        for row in self.workers.records():
+            if row["phase"] == "SUBMITTED":
+                observation = self.runtime.observe(row["request"]["id"])
+                if observation.status == RuntimeStatus.RUNNING:
+                    observation = self.runtime.cancel(row["request"]["id"])
+                if observation.stopped is not True:
+                    raise PersonalBlocked("WORKER_STOP_UNCONFIRMED", "Retain the original runtime evidence and reconcile its stop before any later work.")
 
     def status(self):
         observed = self.memory.inspect()

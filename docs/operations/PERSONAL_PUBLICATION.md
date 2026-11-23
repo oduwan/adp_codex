@@ -5,6 +5,12 @@ M7 object uploader and GraphQL expected-old-SHA CAS. It does not create a PR,
 merge, report, accept a product or advance another issue. Those remain separate
 dependent slices. Genuine GitHub/Codex M8 qualification is NOTRUN here.
 
+The separate [M10-B product path](PERSONAL_PRODUCT.md) now proposes Draft PRs,
+observes native project CI and gates a separately approved merge. Its corrected
+SHA publication uses an append-only revision selection of this same publisher;
+the original receipt and all counters remain intact. None of those additional
+rights follows from the original #40 publication approval.
+
 ## Feasibility and explicitly approved security envelope
 
 Accepted source was `df2d19baa8407c637b3257c4ef1780102e7fdcf9`. Its postmerge

@@ -67,29 +67,35 @@ class GitHubForgeBackend:
         require(match and match[1].lower() == self.repository.lower(), "Product report target is outside the admitted repository")
         return "/repos/" + self.repository + "/issues/" + match[2] + "/comments"
 
-    def observe(self, key, operation, payload, *, attempted=False):
+    def inventory(self, operation, payload):
+        """One shared bounded native inventory for observation and preflight."""
         if not self._identity():
-            return ExternalObservation("UNKNOWN")
+            return None
         route = self._route(operation, payload)
         suffix = "state=all&" if operation == Operation.PR else ""
-        marker = self.marker(key)
-        expected_body = payload["body"] + "\n\n" + marker
-        count, matches = 0, []
+        rows = []
         for page in range(1, 21):
             response = self.transport.request("GET", f"{route}?{suffix}per_page=100&page={page}")
             if response.status != 200 or type(response.body) is not list:
-                return ExternalObservation("UNKNOWN")
-            count += len(response.body)
-            if count > 256:
-                return ExternalObservation("UNKNOWN")
+                return None
+            rows.extend(response.body)
+            if len(rows) > 256:
+                return None
             if any(type(item) is not dict or item.get("body") is not None and type(item.get("body")) is not str for item in response.body):
-                return ExternalObservation("UNKNOWN")
-            matches.extend(item for item in response.body if marker in (item.get("body") or ""))
-            if len(matches) > 1:
-                return ExternalObservation("UNKNOWN")
+                return None
             if len(response.body) < 100:
-                break
-        else:
+                return tuple(rows)
+        return None
+
+    def observe(self, key, operation, payload, *, attempted=False):
+        rows = self.inventory(operation, payload)
+        if rows is None:
+            return ExternalObservation("UNKNOWN")
+        route = self._route(operation, payload)
+        marker = self.marker(key)
+        expected_body = payload["body"] + "\n\n" + marker
+        matches = [item for item in rows if marker in (item.get("body") or "")]
+        if len(matches) > 1:
             return ExternalObservation("UNKNOWN")
         if not matches:
             return ExternalObservation("UNKNOWN" if attempted else "ABSENT")

@@ -92,8 +92,11 @@ fenced. Unknown delivery or stop evidence never permits replacement dispatch.
 The original setup/run delegation produces **local drafts only**. M10-A adds a
 separate [feature publication approval](PERSONAL_PUBLICATION.md), requiring its
 explicit project-policy assent and personal administrative-quiescence warrant;
-setup/run consent never grants that right. No PR, issue edit, product comment,
-merge, release or deployment port is wired by this slice. Explicitly absent rules remain optional; selected
+setup/run consent never grants that right. The separate
+[M10-B product path](PERSONAL_PRODUCT.md) adds its own PR/merge approvals and
+project-evidence sequence. Original setup/run consent grants none of those
+external rights. No issue edit, product comment, release or deployment port is
+wired by this slice. Explicitly absent rules remain optional; selected
 local branch/commit choices are not invented project conventions. Present
 governance applies. The original-scope and staged-scope reviews must reject
 unsupported requirements, including mandatory precommit checks that the native
