@@ -132,10 +132,10 @@ def credential(value):
     return {"context": expected, "token": token, "version": match[1].decode("ascii")}
 
 
-def exchange_http(value):
+def exchange_http(value, validator=validate_personal):
     if set(value) != {"kind", "method", "path", "body", "seconds", "token"}:
         raise ValueError("Invalid private HTTP request")
-    body = validate_personal(value["method"], value["path"], value["body"], value["seconds"])
+    body = validator(value["method"], value["path"], value["body"], value["seconds"])
     token = value["token"]
     if type(token) is not str or not 0 < len(token) <= 4096 or not all(33 <= ord(c) < 127 for c in token):
         raise ValueError("Invalid private credential")

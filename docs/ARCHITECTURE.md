@@ -97,3 +97,16 @@ check provenance and explicit operator delegation remain separate gates. Missing
 mandatory provider capabilities remain UNKNOWN/blocked. This branch awaits
 independent integration acceptance; genuine full-cycle runtime proof is deferred
 to M8 and remains NOTRUN.
+
+## Personal single-Issue product composition (#41)
+
+The [personal product path](operations/PERSONAL_PRODUCT.md) composes the actual
+M7 journal-backed forge, #40 CAS publication and #21 native evidence without an
+external provider. Separate local operator receipts authorize exact Draft PR
+and merge effects; existing credentials confer access only. Both native PR IDs
+are retained, and changed SHA/check identity invalidates acceptance evidence.
+Product mutation selection excludes uploads, reporting and issue writes.
+Current native policy, independent Codex review, finite original M1/M2/role
+budgets and the honest native observed-base merge boundary remain mandatory.
+Reporting/closure/next-task progression is outside this slice. Synthetic code
+qualification is not genuine M8 runtime proof or integration authorization.

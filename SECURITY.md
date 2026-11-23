@@ -58,6 +58,17 @@ commits or public reports. Live GitHub mutation qualification is not supplied.
 Local CAS push and trusted-disposable validation cannot be relabeled production
 network/sandbox qualification. Unsupported environments/operations fail closed.
 
+Personal M10-B PR and merge receipts are distinct local operator grants, not
+signed-provider credentials. Its product transport selects existing bounded
+forge/CI reads, Draft PR POST and exact-head merge PUT only. Original upload
+consent cannot grant these rights, nor can PR consent upload Git objects. Current
+native policy and eligible exact-SHA approvals apply; unknown metadata blocks.
+Draft readiness is external. Native merge remains HEAD-atomic/base-observed,
+with exact result parents/tree verification and no blind replay. The original
+personal administrative-quiescence warrant still applies. See
+[the supported contract](docs/operations/PERSONAL_PRODUCT.md); M8 proof remains
+NOTRUN and no release/deployment authority is supplied.
+
 ## Reporting a vulnerability
 
 Do not post private data, credentials or sensitive logs in public issues. Use

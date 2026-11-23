@@ -89,3 +89,13 @@ profiles, read-only enrollment/preview, finite explicit delegation and safe CLI
 composition of the accepted ports. See [Operator setup](operations/OPERATOR_SETUP.md).
 It adds no CI, sandbox, language-specific runner, project environment or M8 pilot.
 Its code and focused qualification await independent integration acceptance.
+
+## M10-B single-Issue personal product lifecycle (#41)
+
+Accepted #40 publication is the code prerequisite. This branch adds the
+[personal PR/check/review/merge composition](operations/PERSONAL_PRODUCT.md),
+with separate exact operator consent, current native evidence, original finite
+M1/M2/role budgets and verified native results. Its Draft PR requires independent
+exact-HEAD review and separate operator integration. #42 reporting and native
+next-task progression remain unimplemented here. Genuine M8, managed upgrade,
+pilot mutation, release and deployment remain NOTRUN/unauthorized.

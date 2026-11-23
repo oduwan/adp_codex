@@ -87,6 +87,34 @@ use `publication-status` and retain the original intent; never republish blindly
 Report actual `PUBLISHED_UNACCEPTED`, guard stop or UNKNOWN. This slice grants no
 PR, merge, report, issue-change or next-ticket operation and no M8 pilot authority.
 
+For one already published personal issue, follow the separate
+[PR/check/merge protocol](../../docs/operations/PERSONAL_PRODUCT.md). Discover
+`pr-preview` in personal capabilities. Preview the exact title/body, repository,
+reviewed SHA/tree, base, rules and finite warrant. Obtain separate confirmation
+before `pr-create` with its exact token and PR/memory/rules/quiescence flags.
+Setup, run and push consent grant no PR or merge authority.
+
+Use `ci-preview` and the matching approved `check-ci` to observe actual project
+CI. Show any explicit native-job-record assent or no-required-check governance
+interpretation; UNKNOWN/403 is never absence, and NOT_REQUIRED is not PASS.
+Never install a runner, execute checks, dispatch workflows or invent check names.
+Ordinary FAIL/ERROR and review rejection are same-ticket correction feedback
+within the existing delegation. Use the retained `product-preview`/`product-resume`
+review or correction operation, verify the required invocation consent and keep
+the original window, scope, role and M2 budgets. A corrected SHA requires a new
+publication approval, fresh CI and independent review of that SHA. Observe the
+same PR; never create a replacement or replenish contexts.
+
+Preview merge separately. Default to human approval. A Draft needs an external,
+separately authorized readiness action; merge approval does not authorize it.
+Only current verified project policy and an explicit exact merge delegation
+permit `merge` with its separate flags/token and observed-base API assent.
+Use `product-status` for an uncertain outcome, never repeat a POST/PUT blindly.
+Report only actual PR/CI/review/merge facts and remaining product limitations.
+Stop on unknown effects/stops, authority conflicts or original budget exhaustion.
+Reporting, issue closure and next-ticket advancement are not supplied by this
+slice; no M8 pilot execution or installation follows from code qualification.
+
 For the existing independently signed backend, keep the following flow:
 
 1. Run `adp codex inspect` for GitHub identity, branch and revision, native

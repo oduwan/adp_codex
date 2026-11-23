@@ -33,6 +33,26 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def validate_get(path: str, seconds: float) -> None:
+    """Shared read grammar; selecting it grants no evidence or execution right."""
+    require(type(path) is str and ROUTE.fullmatch(path) and 0 < seconds <= 30,
+            "Unsupported project-validation GET")
+    route, separator, raw_query = path.partition("?")
+    if separator:
+        options = parse_qs(raw_query, strict_parsing=True)
+        expected = {"page", "per_page", "filter"} if route.endswith("/check-runs") else {"page", "per_page"}
+        require(route.endswith(("/statuses", "/check-runs", "/check-suites"))
+                and set(options) == expected and all(len(v) == 1 for v in options.values())
+                and all(options[k][0].isdigit() for k in ("page", "per_page"))
+                and 1 <= int(options["page"][0]) <= 20 and 1 <= int(options["per_page"][0]) <= 100
+                and ("filter" not in options or options["filter"] == ["all"]), "Unsupported GET query")
+    if "/git/ref/heads/" in path:
+        encoded = route.split("/git/ref/heads/", 1)[1]
+        decoded = unquote(encoded)
+        require(quote(decoded, safe="") == encoded, "Noncanonical source ref encoding")
+        ref("refs/heads/" + decoded)
+
+
 class GitHubValidationHTTP:
     """GET only, fixed origin, no redirects and no error body disclosure."""
     def __init__(self, token: str):
@@ -42,22 +62,7 @@ class GitHubValidationHTTP:
         self._opener = urllib.request.build_opener(_NoRedirect())
 
     def get(self, path: str, *, seconds: float) -> Response:
-        require(type(path) is str and ROUTE.fullmatch(path) and 0 < seconds <= 30,
-                "Unsupported project-validation GET")
-        route, separator, raw_query = path.partition("?")
-        if separator:
-            options = parse_qs(raw_query, strict_parsing=True)
-            expected = {"page", "per_page", "filter"} if route.endswith("/check-runs") else {"page", "per_page"}
-            require(route.endswith(("/statuses", "/check-runs", "/check-suites"))
-                    and set(options) == expected and all(len(v) == 1 for v in options.values())
-                    and all(options[k][0].isdigit() for k in ("page", "per_page"))
-                    and 1 <= int(options["page"][0]) <= 20 and 1 <= int(options["per_page"][0]) <= 100
-                    and ("filter" not in options or options["filter"] == ["all"]), "Unsupported GET query")
-        if "/git/ref/heads/" in path:
-            encoded = route.split("/git/ref/heads/", 1)[1]
-            decoded = unquote(encoded)
-            require(quote(decoded, safe="") == encoded, "Noncanonical source ref encoding")
-            ref("refs/heads/" + decoded)
+        validate_get(path, seconds)
         request = urllib.request.Request(API + path, method="GET", headers={
             "Authorization": "Bearer " + self._token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "adp-project-evidence-read-only"})

@@ -1,0 +1,4 @@
+[
+  "test_personal_product_relations.PersonalProductRelationTests.test_only_new_exact_own_native_pr_link_is_reconciled",
+  "test_personal_product_relations.PersonalProductRelationTests.test_scope_version_foreign_links_and_lost_previous_evidence_refuse"
+]

@@ -22,6 +22,7 @@ from .schema import require
 
 ACTIONS = ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect", "run", "resume", "handoff")
 PUBLICATION = ("publication-preview", "publish", "publication-status")
+from .personal_product_cli import PRODUCT
 
 
 def choices(parser):
@@ -59,6 +60,8 @@ def add_commands(commands):
 
 
 def publication_commands(stages, *, codex=False):
+    from .personal_product_cli import commands as product_commands
+    product_commands(stages, codex=codex)
     for action in PUBLICATION:
         parser = stages.add_parser(action, help="Separately approved personal GitHub feature publication")
         parser.add_argument("--repo", type=Path, required=True)
@@ -107,26 +110,38 @@ def retained(args):
 def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
     action = args.enroll_command
     report = {"schema_version": 1, "backend": "PERSONAL", "command": action,
-        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish") else "READ_ONLY",
+        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") else "READ_ONLY",
         "status": "UNKNOWN", "questions": [], "plan": None, "approval": None, "result": None, "blockers": [],
         "runtime_qualification": "NOTRUN"}
     try:
         if action == "capabilities":
-            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION), "scope": "LOCAL_DRAFT",
+            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT), "scope": "LOCAL_DRAFT",
                 "providers": "NOT_REQUIRED", "external_operations": "NOT_DELEGATED",
                 "publication": {"status": "AVAILABLE_UNDER_SEPARATE_EXACT_APPROVAL", "credential_envelope": "OPERATOR_ADMINISTRATIVE_QUIESCENCE"}})
             assert_public(report)
             return report, 0
-        require(action in ACTIONS + PUBLICATION, "Unsupported personal command")
+        require(action in ACTIONS + PUBLICATION + PRODUCT, "Unsupported personal command")
         require(not any(getattr(args, name, None) for name in ("operator_trust", "operator_socket", "operator_profile")),
                 "Choose personal mode or the unchanged signed-provider mode; never convert an enrollment")
         require(getattr(args, "rounds", 1) == 1 and getattr(args, "maximum_parallel", 1) == 1,
                 "Personal mode admits exactly one issue, one task iteration and one concurrent worker")
+        if action in PRODUCT:
+            from .personal_product_cli import dispatch
+            result = dispatch(args, retained(args), runtime=runtime, clock=clock, transport=publication_transport)
+            report.update(result)
+            assert_public(report)
+            return report, 0 if report["status"] in ("PR_PROPOSED", "PR_PRESENT", "CI_PROPOSED", "PASS", "NOT_REQUIRED", "REVIEW_PROPOSED", "CORRECT_PROPOSED", "PRODUCT_REVIEWED", "CORRECTED_REQUIRES_NEW_PUBLICATION", "MERGE_PROPOSED", "MERGED_DELEGATED_VERIFIED", "MERGED_EXTERNALLY_VERIFIED", "PR_DRAFT", "WAITING_HUMAN_APPROVAL") else 4
         if action in PUBLICATION:
             from .personal_publication import PersonalPublication
             personal = retained(args)
             coordinator = PersonalCoordinator(personal, None, None, runtime=runtime, clock=clock)
             publication = PersonalPublication(coordinator, transport=publication_transport)
+            if (personal.state / "product.json").exists():
+                from .personal_product import PersonalProduct
+                from .personal_product_review import ProductCoordinator
+                coordinator = ProductCoordinator(personal, None, None, runtime=runtime, clock=clock)
+                product = PersonalProduct(coordinator, transport=publication_transport)
+                publication = product.publication_backend(transport=publication_transport)
             if action == "publication-preview":
                 proposed = publication.preview()
                 report.update(status=proposed["status"], result=proposed["result"], approval=proposed["approval"])

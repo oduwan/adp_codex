@@ -26,6 +26,8 @@ from .schema import decode, fields, require
 
 
 class PersonalGitHubTransport:
+    validator = staticmethod(validate_personal)
+    http_child = "personal_network_child.py"
     def __init__(self, target: GitHubTarget, *, protected_roots=(), authorize_write=None):
         require(type(target) is GitHubTarget, "Pin the exact personal target")
         self.target, self.protected_roots = target, tuple(Path(p).resolve() for p in protected_roots)
@@ -86,7 +88,7 @@ class PersonalGitHubTransport:
     def request(self, method, path, body, *, seconds):
         self.last_response = None
         try:
-            validate_personal(method, path, body, seconds)
+            self.validator(method, path, body, seconds)
             require(self._binding == (self.target.node_id, self.target.database_id), "Bind the personal recipient first")
             require(path == "/user" or path == "/graphql" or path.partition("?")[0] == self.target.api
                     or path.startswith(self.target.api + "/"), "Personal route targets another repository")
@@ -94,7 +96,7 @@ class PersonalGitHubTransport:
                 require(body["query"] in (REF_QUERY, REFS_QUERY, UPDATE_REFS_MUTATION), "Unsupported personal GraphQL query")
                 identity = body["variables"]["input"]["repositoryId"] if body["query"] == UPDATE_REFS_MUTATION else body["variables"].get("id")
                 require(identity == self.target.node_id, "Personal GraphQL recipient differs")
-            mutation = method == "POST" and (path != "/graphql" or body["query"] == UPDATE_REFS_MUTATION)
+            mutation = method == "PUT" or method == "POST" and (path != "/graphql" or body["query"] == UPDATE_REFS_MUTATION)
             if mutation:
                 require(callable(self.authorize_write) and self.authorize_write() is True,
                         "Separate current publication/quiescence approval is required")
@@ -105,7 +107,7 @@ class PersonalGitHubTransport:
             require(remaining > 0, "Credential lookup exhausted request budget")
             payload = json.dumps({"kind": "http", "method": method, "path": path, "body": body,
                 "seconds": min(5, remaining), "token": token}, separators=(",", ":"), allow_nan=False).encode()
-            reply = decode(supervised_output(payload, min(5, remaining), child="personal_network_child.py"), 2097152)
+            reply = decode(supervised_output(payload, min(5, remaining), child=self.http_child), 2097152)
             fields(reply, "status body_base64 headers")
             require(type(reply["status"]) is int and 100 <= reply["status"] <= 599 and not 300 <= reply["status"] <= 399
                     and type(reply["body_base64"]) is str and type(reply["headers"]) is list and len(reply["headers"]) <= 128,
