@@ -25,6 +25,10 @@ class PersonalTrackTests(TrackFixture):
         accepted = []
         for number in (1, 2, 3):
             self.assertEqual(self.personal.plan["issue"], number)
+            if number > 1:
+                dependencies = self.personal.plan["native_prerequisites"]
+                self.assertEqual(len(dependencies), 1)
+                self.assertEqual(dependencies[0]["target"]["number"], number - 1)
             result = self.merged(loss_pr="after" if number == 1 else None, loss_merge="after" if number == 1 else None)
             accepted.append(result)
             self.assertEqual(self.personal.plan["issue"], number)

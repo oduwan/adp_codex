@@ -79,6 +79,10 @@ dispatches a workflow or substitutes a synthetic result. NOT_REQUIRED records
 verified absence/interpretation, never a zero-test PASS. Ordinary failures and
 review rejection remain same-ticket feedback within the original finite bounds.
 Separate next-window approval cannot renew the previous Issue's budget.
+The existing pre-upload and pre-CAS publication callbacks recheck the complete
+current native graph and actual accepted prerequisite closure. They retain the
+native edges; neither a selected track nor a cached READY result grants a push.
+Standalone enrollment still refuses native prerequisites without this verifier.
 
 ## Evidence, restart and limitations
 

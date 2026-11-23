@@ -281,8 +281,15 @@ class PersonalPublication:
             expected_checkout["head"] = self.c.revision()
         require(local_checkout(Path(p["checkout"]["path"]), p["checkout"]["remote"]) == expected_checkout
                 and digest(governance(Path(p["checkout"]["path"]))) == p["governance_digest"]
-                and digest(governance(self.personal.feature)) == p["governance_digest"]
-                and not p["native_prerequisites"], "Original source, governance or admitted prerequisites changed")
+                and digest(governance(self.personal.feature)) == p["governance_digest"],
+                "Original source or governance changed")
+        if self.c.track is None:
+            require(not p["native_prerequisites"], "Native prerequisites need independent acceptance before publication")
+        else:
+            # The actual complete native graph and accepted closure must still
+            # qualify at BOTH existing pre-upload/pre-CAS dispatch boundaries.
+            # A selected track or an old READY judgment alone grants nothing.
+            self.c.fresh()
         require(self.current_original() == self.record()["view"]["original_observation"], "Original-ticket scope or native evidence changed")
         require([branch_rules(self.read, p["repository"]["name"], item["ref"].removeprefix("refs/heads/"))
                 for item in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")
