@@ -3,7 +3,10 @@
 Issue #41 composes the actual M7 forge/CAS, #21 native evidence and M1/M2/M3
 with personal enrollment and #40 publication. No second GitHub backend,
 external trust service, manual JSON, CI runner, workflow dispatch or sandbox is
-added. This candidate awaits operator integration. Genuine M8 remains **NOTRUN**.
+added. M10-B is accepted at `b93d592909315bf952343fca82591d1fbca77feb`.
+The separately selected [#42 track](PERSONAL_TRACK.md) extends its operator flow;
+this one-Issue port alone grants no reporting or next-task rights.
+Genuine M8 remains **NOTRUN**.
 
 ## Operator sequence
 

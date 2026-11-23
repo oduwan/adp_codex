@@ -108,5 +108,10 @@ are retained, and changed SHA/check identity invalidates acceptance evidence.
 Product mutation selection excludes uploads, reporting and issue writes.
 Current native policy, independent Codex review, finite original M1/M2/role
 budgets and the honest native observed-base merge boundary remain mandatory.
-Reporting/closure/next-task progression is outside this slice. Synthetic code
+The opt-in [#42 track](operations/PERSONAL_TRACK.md) adds native dependency
+admission through actual TicketPreparer packets, an immutable evidence index over
+unchanged per-Issue M1/M2 windows, historical completion verification and separately
+delegated REPORT/next-scope actions. It is not a second canonical task tracker.
+It requires the exact current merged base already local and never fetches objects.
+Issue editing/closure and automatic future execution remain undelegated. Synthetic code
 qualification is not genuine M8 runtime proof or integration authorization.

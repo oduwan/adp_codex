@@ -64,6 +64,13 @@ class ProductCoordinator(PersonalCoordinator):
             return super().verify_local_review()
         run = self.record()
         coordination = run["coordination"]
+        if coordination is not None and coordination["label"].startswith("personal-report:"):
+            require(callable(getattr(self.product, "report_record", None)), "Exact REPORT composition required")
+            intent = self.product.report_record()
+            require(intent is not None and coordination["label"] == "personal-report:" + intent["action"]
+                    and intent["reservation"] == coordination["permit"] and intent["view"]["operation"] == "REPORT",
+                    "Unrelated report reservation cannot reuse an approval")
+            return self.reserved_code_review(typed(Permit, coordination["permit"]))
         require(coordination is not None and coordination["label"].startswith("personal-merge:")
                 and coordination["requirement"] == requirement, "Only the exact active MERGE may use reserved approval")
         effect_id = coordination["label"].removeprefix("personal-merge:")
@@ -307,6 +314,11 @@ class ProductAuthority(PersonalAuthority):
                 require(plan.payload.title == v["title"] and plan.payload.draft is True
                         and plan.payload.head_ref == v["source_ref"] and plan.payload.base_ref == v["facts"]["base_ref"]
                         and plan.expected_target == v["facts"]["base_sha"], "PR operands differ from immutable consent")
+            elif plan.request.operation == Operation.REPORT:
+                v = flow.active["view"]
+                require(callable(getattr(flow, "report_record", None)) and flow.report_record() == flow.active
+                        and plan.payload.target == v["target"] == self.c.personal.intent["original"]["url"]
+                        and plan.payload.body == v["body"], "Separate exact target/body REPORT authority required")
         elif kind == "effect":
             flow.live()
             row = flow.journal.inspect()["state"]["execution"]["actions"].get(p["id"])
@@ -341,6 +353,18 @@ class ProductAuthority(PersonalAuthority):
                 require(purpose == "policy/review" and value.reviewer in reviewers and value.approved is True
                         and value.revision == self.c.revision() and value.observed_at <= self.c.clock() < value.expires_at
                         and body["principal"] == value.reviewer and subject == PolicyProvider(None).review_subject(plan, value), "Independent exact-SHA review differs")
+        elif kind == "report-delegation":
+            value, plan = typed(DelegationProfile, p["profile"]), typed(Plan, p["plan"])
+            v = flow.live()
+            require(plan.request.operation == Operation.REPORT and v["operation"] == "REPORT"
+                    and plan.task.repository_id == self.c.personal.repository_id and plan.task.task_id == self.c.task_id
+                    and plan.task.revision == self.c.revision() and plan.task.source_ref == flow.target.ref
+                    and plan.payload.target == v["target"] and plan.payload.body == v["body"], "Unbound REPORT delegation plan")
+            expected = DelegationProfile(self.c.personal.repository_id, self.c.personal.plan["issue_id"], self.c.task_id,
+                plan.task.iteration, flow.target.ref, v["facts"]["base_ref"], self.c.revision(), plan.policy_digest,
+                self.c.personal.plan["original_digest"], ("REPORT",), "MANUAL", (), "UNKNOWN", v["issued_at"], v["expires_at"])
+            require(value == expected and purpose == "github-product/delegation" and subject == delegation_subject(value),
+                    "REPORT delegation cannot grant merge or another original scope")
         elif kind == "delegation":
             value = typed(DelegationProfile, p)
             v = flow.active["view"]

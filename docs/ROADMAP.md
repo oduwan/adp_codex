@@ -92,10 +92,14 @@ Its code and focused qualification await independent integration acceptance.
 
 ## M10-B single-Issue personal product lifecycle (#41)
 
-Accepted #40 publication is the code prerequisite. This branch adds the
+Accepted #40 publication is the code prerequisite. Accepted main
+`b93d592909315bf952343fca82591d1fbca77feb` includes the
 [personal PR/check/review/merge composition](operations/PERSONAL_PRODUCT.md),
 with separate exact operator consent, current native evidence, original finite
-M1/M2/role budgets and verified native results. Its Draft PR requires independent
-exact-HEAD review and separate operator integration. #42 reporting and native
-next-task progression remain unimplemented here. Genuine M8, managed upgrade,
+M1/M2/role budgets and verified native results. The candidate
+[#42 personal track](operations/PERSONAL_TRACK.md) adds evidence-qualified native
+progression, separate reporting/next-scope consent and durable bounded recovery.
+It preserves per-Issue windows and requires an already local exact merged base.
+Its code and evidence need fresh independent review and operator integration.
+Genuine M8, managed upgrade,
 pilot mutation, release and deployment remain NOTRUN/unauthorized.
