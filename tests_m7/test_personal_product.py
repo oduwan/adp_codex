@@ -72,11 +72,18 @@ class PersonalProductTests(ProductFixture):
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["phase"], "STOPPED")
         requirement = pending[0]["requirement"]
-        sequence = self.c.guard._snapshot(self.c.task_id, requirement)[2]["sequence"]
+        reserved = self.c.guard._snapshot(self.c.task_id, requirement)[2]
+        sequence, active = reserved["sequence"], reserved["active"]
+        self.assertEqual(active["id"], pending[0]["permit"]["token"])
         before = len(self.c.workers.records())
         self.assertEqual(f.execute("REVIEW", reviewed=proposal["approval"], authorized=True)["status"], "PRODUCT_REVIEWED")
         self.assertEqual(len(self.c.workers.records()), before)
-        self.assertEqual(self.c.guard._snapshot(self.c.task_id, requirement)[2]["sequence"], sequence)
+        completed = self.c.guard._snapshot(self.c.task_id, requirement)[2]
+        self.assertEqual(completed["sequence"], sequence + 1)  # One observe; no second begin.
+        self.assertIsNone(completed["active"])
+        self.assertEqual(completed["last"]["action"], active["action"])
+        self.assertEqual(completed["last"]["context"], active["context"])
+        self.assertEqual(completed["last"]["observation"]["evidence"], [pending[0]["observation"]["receipt"]])
         waiting = f.proposed("MERGE", method="merge", delegate=True)
         self.assertEqual(waiting["status"], "WAITING_HUMAN_APPROVAL")
         self.assertIsNone(waiting["approval"])
