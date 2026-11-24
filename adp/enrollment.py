@@ -153,7 +153,11 @@ def inspect_project(checkout: dict, transport: ReadOnlyTransport, expected: str 
     repo = canonical(transport, checkout["repository"], expected)
     cfg = Config.discover(Path(checkout["path"]), remote=checkout["remote"], repository_id=repo["repository_id"])
     try:
-        snapshot = GitHubDiscoveryAdapter(repo["name"], transport, expected_id=repo["repository_id"], config=cfg).discover()
+        adapter = GitHubDiscoveryAdapter
+        if personal_owner is not None:
+            from .personal_discovery import PersonalGitHubDiscoveryAdapter
+            adapter = PersonalGitHubDiscoveryAdapter
+        snapshot = adapter(repo["name"], transport, expected_id=repo["repository_id"], config=cfg).discover()
     except FAILURES as exc:
         raise Blocked("DISCOVERY_UNAVAILABLE", "Refresh complete repository, issue, and dependency observations.", status="UNKNOWN") from exc
     require((snapshot.repository.checkout_ref, snapshot.repository.checkout_sha) == (checkout["ref"], checkout["head"]),

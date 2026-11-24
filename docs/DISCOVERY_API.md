@@ -110,6 +110,32 @@ Unsupported native endpoints, including 404, mean UNKNOWN. They never prove an
 issue has no prerequisites. A repository identity failure refuses discovery
 instead of inventing a repository or returning an apparently complete empty list.
 
+### Personal repository transport fingerprints
+
+Personal enrollment and track reobservation select
+`PersonalGitHubDiscoveryAdapter`. It projects out exactly `temp_clone_token`
+from the selected repository response and direct PR `head.repo` / `base.repo`
+objects before coverage, duplicate-page, PR revision and inventory hashes are
+computed. A token-bearing object must have a native positive integer repository
+ID, node ID, matching owner/login/name/API URL, private flag and consistent
+selected repository identity (or a distinct fork identity). Malformed shapes
+refuse or remain incomplete. All other fields, including unknown fields,
+permissions, refs, user text and native dependencies, remain bound. This is
+not a recursive ignore rule; repository objects in other slots are unchanged.
+
+The transport response and its original bounds/validation remain intact. No raw
+token is stored in a personal snapshot, approval or semantic receipt. Callers
+must continue treating raw transport bodies as private. Full fresh-plan equality
+in personal apply and later exact observation checks remain mandatory. A real
+semantic change still invalidates approval; M1/M2, checks, independent reviews
+and operation authority are unchanged.
+
+The default `GitHubDiscoveryAdapter`, including signed-provider consumers,
+retains its original raw fingerprint contract. No schema or saved receipt is
+rewritten. Previously issued personal approvals that bound raw metadata remain
+historical and must be replaced by a fresh proposal and explicit approval;
+there is no automatic approval migration or retry.
+
 ## Identity, graph and readiness
 
 `Identity` includes forge, stable repository ID and opaque issue/PR object ID.
