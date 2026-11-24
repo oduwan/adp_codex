@@ -15,13 +15,13 @@ PLAN_ASSENT = ("I accept the verified private personal repository plan limitatio
     "protection absence is not independently observed, and no project requirement or check is waived.")
 
 
-def checked(read, name: str, path: str) -> Response:
+def checked(read, name: str, path: str, *, retain_final_response=False) -> Response:
     """Reuse M4's header/control validation without changing its deny behavior."""
     parser = GitHubDiscoveryAdapter(name, read, max_requests=1)
     parser._halt, parser._requests = False, 0
     response = parser._get(path)
     # A final rate-exhausted 200 remains valid for discovery, never for a write.
-    return Response(0, None) if response.status == 200 and parser._halt else response
+    return Response(0, None) if response.status == 200 and parser._halt and not retain_final_response else response
 
 
 def plan_error(response: Response, path: str) -> dict | None:

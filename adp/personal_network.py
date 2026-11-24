@@ -17,7 +17,7 @@ import shutil
 import time
 from types import SimpleNamespace
 
-from .discovery_github import Response as ReadResponse
+from .discovery_github import ENROLLMENT_PATH, PATH, Response as ReadResponse
 from .errors import ADPError
 from .network_git import GitHubTarget, REF_QUERY, REFS_QUERY, UPDATE_REFS_MUTATION
 from .network_http import NetworkTransportError, Response, _supported, supervised_output
@@ -122,7 +122,10 @@ class PersonalGitHubTransport:
             require(len(raw) <= 1048576 and self._actor() == self._context, "Response or gh execution context changed")
             headers = tuple((k.lower(), v) for k, v in headers)
             native = ReadResponse(reply["status"], None, headers)
-            validated = checked(SimpleNamespace(get=lambda _: native), self.target.owner + "/" + self.target.name, path)
+            ordinary_read = method == "GET" and (path == "/user" or bool(PATH.fullmatch(path)
+                or ENROLLMENT_PATH.fullmatch(path)) and "/rules/branches/" not in path)
+            validated = checked(SimpleNamespace(get=lambda _: native), self.target.owner + "/" + self.target.name,
+                path, retain_final_response=ordinary_read)
             require(validated.status == reply["status"], "Unknown native control headers or exhausted rate budget")
             require(not (method == "GET" and reply["status"] == 200 and "/rules/branches/" in path
                     and "?" not in path and any(k == "link" for k, _ in headers)), "Ambiguous nonpaginated rules response")
