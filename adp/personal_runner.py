@@ -77,6 +77,7 @@ class PersonalCoordinator:
         require(row is None or row["generation"] == observed["state"]["generation"], "Personal execution generation changed")
         self.check_administration(row)
         require(self.personal.intent["phase"] == "ENROLLED", "Complete the original personal setup first")
+        return observed
 
     def seconds_left(self):
         self.live()

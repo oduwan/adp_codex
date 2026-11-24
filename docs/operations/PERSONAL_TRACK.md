@@ -87,6 +87,10 @@ and actual accepted prerequisite receipts. This avoids repeating whole-repositor
 inventories inside the unchanged 45-second/128-request batch; the raw-map limit
 also stays81. No stale snapshot is called current and no cached READY grants a
 push. Standalone enrollment keeps its single-original map and prerequisite refusal.
+Each object authorization obtains a fresh actual M1 observation. Its generation
+and review seals use that same checkpoint within the call, rather than repeat
+the same inspection. It is never retained for another object or callback; the
+fresh guard and canonical intent checks and actual runtime verification remain.
 
 ## Evidence, restart and limitations
 

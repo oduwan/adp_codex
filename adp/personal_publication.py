@@ -88,7 +88,7 @@ class PersonalPublication:
         self.port = GitHubGitExecutionPort(self.cfg, self.service, self.journal,
             bound_git_directory=Path(administration(self.personal.feature)["directory"]["path"]))
 
-    def record(self):
+    def record(self, *, _observed=None):
         row = read_private(self.path, optional=True)
         if row is None:
             require(not any(a["task_key"] == key(self.c.task_id) and a["operation"] == Operation.PUSH
@@ -99,7 +99,7 @@ class PersonalPublication:
         require(type(row["schema_version"]) is int and row["schema_version"] == 1
                 and row["action_id"] == digest({"personal-publication": row["view"]})
                 and row["view"]["setup_approval"] == self.personal.intent["approval"]
-                and row["view"]["generation"] == self.c.memory.inspect()["state"]["generation"],
+                and row["view"]["generation"] == (_observed if _observed is not None else self.c.memory.inspect())["state"]["generation"],
                 "Publication identity, consent or ownership changed")
         view = row["view"]
         require(view["administrative_quiescence_warrant"] == WARRANT and view["project_policy_assent"] == POLICY_ASSENT
@@ -137,13 +137,13 @@ class PersonalPublication:
             for suffix in capture.SUFFIXES) for base in bases), "Full preflight did not validate all original-ticket observations")
         return capture.observed, review_binding
 
-    def review_binding(self):
+    def review_binding(self, *, _observed=None):
         """Current canonical evidence sealed by full genuine batch review.
 
         Recompare per object; this is not a new approval or a substitute for
         runtime verification before and after the whole immutable batch.
         """
-        observed = self.c.memory.inspect()
+        observed = _observed if _observed is not None else self.c.memory.inspect()
         require(observed["health"] == "SYNCED" and observed["local_owner"], "Current review owner is required")
         state, task = observed["state"], observed["tasks"][key(self.c.task_id)]
         row, reviews = self.c.record(), {}
@@ -255,10 +255,13 @@ class PersonalPublication:
         return {"status": "PUBLICATION_PROPOSED", "result": view, "approval": token}
 
     def live(self, *, review=True):
-        row = self.record()
+        # One actual fresh observation per call, never retained across objects
+        # or callbacks. c.live performs its full current M1/consent checks;
+        # generation and review seals refer to that same observed checkpoint.
+        observed = self.c.live()
+        row = self.record(_observed=observed)
         require(row is not None, "Exact publication consent is missing")
         view = row["view"]
-        self.c.live()
         require(view["issued_at"] <= self.clock() < view["expires_at"]
                 and self.port._value("rev-parse", "HEAD") == view["revision"]
                 and self.port._value("--no-replace-objects", "rev-parse", "HEAD^{tree}") == view["tree"]
@@ -266,7 +269,7 @@ class PersonalPublication:
                 and not self.port._value("status", "--porcelain", "--untracked-files=all")
                 and digest(administration(self.personal.feature)) == view["administration"]
                 and digest(self.c.workers.records()) == view["worker_inventory"]
-                and self.review_binding() == view["canonical_review_binding"]
+                and self.review_binding(_observed=observed) == view["canonical_review_binding"]
                 and self.transport.credential_binding == row["credential_binding"], "Publication source, review, credential or finite consent changed")
         if review:
             self.c.verify_local_review()
