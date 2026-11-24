@@ -27,13 +27,13 @@ class RevisionPublication(PersonalPublication):
                         "Missing or uncertain publication history; never replace an intent")
         return row, receipts
 
-    def record(self):
+    def record(self, *, _observed=None):
         row, receipts = self.history()
         current = read_private(self.path, optional=True)
         if current is None:
             require(not any(p["revision"] == self.c.revision() for p in row["publications"]), "Lost corrected publication intent cannot be recreated")
             return None
-        return super().record()
+        return super().record(_observed=_observed)
 
     def save(self, receipt):
         row, _ = self.history()
