@@ -79,6 +79,7 @@ def publication_commands(stages, *, codex=False):
             parser.add_argument("--authorize-publication", action="store_true")
             parser.add_argument("--assume-administrative-quiescence", action="store_true")
             parser.add_argument("--confirm-project-publication-rules", action="store_true")
+            parser.add_argument("--accept-plan-unavailable", action="store_true", help="Separately accept the exact proposal's private personal plan limitation; waive no project requirement")
 
 
 def retained(args):
@@ -165,7 +166,8 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, pu
             else:
                 result = publication.publish(reviewed=args.reviewed, authorized=args.authorize_publication,
                     assume_quiescence=args.assume_administrative_quiescence,
-                    confirm_project_rules=args.confirm_project_publication_rules)
+                    confirm_project_rules=args.confirm_project_publication_rules,
+                    accept_plan_unavailable=args.accept_plan_unavailable)
                 report.update(status=result["status"], result=result)
             assert_public(report)
             return report, 0 if report["status"] in ("PUBLICATION_PROPOSED", "PUBLISHED_UNACCEPTED", "PUBLICATION_PRESENT", "NOT_DELEGATED") else 4

@@ -96,7 +96,7 @@ class _Budget:
 
 class GitHubCAS:
     """Authenticated observations and immutable upload; rights remain external."""
-    def __init__(self, target: GitHubTarget, transport: HTTPTransport):
+    def __init__(self, target: GitHubTarget, transport: HTTPTransport, *, personal=False):
         require(type(target) is GitHubTarget, "Select a typed pinned GitHub target")
         require(callable(getattr(transport, "bind_repository", None)), "A repository-ID-confined authenticated transport is required")
         transport.bind_repository(target.node_id, target.database_id)
@@ -104,6 +104,11 @@ class GitHubCAS:
         self._budget = contextvars.ContextVar("adp-network-budget", default=None)
         self.control = None
         self._live_unknown = False
+        require(type(personal) is bool, "Explicit personal policy selection required")
+        self.personal = personal
+        self.personal_context = None
+        self.personal_policy = None
+        self.personal_policy_binding = None
 
     def bind_control(self, control):
         control = safe_path(control)
@@ -227,6 +232,12 @@ class GitHubCAS:
         return tuple(sorted(result, key=lambda r: r.name))
 
     def inspect_ref(self, *, writable=False):
+        if self.personal:
+            from .personal_rules import inspect_ref
+            return inspect_ref(self, writable=writable)
+        return self._inspect_ref(writable=writable)
+
+    def _inspect_ref(self, *, writable=False):
         repo = self._repository(REF_QUERY, {"ref": self.target.ref})
         require("ref" in repo, "UNKNOWN: missing exact ref metadata")
         item = repo["ref"]

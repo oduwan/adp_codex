@@ -4,10 +4,11 @@ from __future__ import annotations
 import urllib.error
 import urllib.request
 
-from .discovery_github import API, MAX_RESPONSE, GitHubDiscoveryAdapter, GitHubHTTPTransport, Response
+from .discovery_github import API, MAX_RESPONSE, ENROLLMENT_PATH, GitHubDiscoveryAdapter, GitHubHTTPTransport, Response
 from .discovery_schema import json_value
 from .personal_storage import PersonalBlocked
 from .schema import require
+from .github_rules import retained_error
 
 
 class PersonalGitHubRead(GitHubHTTPTransport):
@@ -18,9 +19,9 @@ class PersonalGitHubRead(GitHubHTTPTransport):
     No mutation, credential issuance or arbitrary URL is supported.
     """
     def get(self, path):
-        if path != "/user":
+        if path != "/user" and not (ENROLLMENT_PATH.fullmatch(path) and "/rules/branches/" in path):
             return super().get(path)
-        request = urllib.request.Request(API + "/user", method="GET", headers={
+        request = urllib.request.Request(API + path, method="GET", headers={
             "Authorization": "Bearer " + self._token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "adp-codex-read-only"})
         try:
@@ -32,8 +33,9 @@ class PersonalGitHubRead(GitHubHTTPTransport):
         with response:
             raw = response.read(MAX_RESPONSE + 1)
             require(len(raw) <= MAX_RESPONSE, "Account observation exceeds bounds")
-            return Response(response.code, json_value(raw, MAX_RESPONSE) if response.code == 200 else None,
-                            tuple((name.lower(), value) for name, value in response.headers.items()))
+            headers = tuple((name.lower(), value) for name, value in response.headers.items())
+            return Response(response.code, json_value(raw, MAX_RESPONSE) if response.code == 200 else
+                            retained_error(response.code, raw, headers, path), headers)
 
 
 def owned_repository(transport, name, expected_id=None):

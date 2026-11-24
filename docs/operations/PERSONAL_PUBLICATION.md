@@ -65,6 +65,48 @@ never becomes absence. Policy observations are fresh observations, not an atomic
 lock on every GitHub administrative setting. The signed mode and its stronger
 wrong-repository negative controls remain unchanged.
 
+## GitHub Free private repository rules availability (#46)
+
+Personal inspection distinguishes `OBSERVED`, `PLAN_UNAVAILABLE` and `UNKNOWN`.
+Only the exact GitHub.com HTTP 403 message
+`Upgrade to GitHub Pro or make this repository public to enable this feature.`,
+the endpoint-specific official documentation URL and string status `403` qualify.
+The bounded closed JSON must have valid, unambiguous JSON/control headers and
+no rate-limit, redirect or pagination indication. Other error bodies are discarded.
+Signed-provider enrollment and transport retain their default behavior.
+
+The fallback requires fresh personally owned private repository identity, matching
+account/node/database IDs and current read/push/admin access. Publication observes
+the default and exact feature refs with an independent limited GraphQL query;
+GraphQL errors still block. Supported branch flags must be `protected=false`,
+and REST commit IDs must agree with GraphQL. An absent feature requires observed
+GraphQL absence, never a 404. Classic protection must independently return the
+same precisely recognized plan limitation; ordinary permission failure blocks.
+For an absent feature, the existing default branch supplies that repository-level
+classic capability witness; it does not prove absent feature protection. An
+existing feature requires its own classic-plan witness.
+The canonical `classic_scope=REPOSITORY_PRIVATE_PLAN` records this permitted
+witness scope, not a claim that feature-classic absence was observed.
+
+The exact proposal carries `plan_policy` and a distinct operator warrant.
+To approve that proposal, add `--accept-plan-unavailable` to the existing
+`personal publish` (or `codex publish --personal`) command. This separate assent
+waives no project requirement. Both upload/CAS boundaries reobserve the capability,
+ownership, permission and protection state. Changed entitlement (including 403 to
+200), owner, ref, protection or credential invalidates the approval.
+
+`PLAN_UNAVAILABLE` is never `OBSERVED_EMPTY` or independently verified protection
+absence. Its M3 reference is `personal:operator-plan-disabled-feature-policy`;
+`known` denotes the current operator-approved operational envelope, not absent
+native rules. Check requirements remain UNKNOWN unless actually prescribed or
+selected; an unenforced workflow is not automatically required. Existing UNKNOWN
+enrollments/receipts are immutable and need explicit operator disposition if fresh
+facts differ; reads never migrate or reset them. Original M1/M2, independent
+exact-SHA review, 45-second/128-request dispatch and uncertainty recovery remain.
+
+This compatibility repair is qualified with synthetic responses only. Genuine
+M8 remains NOTRUN; it authorizes no managed upgrade, pilot action or release.
+
 ## Operator flow
 
 Use the managed launcher and the original private enrollment directory, after a

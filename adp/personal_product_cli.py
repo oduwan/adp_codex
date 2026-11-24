@@ -24,6 +24,7 @@ def commands(stages, *, codex=False):
             p.add_argument("--authorize-memory-write", action="store_true", help="Explicit accepted product-flow migration/intent writes")
             p.add_argument("--assume-administrative-quiescence", action="store_true")
             p.add_argument("--confirm-project-rules", action="store_true")
+            p.add_argument("--accept-plan-unavailable", action="store_true", help="Separately accept the exact private personal plan limitation in this PR/merge proposal")
         if action in ("ci-preview", "check-ci"):
             p.add_argument("--accept-native-job-records", action="store_true")
             p.add_argument("--confirm-no-required-checks", action="store_true", help="Explicit current governance interpretation; never waives a requirement")
@@ -56,7 +57,8 @@ def dispatch(args, personal, *, runtime=None, clock=None, transport=None):
             authorize_memory=args.authorize_memory_write, assume_quiescence=args.assume_administrative_quiescence,
             confirm_rules=args.confirm_project_rules, title=getattr(args, "title", None), body=getattr(args, "body", None),
             method=getattr(args, "merge_method", None), delegate=getattr(args, "delegate_merge", False),
-            accept_envelope=getattr(args, "accept_head_atomic_base_observed", False))
+            accept_envelope=getattr(args, "accept_head_atomic_base_observed", False),
+            accept_plan_unavailable=getattr(args, "accept_plan_unavailable", False))
         return {"status": result["status"], "result": result}
     if action == "product-status":
         result = f.status(manual_method=args.merge_method)

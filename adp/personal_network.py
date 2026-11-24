@@ -23,6 +23,8 @@ from .network_http import NetworkTransportError, Response, _supported, supervise
 from .execution_ports import UnconfirmedValidation
 from .personal_network_child import context, validate_personal
 from .schema import decode, fields, require
+from .github_rules import retained_error
+from .personal_rules import PERSONAL_REF_QUERY
 
 
 class PersonalGitHubTransport:
@@ -93,7 +95,7 @@ class PersonalGitHubTransport:
             require(path == "/user" or path == "/graphql" or path.partition("?")[0] == self.target.api
                     or path.startswith(self.target.api + "/"), "Personal route targets another repository")
             if path == "/graphql":
-                require(body["query"] in (REF_QUERY, REFS_QUERY, UPDATE_REFS_MUTATION), "Unsupported personal GraphQL query")
+                require(body["query"] in (REF_QUERY, PERSONAL_REF_QUERY, REFS_QUERY, UPDATE_REFS_MUTATION), "Unsupported personal GraphQL query")
                 identity = body["variables"]["input"]["repositoryId"] if body["query"] == UPDATE_REFS_MUTATION else body["variables"].get("id")
                 require(identity == self.target.node_id, "Personal GraphQL recipient differs")
             mutation = method == "PUT" or method == "POST" and (path != "/graphql" or body["query"] == UPDATE_REFS_MUTATION)
@@ -137,7 +139,7 @@ class PersonalDiscoveryRead:
         except (ADPError, OSError):
             body = None
         observed = self.service.transport.last_response
-        if observed is None:
+        if observed is None or self.service.unconfirmed_contexts():
             return ReadResponse(0, None)
-        status, _, headers = observed
-        return ReadResponse(status, body if status == 200 else None, headers)
+        status, raw, headers = observed
+        return ReadResponse(status, body if status == 200 else retained_error(status, raw, headers, path), headers)

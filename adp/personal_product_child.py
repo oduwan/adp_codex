@@ -14,11 +14,12 @@ from adp.network_http_child import MAX_INPUT_BYTES, MAX_OUTPUT_BYTES
 from adp.project_validation_github import validate_get
 from adp.policy_schema import ref
 from adp.network_git import REF_QUERY, REFS_QUERY
+from adp.personal_rules import PERSONAL_REF_QUERY
 
 
 def validate_product(method, path, body, seconds):
     if method == "POST" and path == "/graphql":
-        if type(body) is not dict or body.get("query") not in (REF_QUERY, REFS_QUERY):
+        if type(body) is not dict or body.get("query") not in (REF_QUERY, PERSONAL_REF_QUERY, REFS_QUERY):
             raise ValueError("Product selection has read-only GraphQL")
     elif method in ("POST", "PUT"):
         # Publication stays on the separately approved #40 transport. A PR or

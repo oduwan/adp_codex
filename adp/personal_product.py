@@ -27,6 +27,7 @@ from .personal_git import administration
 from .personal_github import owned_repository
 from .personal_product_http import PersonalProductTransport, PersonalProjectRead
 from .personal_product_policy import closing_directive, observe_policy, product_text
+from .github_rules import PLAN_ASSENT
 from .personal_publication import PersonalPublication, WARRANT
 from .personal_storage import LIMIT, PersonalBlocked, create_private, read_private
 from .policy import PolicyProvider
@@ -92,6 +93,9 @@ class PersonalProduct:
             require(intent["view"]["operation"] in ("PR", "MERGE")
                     and intent["approval"] == self.token(intent["view"], intent["binding"])
                     and intent["action"] == digest({"personal-product": intent["view"]}), "Product consent changed")
+            require("availability" not in intent["view"]["facts"]["policy"]
+                    or intent["view"].get("plan_disabled_rules_assent") == PLAN_ASSENT,
+                    "Exact product plan-disabled rules warrant is missing")
         for execution in row["execution"]:
             fields(execution, "view approval binding phase checks result reservation")
             require(execution["view"]["operation"] in ("CI", "REVIEW", "CORRECT")
@@ -179,7 +183,7 @@ class PersonalProduct:
         base_ref = "refs/heads/" + p["repository"]["default_branch"]
         require(refs.get(self.target.ref) == self.c.revision() and base_ref in refs,
                 "Exact published HEAD and current base required")
-        policy = observe_policy(self.read, self.target, base_ref)
+        policy = observe_policy(self.read, self.target, base_ref, personal=(p["repository"], p["owner"]), expected_sha=refs[base_ref])
         names = sorted(set(p["required_check_names"]) | set(policy["checks"]))
         require(len(names) <= 32, "Project checks exceed accepted capacity")
         methods = []
@@ -260,6 +264,8 @@ class PersonalProduct:
                 "policy_assent": ASSENT, "administrative_quiescence_warrant": WARRANT,
                 "merge_envelope": ENVELOPE, "generation": self.c.memory.inspect()["state"]["generation"],
                 "checkpoint": self.c.memory.inspect()["local_head"], "issued_at": issued, "expires_at": expires, "nonce": nonce}
+            if "availability" in facts["policy"]:
+                view["plan_disabled_rules_assent"] = PLAN_ASSENT
             binding = self.transport.credential_binding
             require(self.clock() < expires, "Proposal expired during observation")
         return {"status": "WAITING_HUMAN_APPROVAL" if operation == "MERGE" and not delegate else operation + "_PROPOSED",
@@ -309,7 +315,8 @@ class PersonalProduct:
             {"source": data(s), "snapshot": data(snapshot)})) for s in claims)
         f = v["facts"]
         protection = Protection(f["base_ref"], f["base_sha"], True, False, True, tuple(f["checks"]),
-            max(1, f["policy"]["native_reviews"]), tuple(f["methods"]), (), "personal:actual-native-base-policy",
+            max(1, f["policy"]["native_reviews"]), tuple(f["methods"]), (),
+            "personal:operator-plan-disabled-base-policy" if "availability" in f["policy"] else "personal:actual-native-base-policy",
             v["issued_at"], v["expires_at"], mergeable_methods=tuple(f["methods"]))
         provider.protections = (replace(protection, evidence=self.proof("policy/protection", provider.protection_subject(protection, snapshot),
             "protection", {"protection": data(protection), "snapshot": data(snapshot)})),)
@@ -339,7 +346,7 @@ class PersonalProduct:
                 "Current exact M3 final authorization required")
 
     def intent(self, operation, *, reviewed, authorized, authorize_memory, assume_quiescence, confirm_rules,
-               title=None, body=None, method=None, delegate=False, accept_envelope=False):
+               title=None, body=None, method=None, delegate=False, accept_envelope=False, accept_plan_unavailable=False):
         require(authorized is True and authorize_memory is True and assume_quiescence is True and confirm_rules is True,
                 "Separate exact operator effect, memory migration, project rules and quiescence approvals required")
         require(operation != "MERGE" or delegate is True and accept_envelope is True,
@@ -354,6 +361,8 @@ class PersonalProduct:
             if old is None:
                 proposed = self.proposed(operation, approved=reviewed, title=title, body=body, method=method, delegate=delegate)
                 require(proposed["approval"] == reviewed and proposed.get("result") is not None, "Product proposal changed")
+                require("plan_disabled_rules_assent" not in proposed["result"] or accept_plan_unavailable is True,
+                        "PLAN_UNAVAILABLE: separately accept this exact operation's plan-disabled rules warrant")
                 row = self.initialize()
                 old = {"view": proposed["result"], "approval": reviewed, "binding": proposed["binding"],
                     "action": digest({"personal-product": proposed["result"]}), "requirement": None, "reservation": None, "observation": None}

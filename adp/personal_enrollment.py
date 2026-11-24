@@ -69,7 +69,7 @@ def governance(root):
 def selection(repo, remote, expected_id, transport):
     checkout = local_checkout(repo, remote)
     owner = owned_repository(transport, checkout["repository"], expected_id)
-    observation = inspect_project(checkout, transport, owner["repository_id"])
+    observation = inspect_project(checkout, transport, owner["repository_id"], personal_owner=owner)
     require(complete_snapshot(observation.snapshot), "Complete native discovery is required for personal setup")
     return observation, owner
 

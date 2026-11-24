@@ -151,3 +151,28 @@ regressions cover the independently confirmed missing-origin accounting boundary
 CI and independent review are reported in Issue #41 and its Draft PR. Synthetic
 workers/API records are not genuine Codex/GitHub qualification. Engineering
 merge, installation, pilot, release and deployment remain unauthorized.
+
+## Private Free-plan rules API (#46)
+
+Base-branch PR/check/merge policy uses the same exact plan-error classifier as
+[feature publication](PERSONAL_PUBLICATION.md).
+It requires fresh private personal owner/admin identity, current exact base SHA,
+supported `protected=false` and separately verified classic-plan unavailability.
+`availability` and its digest remain in every current policy/approval observation.
+Protected, inconsistent, incomplete or permission-denied metadata blocks writes.
+HTTP 200 rules retain all existing supported requirements and unsupported-rule
+refusals; no generic 403 becomes an empty rule inventory.
+
+For a proposal carrying the plan-disabled warrant, `pr-create` and `merge` each
+require their own `--accept-plan-unavailable`, in addition to their existing
+separate exact approvals and delegation flags. Neither publication assent nor
+credentials authorize either operation. Recovery retains the original immutable
+assent and observes an uncertain effect without another POST/PUT. A new policy or
+SHA invalidates the old approval. M3 fallback provenance is explicitly
+`personal:operator-plan-disabled-base-policy`, never actual-native absence.
+
+The fallback's empty observed-check set and zero native-review minimum are not
+absence claims. Original governance/selected check names remain mandatory, genuine
+post-PR evidence is still bound to current SHA/PR, independent Codex review is
+still required and merge remains manual without separate delegation. Missing,
+stale, failed or pending project CI never becomes PASS. No target CI is changed.

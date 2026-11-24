@@ -14,7 +14,7 @@ from .config import Config
 from .discovery_github import GitHubDiscoveryAdapter
 from .discovery_schema import digest, typed
 from .errors import ADPError
-from .enrollment import branch_rules, local_checkout
+from .enrollment import local_checkout
 from .execution_memory import ExecutionJournal, invocation_lock
 from .execution_policy import ReservedSafety
 from .guard import ProgressGuard
@@ -29,6 +29,8 @@ from .policy import PolicyProvider
 from .policy_types import Authorization, Effect, Operation, Permission, Plan, Protection, Qualifications, RepositorySnapshot, Request, Rules, SourceClaim, SourceKind, Task
 from .schema import encode, fields, key, require
 from .storage import atomic
+from .github_rules import PLAN_ASSENT
+from .personal_rules import enrollment_rules
 
 WARRANT = "No repository rename, transfer, name reuse or credential-scope changes during this finite publication window."
 POLICY_ASSENT = "I reviewed the supplied current project governance: this exact feature publication is permitted and has no unmet or unrepresented prepublication condition."
@@ -78,7 +80,8 @@ class PersonalPublication:
         self.transport = transport or PersonalGitHubTransport(self.target,
             protected_roots=(self.personal.feature, Path(p["checkout"]["path"]), self.personal.directory, Path(__file__).resolve().parents[1]),
             authorize_write=self.write_authorized)
-        self.service = GitHubCAS(self.target, self.transport)
+        self.service = GitHubCAS(self.target, self.transport, personal=True)
+        self.service.personal_context = (p["repository"], p["owner"])
         self.service.bind_control(self.c.memory.control)
         self.read = PersonalDiscoveryRead(self.service)
         self.c.transport = self.read
@@ -102,6 +105,8 @@ class PersonalPublication:
                 and row["view"]["generation"] == (_observed if _observed is not None else self.c.memory.inspect())["state"]["generation"],
                 "Publication identity, consent or ownership changed")
         view = row["view"]
+        require(view.get("plan_policy") is None or view.get("plan_disabled_rules_assent") == PLAN_ASSENT,
+                "Exact personal plan-disabled publication warrant is missing")
         require(view["administrative_quiescence_warrant"] == WARRANT and view["project_policy_assent"] == POLICY_ASSENT
                 and view["operation"] == "PUSH" and view["force"] is False
                 and row["approval"] == ".".join(("publish1", str(view["issued_at"]), str(view["expires_at"]), view["nonce"],
@@ -203,10 +208,12 @@ class PersonalPublication:
                 and repo.get("default_branch") == p["repository"]["default_branch"]
                 and self.target.branch != repo["default_branch"], "Current owner, permission, identity or default branch differs")
         try:
+            retained = self.record()
+            self.service.personal_policy_binding = ((retained["view"].get("plan_policy"),) if retained is not None else None)
             return self.service.inspect_ref(writable=True)
         except (ADPError, OSError):
             raise PersonalBlocked("FEATURE_POLICY_UNVERIFIED",
-                "Restore current GitHub feature-ref, permission and branch-rule metadata access; constrained or protected refs are unsupported. Never assume missing rules or retry an uncertain write.") from None
+                "Verify current owner/admin access, exact feature ref and protections. A private plan-disabled fallback requires supported unprotected branch evidence, exact classic-plan evidence and separate operation assent. Other unknown or constrained refs remain blocked; never retry an uncertain write.") from None
 
     def proposed(self, approved=None):
         now = self.clock()
@@ -245,6 +252,8 @@ class PersonalPublication:
                 "administrative_quiescence_warrant": WARRANT, "operation": "PUSH", "force": False,
                 "dispatch_seconds": 45, "maximum_requests": 128, "issued_at": issued, "expires_at": expires,
                 "nonce": nonce, "product_acceptance": "NOT_ACCEPTED", "other_external_rights": "NOT_DELEGATED"}
+            if self.service.personal_policy is not None:
+                view.update(plan_policy=self.service.personal_policy, plan_disabled_rules_assent=PLAN_ASSENT)
             binding = self.transport.credential_binding
             token = ".".join(("publish1", str(issued), str(expires), nonce, digest({"view": view, "private_credential": binding})))
             require(self.clock() < expires, "Publication window expired during observations")
@@ -312,7 +321,7 @@ class PersonalPublication:
             # repository inventory inside the unchanged CAS request budget.
             self.c.track.publication_prerequisites()
         require(self.current_original() == self.record()["view"]["original_observation"], "Original-ticket scope or native evidence changed")
-        require([branch_rules(self.read, p["repository"]["name"], item["ref"].removeprefix("refs/heads/"))
+        require([enrollment_rules(self.read, p["repository"], p["owner"], item["ref"].removeprefix("refs/heads/"))
                 for item in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")
         require(self.remote() == self.record()["view"]["expected_old"], "Remote authority or exact ref changed before CAS")
 
@@ -437,7 +446,8 @@ class PersonalPublication:
         claims += [SourceClaim(d.kind, d.reference, d.digest, self.rules(), issued, expires) for d in snapshot.documents]
         provider.sources = tuple(replace(source, evidence=self.proof("policy/" + source.kind.lower(), provider.source_subject(source, snapshot),
             "source", {"source": data(source), "snapshot": data(snapshot)})) for source in claims)
-        protection = Protection(self.target.ref, old, True, True, False, (), 1, (), (), "personal:native-feature-policy", self.clock(), expires)
+        reference = "personal:operator-plan-disabled-feature-policy" if row["view"].get("plan_policy") is not None else "personal:native-feature-policy"
+        protection = Protection(self.target.ref, old, True, True, False, (), 1, (), (), reference, self.clock(), expires)
         provider.protections = (replace(protection, evidence=self.proof("policy/protection", provider.protection_subject(protection, snapshot),
             "protection", {"protection": data(protection), "snapshot": data(snapshot)})),)
         state = self.c.memory.inspect()["state"]
@@ -482,13 +492,15 @@ class PersonalPublication:
             "progress_guard": decision.kind, "independent_publication_progress": "NOT_CLAIMED", "repository_id": self.personal.repository_id,
             "ref": self.target.ref, "revision": observation.revision, "product_acceptance": "NOT_ACCEPTED", "other_external_rights": "NOT_DELEGATED"}
 
-    def publish(self, *, reviewed, authorized, assume_quiescence, confirm_project_rules):
+    def publish(self, *, reviewed, authorized, assume_quiescence, confirm_project_rules, accept_plan_unavailable=False):
         require(authorized is True and assume_quiescence is True and confirm_project_rules is True,
                 "Separately confirm the exact publication, project rules and finite quiescence warrant")
         existing = self.record()
         if existing is None:
             view, token, binding = self.proposed(reviewed)
             require(reviewed == token, "Publication proposal changed; no mutation authorized")
+            require("plan_disabled_rules_assent" not in view or accept_plan_unavailable is True,
+                    "PLAN_UNAVAILABLE: separately accept this exact publication's plan-disabled rules warrant")
         else:
             require(reviewed == existing["approval"], "Use the original publication intent; do not renew it")
         with invocation_lock(self.c.memory.control):
