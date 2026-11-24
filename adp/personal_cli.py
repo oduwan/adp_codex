@@ -22,6 +22,7 @@ from .schema import require
 
 ACTIONS = ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect", "run", "resume", "handoff")
 PUBLICATION = ("publication-preview", "publish", "publication-status")
+ARCHIVAL = ("archive-preview",)
 from .personal_product_cli import PRODUCT
 from .personal_track_cli import TRACK, WRITES
 
@@ -61,6 +62,18 @@ def add_commands(commands):
 
 
 def publication_commands(stages, *, codex=False):
+    for action in ARCHIVAL:
+        parser = stages.add_parser(action, help="Read-only expired NOTRUN archival proposal; no mutation authority")
+        parser.add_argument("--repo", type=Path, required=True)
+        parser.add_argument("--remote", required=True)
+        parser.add_argument("--directory", type=Path, required=True)
+        parser.add_argument("--github-id")
+        parser.add_argument("--issue", type=int)
+        parser.add_argument("--request", required=True)
+        parser.add_argument("--checkpoint")
+        parser.add_argument("--expected-proposal")
+        if codex:
+            parser.add_argument("--personal", action="store_true", required=True)
     from .personal_track_cli import commands as track_commands
     track_commands(stages, codex=codex)
     from .personal_product_cli import commands as product_commands
@@ -119,16 +132,23 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, pu
         "runtime_qualification": "NOTRUN"}
     try:
         if action == "capabilities":
-            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT + TRACK), "scope": "LOCAL_DRAFT",
+            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL), "scope": "LOCAL_DRAFT",
                 "providers": "NOT_REQUIRED", "external_operations": "NOT_DELEGATED",
                 "publication": {"status": "AVAILABLE_UNDER_SEPARATE_EXACT_APPROVAL", "credential_envelope": "OPERATOR_ADMINISTRATIVE_QUIESCENCE"}})
             assert_public(report)
             return report, 0
-        require(action in ACTIONS + PUBLICATION + PRODUCT + TRACK, "Unsupported personal command")
+        require(action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL, "Unsupported personal command")
         require(not any(getattr(args, name, None) for name in ("operator_trust", "operator_socket", "operator_profile")),
                 "Choose personal mode or the unchanged signed-provider mode; never convert an enrollment")
         require(getattr(args, "rounds", 1) == 1 and getattr(args, "maximum_parallel", 1) == 1,
                 "Personal mode admits exactly one issue, one task iteration and one concurrent worker")
+        if action in ARCHIVAL:
+            from .personal_archive import proposal
+            c = PersonalCoordinator(retained(args), None, None, runtime=runtime, clock=clock)
+            view = proposal(c, args.request, checkpoint=args.checkpoint, expected=args.expected_proposal)
+            report.update(status=view["status"], result=view)
+            assert_public(report)
+            return report, 0
         if action in TRACK:
             from .personal_track_cli import dispatch
             if transport is None and action in ("track-preview", "track-enroll", "track-status"):

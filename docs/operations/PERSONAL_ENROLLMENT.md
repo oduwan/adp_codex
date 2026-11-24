@@ -123,6 +123,10 @@ change requests become feedback within the original role/time/M2 budgets.
 Resume reobserves the original ticket and exact source. It cannot reuse a code
 review after a source change or renew the finite window.
 
+Stopped unapproved NOTRUN results use the narrow [M1 delivery bridge and
+read-only archival proposal](PERSONAL_NOTRUN_ARCHIVAL.md). Expired attempts cannot
+use ordinary resume; the proposal grants no archival write or new execution.
+
 Credentials are obtained from the named environment variable or fixed
 `gh auth token --hostname github.com` outside chat. They enter only fixed-origin
 read transports, never command arguments, prompts, portable memory or reports.
