@@ -280,19 +280,47 @@ class Memory:
             self._owner(state)
         return head, copy.deepcopy(state), copy.deepcopy(tasks)
 
-    def _write_files(self, state: dict, tasks: dict[str, dict]) -> None:
+    def _write_files(self, state: dict, tasks: dict[str, dict], *, _fence=None) -> None:
         self._layout()
         directory = self.path / "tasks"
+        if _fence is not None:
+            _fence()
         directory.mkdir(exist_ok=True)
         for task_key, task in tasks.items():
+            if _fence is not None:
+                _fence()
             atomic(directory / (task_key + ".json"), encode(task))
         for item in directory.iterdir():
             if item.stem not in tasks:
+                if _fence is not None:
+                    _fence()
                 item.unlink()
         sync_directory(directory)
+        if _fence is not None:
+            _fence()
         atomic(self.path / "state.json", encode(state))
 
-    def _checkpoint(self, head: str, state: dict, tasks: dict[str, dict]) -> dict:
+    def _checkpoint(self, head: str, state: dict, tasks: dict[str, dict], *, _fence=None) -> dict:
+        if _fence is not None:
+            _fence()
+        previous, _ = self._read_ref(head)
+        if previous.get("progress_guard", {}).get("schema_version") == 2:
+            from .accounting_policy import entry
+            old, new = entry(previous), entry(state)
+            require(new is not None and {k: v for k, v in old.items() if k != "usage"} ==
+                    {k: v for k, v in new.items() if k != "usage"}, "An accounting lineage cannot be replaced or renewed")
+            before, after = old["usage"], new["usage"]
+            require(all(after[n] >= before[n] for n in ("observations", "checks", "seconds", "samples", "payload_bytes"))
+                    and all(after["requests"].get(k) == v for k, v in before["requests"].items())
+                    and after["check_ids"][:len(before["check_ids"])] == before["check_ids"]
+                    and previous["progress_guard"]["requirements"].keys() <= state["progress_guard"]["requirements"].keys(),
+                    "Accounting consumption and admitted history are append-only")
+            require(state["progress_guard"]["task_epochs"].get(old["parent_task"]) == previous["progress_guard"]["task_epochs"][old["parent_task"]]
+                    and {k for k, v in state["progress_guard"]["requirements"].items() if old["parent_task"] in v["tasks"]} ==
+                        {k for k, v in previous["progress_guard"]["requirements"].items() if old["parent_task"] in v["tasks"]}
+                    and all(state["progress_guard"]["requirements"].get(k) == v for k, v in
+                            previous["progress_guard"]["requirements"].items() if old["parent_task"] in v["tasks"]),
+                    "All historical parent guard records and its epoch remain immutable")
         state["revision"] += 1
         state["task_keys"] = sorted(tasks)
         if state["schema_version"] in (2, 3):
@@ -301,17 +329,26 @@ class Memory:
                 task_key: epochs.get(task_key, state["revision"]) for task_key in tasks}
         bundle(state, tasks, self.config.identity)
         pending = {"base": head, "state": state, "tasks": tasks}
+        if _fence is not None:
+            _fence()
         atomic(self.control / "pending.json", encode(pending, MAX_JOURNAL))
-        self._finish(pending)
+        self._finish(pending, _fence=_fence)
         return self.inspect()
 
-    def _finish(self, pending: dict, *, expected_remote=_UNREVIEWED_REMOTE) -> None:
+    def _finish(self, pending: dict, *, expected_remote=_UNREVIEWED_REMOTE, _fence=None) -> None:
         base, state, tasks = pending["base"], pending["state"], pending["tasks"]
         if expected_remote is not _UNREVIEWED_REMOTE:
             require(self._remote_head() == expected_remote, "Reviewed remote checkpoint changed before recovery")
         current = value(self.path, "rev-parse", "HEAD")
         if current == base:
-            self._write_files(state, tasks)
+            if _fence is not None:
+                _fence()
+            if _fence is None:
+                self._write_files(state, tasks)
+            else:
+                self._write_files(state, tasks, _fence=_fence)
+            if _fence is not None:
+                _fence()
             self._write_git(self.path, "add", "--all", "--", "state.json", "tasks")
             self._write_git(self.path, "commit", "-m", f"Checkpoint coordination revision {state['revision']}")
         else:
@@ -323,7 +360,11 @@ class Memory:
         require(expected_remote is _UNREVIEWED_REMOTE or remote == expected_remote,
                 "Reviewed remote checkpoint changed during recovery")
         if remote != value(self.path, "rev-parse", "HEAD"):
+            if _fence is not None:
+                _fence()
             self._push(base)
+        if _fence is not None:
+            _fence()
         (self.control / "pending.json").unlink()
         sync_directory(self.control)
 
@@ -334,6 +375,8 @@ class Memory:
             head, state, tasks = self._start(owned=False)
             if self._owns(state["owner"]):
                 return self.inspect()
+            require(state.get("progress_guard", {}).get("schema_version") != 2,
+                    "An accounting episode cannot change its original owner generation")
             if initial_only:
                 require(state["owner"] is None and state["generation"] == 0 and state["revision"] == 1
                         and state["schema_version"] == 1 and not tasks and not takeover,
@@ -375,7 +418,7 @@ class Memory:
             state["owner"] = None
             return self._checkpoint(head, state, tasks)
 
-    def recover(self, *, before_effects=None, expected_remote=_UNREVIEWED_REMOTE, validate_states=None) -> dict:
+    def recover(self, *, before_effects=None, expected_remote=_UNREVIEWED_REMOTE, validate_states=None, _fence=None) -> dict:
         """Explicitly publish a validated pending transaction or fast-forward sync.
 
         A missing owner is never repaired by recovery. Released/foreign owners
@@ -400,16 +443,20 @@ class Memory:
                 # Only destinations named in this validated owned transaction
                 # may have their private scratch slots removed.
                 for path, limit in self._recovery_slots(pending, {}):
+                    if _fence is not None:
+                        _fence()
                     clear_slot(path, limit)
                 if guarded:
-                    self._finish(pending, expected_remote=expected_remote)
+                    self._finish(pending, expected_remote=expected_remote, _fence=_fence)
                 else:
-                    self._finish(pending)
+                    self._finish(pending, _fence=_fence)
             else:
                 committed, committed_tasks = self._read_ref(value(self.path, "rev-parse", "HEAD"))
                 if validate_states is not None:
                     validate_states(committed)
                 for path, limit in self._recovery_slots(None, committed_tasks):
+                    if _fence is not None:
+                        _fence()
                     clear_slot(path, limit)
                 head, state, _ = self._local()
                 remote = self._remote_head()
@@ -479,18 +526,21 @@ class Memory:
         string(worker, 128)
         with locked(self.control):
             head, state, tasks = self._start()
-            task = self._task(tasks, identifier)
-            if task["source_revision"] is None:
-                raise Conflict("Assignment requires an exact source revision")
-            state["assignment_sequence"] += 1
-            job_id = f"{state['generation']}-{state['assignment_sequence']}"
-            task["assignments"][job_id] = {"generation": state["generation"],
-                "worker": worker, "source_revision": task["source_revision"],
-                "status": "pending", "result": None}
+            result = self._assign(state, tasks, identifier, worker)
             self._checkpoint(head, state, tasks)
-            return {"assignment_id": job_id, "generation": state["generation"],
-                    "task_key": task["key"], "worker": worker,
-                    "source_revision": task["source_revision"]}
+            return result
+
+    def _assign(self, state, tasks, identifier, worker):
+        """Existing transition for callers already holding the canonical lock."""
+        task = self._task(tasks, identifier)
+        if task["source_revision"] is None:
+            raise Conflict("Assignment requires an exact source revision")
+        state["assignment_sequence"] += 1
+        job_id = f"{state['generation']}-{state['assignment_sequence']}"
+        task["assignments"][job_id] = {"generation": state["generation"], "worker": worker,
+            "source_revision": task["source_revision"], "status": "pending", "result": None}
+        return {"assignment_id": job_id, "generation": state["generation"], "task_key": task["key"],
+                "worker": worker, "source_revision": task["source_revision"]}
 
     def _inbox(self) -> list[Path]:
         directory = safe_path(self.path / "inbox")
@@ -520,16 +570,19 @@ class Memory:
         """Worker-only immutable local delivery; never writes canonical state."""
         with locked(self.control):
             _, state, tasks = self._local()
-            self._envelope(envelope, state, tasks)
-            inbox = self.path / "inbox"
-            inbox.mkdir(exist_ok=True, mode=0o700)
-            require(len(self._inbox()) < MAX_ASSIGNMENTS, "Local inbox capacity exceeded")
-            path = inbox / (key(envelope["assignment_id"]) + ".json")
-            try:
-                atomic(path, encode(envelope, MAX_RESULT), replace=False)
-            except FileExistsError as exc:
-                raise Conflict("Duplicate immutable inbox delivery") from exc
-            return path
+            return self._deliver(envelope, state, tasks)
+
+    def _deliver(self, envelope, state, tasks):
+        self._envelope(envelope, state, tasks)
+        inbox = self.path / "inbox"
+        inbox.mkdir(exist_ok=True, mode=0o700)
+        require(len(self._inbox()) < MAX_ASSIGNMENTS, "Local inbox capacity exceeded")
+        path = inbox / (key(envelope["assignment_id"]) + ".json")
+        try:
+            atomic(path, encode(envelope, MAX_RESULT), replace=False)
+        except FileExistsError as exc:
+            raise Conflict("Duplicate immutable inbox delivery") from exc
+        return path
 
     def accept(self, assignment_id: str) -> dict:
         with locked(self.control):
@@ -537,13 +590,16 @@ class Memory:
             path = self.path / "inbox" / (key(assignment_id) + ".json")
             envelope = load_json(path, MAX_RESULT)
             require(envelope.get("assignment_id") == assignment_id, "Inbox identity mismatch")
-            job = self._envelope(envelope, state, tasks)
-            job["status"] = "accepted"
-            job["result"] = envelope["result"]
+            self._accept_result(envelope, state, tasks)
             self._checkpoint(head, state, tasks)
             path.unlink()
             sync_directory(path.parent)
             return self.inspect()
+
+    def _accept_result(self, envelope, state, tasks):
+        job = self._envelope(envelope, state, tasks)
+        job["status"] = "accepted"
+        job["result"] = envelope["result"]
 
     def cleanup_inbox(self) -> dict:
         """Remove only deliveries already durably accepted with identical content."""

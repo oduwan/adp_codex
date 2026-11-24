@@ -88,6 +88,16 @@ def bundle(state: dict, tasks: dict[str, dict], repository_id: str) -> None:
         from .guard_schema import guard_schema
         guard_schema(state["progress_guard"], repository_id)
         require(set(state["progress_guard"]["task_epochs"]) == set(tasks), "Guard task incarnation registry mismatch")
+        if state["progress_guard"]["schema_version"] == 2:
+            from .accounting_policy import entry
+            from .discovery_schema import digest
+            relation = entry(state)
+            require(set(tasks) == {relation["parent_task"], relation["child_task"]}
+                    and digest(tasks[relation["parent_task"]]) == relation["parent_task_digest"]
+                    and state["generation"] == relation["generation"],
+                    "An accounting episode cannot replace its parent task or generation")
+            require(all(a["worker"].startswith("worker:") and a["worker"][7:] in relation["usage"]["requests"]
+                        for a in tasks[relation["child_task"]]["assignments"].values()), "Episode assignment has no canonical role allocation")
     require(state["repository_id"] == repository_id, "Repository identity mismatch")
     integer(state["revision"], 1)
     integer(state["generation"])

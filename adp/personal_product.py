@@ -324,7 +324,7 @@ class PersonalProduct:
         state = self.c.memory.inspect()
         task = Task(self.personal.repository_id, self.c.task_id, self.target.branch.split("/")[-1], self.c.revision(), self.target.ref,
             permit.decision.baseline.requirement_id, state["state"]["generation"], state["state"]["progress_guard"]["task_epochs"][key(self.c.task_id)],
-            state["tasks"][key(self.c.task_id)]["iteration"], ("worker:" + self.c.record()["developer"],))
+            state["tasks"][key(self.c.task_id)]["iteration"], self.c.source_authors())
         return provider, task
 
     def authorize(self, provider, plan, qualifications=Qualifications()):
@@ -634,6 +634,7 @@ class PersonalProduct:
         return permit
 
     def charge_ci(self, entry):
+        self.c.charge_check("post-pr:" + digest(entry["view"]))
         run = self.c.record()
         reservation = entry["reservation"]
         if "observation_before" not in reservation:

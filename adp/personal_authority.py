@@ -22,6 +22,29 @@ class PersonalAuthority:
         self.c = coordinator
         self.directory = coordinator.personal.state / "evidence"
 
+    def qualify_accounting(self, state, task):
+        """Observational capability; no c.live/Guard call or evidence write."""
+        if not self.c.episode:
+            return False
+        from .accounting_policy import entry
+        relation, _ = self.c.personal.active(memory=self.c.memory)
+        observed = self.c.memory.inspect()
+        require(observed["health"] == "SYNCED" and observed["local_owner"]
+                and observed["state"] == state and observed["tasks"].get(task["key"]) == task
+                and relation == entry(state) and task["key"] == relation["child_task"]
+                and all(identifier == relation["parent_requirement"] or item["mode"] == "normal"
+                        for identifier, item in state["progress_guard"]["requirements"].items()), "Accounting qualification subject differs")
+        self.c.episode_fence()  # Fresh UTC/revocation after the complete proof.
+        return True
+
+    def fence_accounting(self):
+        if not self.c.episode:
+            return False
+        self.c.personal.active(memory=self.c.memory, allow_expired=False, now=self.c.clock())
+        self.c.memory._owner(self.c.memory.inspect(recovery=True)["state"])
+        self.c.episode_fence()
+        return True
+
     def _proof(self, purpose, subject, kind, payload, principal):
         self.c.live()
         body = {"schema_version": 1, "purpose": purpose, "subject": subject, "kind": kind,

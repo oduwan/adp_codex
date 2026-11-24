@@ -30,6 +30,7 @@ class ReservedSafety:
 
     def observe(self, task: Task):
         state, memory_task, item = self.guard._snapshot(task.task_id, task.requirement_id)
+        require(self.guard._qualified_accounting(state, memory_task), "The exact accounting episode is not qualified for execution")
         baseline = self.guard._baseline(task.requirement_id, state, memory_task, item)
         if self.forensic_request is not None:
             require(item["mode"] == "forensic" and item["request"] is not None

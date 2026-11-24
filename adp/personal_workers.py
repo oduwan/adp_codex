@@ -60,6 +60,11 @@ class PersonalWorkers:
                 require(request.id == path.stem and request.role == ROLES[row["purpose"]][0]
                         and request.task_id == self.c.task_id and request.prompt == prompt(row["purpose"], row["context"]),
                         "Personal worker identity/context changed")
+                if self.c.episode:
+                    window = self.c.personal.plan["window"]
+                    require(request.seconds <= window["worker_seconds"]
+                            and window["issued_at"] <= request.deadline - request.seconds < request.deadline <= window["expires_at"],
+                            "Episode worker request exceeds its approved finite window/cap")
                 rows.append(row)
         require(len(rows) <= sum(self.c.personal.plan["window"][limit] for limit in {limit for _, limit in ROLES.values()}),
                 "Personal role inventory exceeds the approved bound")
@@ -89,6 +94,11 @@ class PersonalWorkers:
         require(not any(other["request"]["id"] != request.id and other["observation"] is not None
                         and other["observation"]["context_id"] == observed.context_id for other in self.records()),
                 "Codex role contexts are not independent")
+        if self.c.episode:
+            relation, historical_contexts = self.c.personal.active(memory=self.c.memory)
+            require(observed.host == relation["host"] and observed.context_id not in historical_contexts
+                    and relation["usage"]["requests"].get(request.id) == {"purpose": row["purpose"]},
+                    "Episode context, host or canonical lifetime role charge differs")
         if approval:
             require(request.role == Role.REVIEWER and observed.result.approved is True
                     and observed.result.outcome == Outcome.PASS and observed.result.criteria == (row["purpose"],),
@@ -261,7 +271,7 @@ class PersonalWorkers:
             caps = self.c.runtime.capabilities()
             if not all((caps.independent_contexts, caps.observe, caps.cancel, caps.workspace_write)):
                 raise PersonalBlocked("UNSUPPORTED_RUNTIME", "Use the supported independent supervised Codex CLI.", status="UNSUPPORTED_RUNTIME")
-            seconds = min(300, self.c.seconds_left(), (deadline - self.c.clock()) if deadline else 300)
+            seconds = min(self.c.personal.plan["window"]["worker_seconds"], self.c.seconds_left(), (deadline - self.c.clock()) if deadline else 300)
             require(seconds > 0, "The original containment deadline expired")
             revision = value(workspace, "rev-parse", "HEAD")
             state = self.c.memory.inspect()["state"]
@@ -283,7 +293,7 @@ class PersonalWorkers:
                         if a["worker"] == "worker:" + request.id]
             require(len(existing) <= 1, "Ambiguous M1 worker assignment")
             if not existing:
-                row["assignment"] = self.c.memory.assign(self.c.task_id, "worker:" + request.id)
+                row["assignment"] = self.c.assign_worker(row)
             else:
                 identifier, assignment = existing[0]
                 require(assignment["status"] == "pending" and assignment["generation"] == request.generation

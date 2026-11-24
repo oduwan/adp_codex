@@ -52,6 +52,9 @@ class PersonalCoordinator:
         self.memory = personal.memory()
         self.runtime = runtime or CodexExecRuntime(personal.state / "runtime")
         self.task_id = "personal:" + digest({"repository": personal.repository_id, "issue": personal.plan["issue_id"]})
+        self.episode = personal.intent["kind"] == "ACCOUNTING_EPISODE"
+        if self.episode:
+            self.task_id = personal.task_id
         self.authority = PersonalAuthority(self)
         self.guard = ProgressGuard(self.memory, authority=self.authority, clock=self.clock)
         self.workers = PersonalWorkers(self)
@@ -67,17 +70,30 @@ class PersonalCoordinator:
         p = self.personal.plan
         if self.track is not None:
             self.track.require_attachment()
-        require(read_private(self.personal.directory / INTENT) == self.personal.intent
-                and read_private(Path(p["effects"]["marker"])) == {"schema_version": 1,
-                    "directory": str(self.personal.directory), "approval": self.personal.intent["approval"]}
-                and p["window"]["issued_at"] <= self.clock() < p["window"]["expires_at"], "Personal consent changed or expired")
+        if self.episode:
+            self.personal.active(memory=self.memory, allow_expired=False, now=self.clock())
+        else:
+            require(read_private(self.personal.directory / INTENT) == self.personal.intent
+                    and read_private(Path(p["effects"]["marker"])) == {"schema_version": 1,
+                        "directory": str(self.personal.directory), "approval": self.personal.intent["approval"]}
+                    and p["window"]["issued_at"] <= self.clock() < p["window"]["expires_at"], "Personal consent changed or expired")
         observed = self.memory.inspect()
         require(observed["health"] == "SYNCED" and observed["local_owner"], "The original synchronized M1 owner is required")
         row = self.record()
         require(row is None or row["generation"] == observed["state"]["generation"], "Personal execution generation changed")
         self.check_administration(row)
         require(self.personal.intent["phase"] == "ENROLLED", "Complete the original personal setup first")
+        if self.episode:
+            self.episode_fence()
         return observed
+
+    def episode_fence(self):
+        """Final nonblocking consent/owner check after full evidence validation."""
+        from .accounting_policy import entry
+        window = self.personal.plan["window"]
+        require(window["issued_at"] <= self.clock() < window["expires_at"]
+                and not (self.personal.root.state / "accounting-recovery" / "revoked" /
+                         (digest(self.personal.intent["approval"]) + ".json")).exists(), "Episode consent expired or revoked")
 
     def seconds_left(self):
         self.live()
@@ -112,6 +128,54 @@ class PersonalCoordinator:
     def revision(self):
         row = self.record()
         return row["revision"] if row else self.personal.plan["checkout"]["head"]
+
+    def source_origin(self, *, historical=False):
+        row = self.record()
+        if row is not None and row["developer"] is not None:
+            worker = self.worker(row["developer"])
+            require(worker["purpose"] == "develop" and worker["observation"]["result"]["outcome"] == "PASS",
+                    "Source origin must be its actual successful unapproved Developer")
+            if historical:
+                from .personal_history import retained
+                retained(self.runtime, worker)
+            else:
+                self.workers.actual(worker, accounted=True)
+            return {"kind": "DEVELOPER", "label": row["developer"], "authors": ["worker:" + row["developer"]],
+                    "source": worker["result_source"]}
+        require(self.episode, "An actual Developer or qualified retained candidate origin is required")
+        from .personal_adoption import adopted
+        return adopted(self, historical=historical)
+
+    def source_authors(self):
+        return tuple(self.source_origin()["authors"])
+
+    def assign_worker(self, row):
+        if not self.episode:
+            return self.memory.assign(self.task_id, "worker:" + row["request"]["id"])
+        from .accounting_policy import consume_request
+        from .storage import locked
+        with locked(self.memory.control):
+            self.live()
+            head, state, tasks = self.memory._start()
+            consume_request(state, key(self.task_id), row["request"]["id"], row["purpose"])
+            result = self.memory._assign(state, tasks, self.task_id, "worker:" + row["request"]["id"])
+            self.memory._checkpoint(head, state, tasks, _fence=self.episode_fence)
+            return result
+
+    def charge_check(self, identifier):
+        if not self.episode:
+            return
+        from .accounting_policy import entry
+        from .storage import locked
+        with locked(self.memory.control):
+            self.live()
+            head, state, tasks = self.memory._start()
+            usage = entry(state)["usage"]
+            hashed = digest(identifier)
+            if hashed not in usage["check_ids"]:
+                usage["check_ids"].append(hashed)
+                usage["checks"] += 1
+                self.memory._checkpoint(head, state, tasks, _fence=self.episode_fence)
 
     def specification(self, purpose):
         if purpose == "feature":
@@ -185,6 +249,8 @@ class PersonalCoordinator:
             context["project_gates"] = row["gates"]
         if purpose in ("candidate", "code"):
             context["developer"] = row["developer"]
+            if self.episode:
+                context["source_origin"] = self.source_origin()
             root = self.personal.feature
             context["diff"] = git(root, "diff", "--no-ext-diff", "--no-textconv", "--binary",
                 *( ("--cached",) if purpose == "candidate" else (self.personal.plan["checkout"]["head"], "HEAD")), limit=16384).decode("utf-8", "strict")
@@ -192,6 +258,15 @@ class PersonalCoordinator:
         if purpose == "original" and self.track is not None:
             from .personal_track_preparation import semantic_bundle
             context["track_preparation"] = semantic_bundle(self.track)
+        if self.episode:
+            from .personal_recovery import candidate_diff
+            context["accounting_episode"] = {"policy": "ACCOUNTING_EXPIRY_CONTINUATION", "episode": self.personal.descriptor["episode"],
+                "historical_terminal": "PERMANENT_STOP_UNSAFE_OVERDUE_ACCOUNTING", "worker_timeliness": "UNKNOWN",
+                "candidate_material": self.personal.descriptor["base"]["choices"]["paths"],
+                "adoption_scope": read_private(self.personal.root.state / "accounting-recovery" / "intent.json")["blueprint"]["material"],
+                "source_acceptance": "UNACCEPTED; new staged-diff and committed-SHA review and actual project CI required"}
+            if purpose == "original":
+                context["accounting_episode"]["candidate_source"] = candidate_diff(self.personal.root)
         return context
 
     def worker(self, request_id):
@@ -281,8 +356,11 @@ class PersonalCoordinator:
         if row["purpose"] == "develop":
             prior = self.record()["developer"]
             if prior is None:
-                require(not value(self.personal.feature, "status", "--porcelain", "--untracked-files=all"),
-                        "First Developer needs the approved pristine feature checkout")
+                if self.episode and (self.personal.state / "adoption.json").exists():
+                    require(source_seal(self.personal.feature) == self.source_origin()["source"], "Adopted candidate source changed")
+                else:
+                    require(not value(self.personal.feature, "status", "--porcelain", "--untracked-files=all"),
+                            "First Developer needs the approved pristine feature checkout")
             else:
                 require(source_seal(self.personal.feature) == self.worker(prior)["result_source"],
                         "Source changed outside the retained previous Developer result")
@@ -347,6 +425,7 @@ class PersonalCoordinator:
             protected_roots=(self.personal.feature,), maximum_observations=p["window"]["maximum_check_observations"], clock=self.clock,
             retain_requests=True)
         row["observations"] += 1  # Consume before observation; lost results stay consumed.
+        self.charge_check("local:" + permit.token)
         self.save(row)
         _, _, reserved = self.guard._snapshot(self.task_id, permit.decision.baseline.requirement_id)
         remaining = min(self.seconds_left(), reserved["active"]["deadline"] - self.clock())
@@ -370,7 +449,7 @@ class PersonalCoordinator:
 
     def reserve(self, label):
         row = self.record()
-        requirement = self.requirement("feature" if label == "feature" else "develop")
+        requirement = self.requirement("feature" if label == "feature" or label.startswith("adoption:") else "develop")
         state, task, item = self.guard._snapshot(self.task_id, requirement)
         if row["coordination"] is None:
             action = Action("personal:coordinator", ActionKind.CHECK, "personal:" + label,
@@ -508,9 +587,12 @@ class PersonalCoordinator:
             self.finish_transition()
         if self.record()["phase"] in ("FEATURE", "FEATURE_TRANSITION"):
             self.prepare_feature()
+        if self.episode and self.record()["phase"] == "DEVELOP" and self.record()["developer"] is None:
+            if not (self.personal.state / "adoption.json").exists():
+                return {**self.status(), "status": "CANDIDATE_ADOPTION_REQUIRED", "execution": "STOPPED"}
         # One task iteration; ordinary correction remains in the same M1/M2
         # requirement and original role/time budgets, never a new campaign.
-        for _ in range(self.personal.plan["window"]["developers"]):
+        for _ in range(max(1, self.personal.plan["window"]["developers"])):
             row = self.record()
             if row["phase"] == "DEVELOP":
                 self.allowed(self.requirement("develop"))
@@ -550,15 +632,14 @@ class PersonalCoordinator:
 
     def commit_and_checks(self):
         row = self.record()
-        attempt = row["developer"]
+        origin = self.source_origin()
+        attempt = origin["label"]
         if row["phase"] == "SOURCE_TRANSITION":
             return self.source_transition()
         permit = self.reserve("commit:" + attempt)
         row = self.record()
         if row["phase"] == "STAGE":
-            developer = self.worker(attempt)
-            self.workers.actual(developer, accounted=True)
-            require(source_seal(self.personal.feature) == developer["result_source"], "Developer content changed before staging")
+            require(source_seal(self.personal.feature) == origin["source"], "Authenticated source origin changed before staging")
             changed = git(self.personal.feature, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "HEAD", "-z")
             changed += git(self.personal.feature, "ls-files", "--others", "--exclude-standard", "-z")
             paths = tuple(sorted({p.decode("utf-8", "strict") for p in changed.split(b"\0") if p}))
@@ -607,7 +688,7 @@ class PersonalCoordinator:
 
     def check_stage(self):
         row = self.record()
-        attempt = row["developer"]
+        attempt = self.source_origin()["label"]
         if row["phase"] == "CHECKS":
             # Check observation uses a new guarded action at the actual new SHA.
             # It can remain pending without accepting the original requirement.

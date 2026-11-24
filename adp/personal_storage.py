@@ -238,6 +238,9 @@ class PersonalState:
 
 def load_state(directory: Path) -> PersonalState:
     private_directory(directory)
+    if (directory / "episode.json").exists():
+        from .personal_episode import load_episode
+        return load_episode(directory)
     row = read_private(directory / INTENT)
     fields(row, "schema_version kind phase plan original governance approval")
     require(type(row["schema_version"]) is int and row["schema_version"] == 1

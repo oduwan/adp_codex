@@ -218,8 +218,9 @@ class ProductCoordinator(PersonalCoordinator):
         current = self.record()
         coordination = current["coordination"]
         if coordination is not None and coordination["label"].startswith("commit:") and coordination["observation"] is None:
-            worker = self.worker(coordination["label"].removeprefix("commit:"))
-            if self.compound(worker):
+            identifier = coordination["label"].removeprefix("commit:")
+            worker = None if self.episode and identifier.startswith("adoption-") else self.worker(identifier)
+            if worker is not None and self.compound(worker):
                 actual = self.workers.actual(worker, accounted=True)
                 state, task, item = self.guard._snapshot(self.task_id, worker["requirement"])
                 active = self.guard._active(state, task, item, permit.token)

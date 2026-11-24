@@ -25,6 +25,7 @@ PUBLICATION = ("publication-preview", "publish", "publication-status")
 ARCHIVAL = ("archive-preview",)
 from .personal_product_cli import PRODUCT
 from .personal_track_cli import TRACK, WRITES
+from .personal_recovery_cli import ACTIONS as RECOVERY, WRITES as RECOVERY_WRITES
 
 
 def choices(parser):
@@ -62,6 +63,8 @@ def add_commands(commands):
 
 
 def publication_commands(stages, *, codex=False):
+    from .personal_recovery_cli import commands as recovery_commands
+    recovery_commands(stages, codex=codex)
     for action in ARCHIVAL:
         parser = stages.add_parser(action, help="Read-only expired NOTRUN archival proposal; no mutation authority")
         parser.add_argument("--repo", type=Path, required=True)
@@ -121,23 +124,26 @@ def retained(args):
             and checkout["repository"] == p["repository"]["name"] and checkout["remote"] == p["checkout"]["remote"]
             and str(args.repo.absolute()) in (p["checkout"]["path"], p["feature"]["workspace"]),
             "Reconnect only to the exact personal repository, issue and selected workspace")
+    if args.enroll_command not in ARCHIVAL + RECOVERY:
+        from .personal_episode import effective
+        personal = effective(personal)
     return personal
 
 
 def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
     action = args.enroll_command
     report = {"schema_version": 1, "backend": "PERSONAL", "command": action,
-        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") + WRITES else "READ_ONLY",
+        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") + WRITES + RECOVERY_WRITES else "READ_ONLY",
         "status": "UNKNOWN", "questions": [], "plan": None, "approval": None, "result": None, "blockers": [],
         "runtime_qualification": "NOTRUN"}
     try:
         if action == "capabilities":
-            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL), "scope": "LOCAL_DRAFT",
+            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY), "scope": "LOCAL_DRAFT",
                 "providers": "NOT_REQUIRED", "external_operations": "NOT_DELEGATED",
                 "publication": {"status": "AVAILABLE_UNDER_SEPARATE_EXACT_APPROVAL", "credential_envelope": "OPERATOR_ADMINISTRATIVE_QUIESCENCE"}})
             assert_public(report)
             return report, 0
-        require(action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL, "Unsupported personal command")
+        require(action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY, "Unsupported personal command")
         require(not any(getattr(args, name, None) for name in ("operator_trust", "operator_socket", "operator_profile")),
                 "Choose personal mode or the unchanged signed-provider mode; never convert an enrollment")
         require(getattr(args, "rounds", 1) == 1 and getattr(args, "maximum_parallel", 1) == 1,
@@ -149,6 +155,15 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, pu
             report.update(status=view["status"], result=view)
             assert_public(report)
             return report, 0
+        if action in RECOVERY:
+            from .personal_recovery_cli import dispatch
+            if transport is None and action not in ("archive-observe", "archive-status", "archive-revoke", "continuation-status"):
+                token = discovery_token("GH_TOKEN")
+                transport, ci_transport = PersonalGitHubRead(token), GitHubValidationHTTP(token)
+            result = dispatch(args, retained(args), transport=transport, ci_transport=ci_transport, runtime=runtime, clock=clock)
+            report.update(result)
+            assert_public(report)
+            return report, 4 if report["status"].startswith("BLOCKED") else 0
         if action in TRACK:
             from .personal_track_cli import dispatch
             if transport is None and action in ("track-preview", "track-enroll", "track-status"):

@@ -66,6 +66,12 @@ class OriginalRead:
 
 
 class PersonalPublication:
+    def qualify_accounting(self, state, task):
+        return self.c.authority.qualify_accounting(state, task)
+
+    def fence_accounting(self):
+        return self.c.authority.fence_accounting()
+
     def __init__(self, coordinator, *, transport=None):
         self.c, self.personal = coordinator, coordinator.personal
         self.clock = coordinator.clock
@@ -168,8 +174,11 @@ class PersonalPublication:
                 require(item["approval"] is not None and item["approval"]["context"] == self.c.guard._context(state, task),
                         "Current canonical code approval is missing")
             reviews[purpose] = {"assignment": assignment, "guard": item}
-        return digest({"reviews": reviews, "revision": task["source_revision"], "iteration": task["iteration"],
-            "generation": state["generation"], "epoch": state["progress_guard"]["task_epochs"][task["key"]]})
+        binding = {"reviews": reviews, "revision": task["source_revision"], "iteration": task["iteration"],
+            "generation": state["generation"], "epoch": state["progress_guard"]["task_epochs"][task["key"]]}
+        if self.c.episode:
+            binding["source_origin"] = self.c.source_origin()
+        return digest(binding)
 
     def original_bases(self):
         primary = self.target.api + "/issues/" + str(self.personal.plan["issue"])
@@ -453,7 +462,7 @@ class PersonalPublication:
         state = self.c.memory.inspect()["state"]
         task = Task(self.personal.repository_id, self.c.task_id, self.target.branch.split("/")[-1], row["view"]["revision"], self.target.ref,
             row["requirement"], state["generation"], state["progress_guard"]["task_epochs"][key(self.c.task_id)],
-            self.c.memory.inspect()["tasks"][key(self.c.task_id)]["iteration"], ("worker:" + self.c.record()["developer"],))
+            self.c.memory.inspect()["tasks"][key(self.c.task_id)]["iteration"], self.c.source_authors())
         plan = provider.plan(task, Request(Operation.PUSH))
         authorization = Authorization(self.proof("policy/operation", PolicyProvider.authorization_subject(plan), "operation", data(plan)))
         require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Actual M3 refused publication")
