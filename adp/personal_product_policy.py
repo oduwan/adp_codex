@@ -109,7 +109,7 @@ def constraints(branch, rules, legacy=None):
     return {"checks": sorted(checks), "origins": origins, "native_reviews": reviews, "methods": sorted(methods)}
 
 
-def observe_policy(read, target, base_ref, *, personal=None, expected_sha=None):
+def observe_policy(read, target, base_ref, *, personal=None, expected_sha=None, service=None, expected_head=None):
     """Bounded complete native pages through the accepted authenticated read port."""
     branch = base_ref.removeprefix("refs/heads/")
     prefix = target.api
@@ -123,7 +123,8 @@ def observe_policy(read, target, base_ref, *, personal=None, expected_sha=None):
         result = checked(read, target.owner + "/" + target.name, path)
         unavailable = plan_error(result, path) if personal is not None and page == 1 else None
         if unavailable is not None:
-            from .personal_rules import private_repository, supported_branch
+            from .personal_rules import PERSONAL_REF_QUERY, private_repository, ref_value, supported_branch
+            from .network_git import GitHubCAS
             repository, owner = personal
             require(expected_sha is not None, "PLAN_UNAVAILABLE: exact observed base SHA required")
             require(repository["node_id"] == target.node_id and repository["database_id"] == target.database_id
@@ -131,6 +132,12 @@ def observe_policy(read, target, base_ref, *, personal=None, expected_sha=None):
                     and repository["name"] == target.owner + "/" + target.name
                     and base_ref == "refs/heads/" + repository["default_branch"], "Plan capability targets a different base/repository")
             identity = private_repository(read, repository, owner)
+            require(type(service) is GitHubCAS and service.target == target and expected_head is not None,
+                    "PLAN_UNAVAILABLE: current authenticated source/ref service required")
+            repo = service._repository(PERSONAL_REF_QUERY, {"ref": target.ref})
+            require(repo.get("viewerPermission") == "ADMIN" and ref_value(repo, target.branch) == expected_head
+                    and ref_value({"ref": repo.get("defaultBranchRef")}, branch) == expected_sha,
+                    "UNKNOWN: independent current GraphQL owner/base/source evidence differs")
             supported_branch(current, branch, expected_sha)
             classic_path = prefix + "/branches/" + quote(branch, safe="") + "/protection"
             classic = plan_error(checked(read, repository["name"], classic_path), classic_path)

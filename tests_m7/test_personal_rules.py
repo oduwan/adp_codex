@@ -228,12 +228,22 @@ class PersonalRulesTests(unittest.TestCase):
     def test_default_policy_requires_exact_base_owner_and_classic_plan_evidence(self):
         f = Native()
         def observe():
-            return observe_policy(f, f.target, "refs/heads/trunk", personal=(f.repository, f.owner), expected_sha=BASE)
+            return observe_policy(f, f.target, "refs/heads/trunk", personal=(f.repository, f.owner), expected_sha=BASE,
+                service=f.service, expected_head=HEAD)
         policy = observe()
         with self.assertRaises(ADPError):
             observe_policy(f, f.target, "refs/heads/trunk", personal=(f.repository, f.owner))
         self.assertEqual(policy["availability"]["rules"]["status"], "PLAN_UNAVAILABLE")
         self.assertNotIn("PASS", str(policy))
+        for permission, errors in (("READ", None), (None, None), ("ADMIN", [{"message": "Permission denied"}])):
+            f.permission, f.graph_error = permission, errors
+            with self.subTest(permission=permission, errors=errors), self.assertRaises(ADPError):
+                observe()
+        f.permission, f.graph_error = "ADMIN", None
+        f.current = BASE
+        with self.assertRaises(ADPError):
+            observe()
+        f.current = HEAD
         f.entries[f.prefix + "/branches/trunk"].body["commit"]["sha"] = HEAD
         with self.assertRaises(ADPError):
             observe()
@@ -338,6 +348,35 @@ class PersonalRulesTests(unittest.TestCase):
                     args += ["--title", "Outcome", "--body", "Refs #1"]
                 self.assertFalse(parser().parse_args(args).accept_plan_unavailable)
                 self.assertTrue(parser().parse_args(args + ["--accept-plan-unavailable"]).accept_plan_unavailable)
+
+    def test_latest_raw_second_rules_response_controls_cannot_be_discarded(self):
+        import base64
+        from adp.personal_network import PersonalGitHubTransport
+        for bad in (HEADERS + (("link", '<https://api.github.com/foreign/project/rules/branches/x?page=2>; rel="next"'),),
+                HEADERS + (("content-type", "application/json"),),
+                HEADERS + (("x-ratelimit-remaining", "0"),), (("content-type", ""),)):
+            f = Native()
+            f.entries[f.prefix + "/rules/branches/work%2Ftask"] = Response(200, [])
+            transport = PersonalGitHubTransport(f.target)
+            actor = {"uid": 1001, "synthetic": True}
+            transport._context = actor
+            rule_calls = []
+            def exchange(payload, seconds, *, child):
+                request = json.loads(payload)
+                response = f.request(request["method"], request["path"], request["body"], seconds=seconds)
+                headers = f.last_response[2]
+                if "/rules/branches/" in request["path"]:
+                    rule_calls.append(1)
+                    headers = HEADERS if len(rule_calls) == 1 else bad
+                return json.dumps({"status": response.status, "body_base64": base64.b64encode(response.body).decode(), "headers": headers}).encode()
+            service = GitHubCAS(f.target, transport, personal=True)
+            service.personal_context = f.repository, f.owner
+            with patch.object(transport, "_actor", return_value=actor), patch.object(transport, "_credential", return_value="SYNTHETIC_TOKEN"), \
+                    patch("adp.personal_network._supported", return_value=True), patch("adp.personal_network.supervised_output", side_effect=exchange):
+                with self.subTest(headers=bad), self.assertRaises((ADPError, OSError)):
+                    service.inspect_ref(writable=True)
+            self.assertEqual(len(rule_calls), 2)
+            self.assertIsNone(transport.last_response)
 
 
 class PersonalPlanRulesTests(PersonalFixture):

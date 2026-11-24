@@ -183,7 +183,8 @@ class PersonalProduct:
         base_ref = "refs/heads/" + p["repository"]["default_branch"]
         require(refs.get(self.target.ref) == self.c.revision() and base_ref in refs,
                 "Exact published HEAD and current base required")
-        policy = observe_policy(self.read, self.target, base_ref, personal=(p["repository"], p["owner"]), expected_sha=refs[base_ref])
+        policy = observe_policy(self.read, self.target, base_ref, personal=(p["repository"], p["owner"]),
+            expected_sha=refs[base_ref], service=self.service, expected_head=self.c.revision())
         names = sorted(set(p["required_check_names"]) | set(policy["checks"]))
         require(len(names) <= 32, "Project checks exceed accepted capacity")
         methods = []

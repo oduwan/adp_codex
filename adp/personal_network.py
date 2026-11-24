@@ -15,6 +15,7 @@ import pwd
 import re
 import shutil
 import time
+from types import SimpleNamespace
 
 from .discovery_github import Response as ReadResponse
 from .errors import ADPError
@@ -23,7 +24,7 @@ from .network_http import NetworkTransportError, Response, _supported, supervise
 from .execution_ports import UnconfirmedValidation
 from .personal_network_child import context, validate_personal
 from .schema import decode, fields, require
-from .github_rules import retained_error
+from .github_rules import checked, retained_error
 from .personal_rules import PERSONAL_REF_QUERY
 
 
@@ -119,7 +120,14 @@ class PersonalGitHubTransport:
                     and sum(len(k) + len(v) for k, v in headers) <= 65536, "Malformed private response headers")
             raw = base64.b64decode(reply["body_base64"], validate=True)
             require(len(raw) <= 1048576 and self._actor() == self._context, "Response or gh execution context changed")
-            self.last_response = (reply["status"], raw, tuple((k.lower(), v) for k, v in headers))
+            headers = tuple((k.lower(), v) for k, v in headers)
+            native = ReadResponse(reply["status"], None, headers)
+            validated = checked(SimpleNamespace(get=lambda _: native), self.target.owner + "/" + self.target.name, path)
+            require(validated.status == reply["status"], "Unknown native control headers or exhausted rate budget")
+            require(not (method == "GET" and reply["status"] == 200 and "/rules/branches/" in path
+                    and "?" not in path and any(k == "link" for k, _ in headers)), "Ambiguous nonpaginated rules response")
+            # Rejected responses cannot be resurfaced through the read adapter.
+            self.last_response = (reply["status"], raw, headers)
             return Response(reply["status"], raw)
         except UnconfirmedValidation:
             raise  # The shared M7 service must retain its durable stop hazard.

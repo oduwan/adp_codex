@@ -158,6 +158,9 @@ Base-branch PR/check/merge policy uses the same exact plan-error classifier as
 [feature publication](PERSONAL_PUBLICATION.md).
 It requires fresh private personal owner/admin identity, current exact base SHA,
 supported `protected=false` and separately verified classic-plan unavailability.
+The limited independent GraphQL observation must also confirm current ADMIN
+permission and both exact published feature/default commit IDs; contradictions
+with REST ownership or ref evidence block the fallback.
 `availability` and its digest remain in every current policy/approval observation.
 Protected, inconsistent, incomplete or permission-denied metadata blocks writes.
 HTTP 200 rules retain all existing supported requirements and unsupported-rule
