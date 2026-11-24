@@ -44,12 +44,16 @@ class OriginalRead:
     """
     SUFFIXES = ("comments", "timeline", "dependencies/blocked_by", "sub_issues")
 
-    def __init__(self, transport, base):
+    def __init__(self, transport, base, *, additional=()):
         self.transport, self.base, self.observed = transport, base, {}
+        self.bases = (base, *additional)
+        require(type(additional) is tuple and 1 <= len(self.bases) <= 8
+                and len(set(self.bases)) == len(self.bases), "Bounded unique original observations required")
 
     def get(self, path):
         response = self.transport.get(path)
-        if path == self.base or any(path.startswith(self.base + "/" + suffix + "?") for suffix in self.SUFFIXES):
+        if any(path == base or any(path.startswith(base + "/" + suffix + "?") for suffix in self.SUFFIXES)
+               for base in self.bases):
             require(response.status == 200, "Complete current original-ticket evidence required")
             observed = digest({"body": response.body,
                 "pagination": [(k.lower(), v) for k, v in response.headers if k.lower() == "link"]})
@@ -115,7 +119,8 @@ class PersonalPublication:
         execution["tasks"][task_key] = task
 
     def local(self):
-        capture = OriginalRead(self.read, self.target.api + "/issues/" + str(self.personal.plan["issue"]))
+        bases = self.original_bases()
+        capture = OriginalRead(self.read, bases[0], additional=bases[1:])
         self.c.transport = capture
         try:
             self.c.fresh()
@@ -128,8 +133,8 @@ class PersonalPublication:
         self.c.original_approval()
         self.c.verify_local_review()
         require(self.review_binding() == review_binding, "Canonical review evidence changed during genuine verification")
-        require(capture.base in capture.observed and all(capture.base + "/" + suffix + "?per_page=100&page=1" in capture.observed
-            for suffix in capture.SUFFIXES), "Full preflight did not validate all original-ticket observations")
+        require(all(base in capture.observed and all(base + "/" + suffix + "?per_page=100&page=1" in capture.observed
+            for suffix in capture.SUFFIXES) for base in bases), "Full preflight did not validate all original-ticket observations")
         return capture.observed, review_binding
 
     def review_binding(self):
@@ -161,14 +166,24 @@ class PersonalPublication:
         return digest({"reviews": reviews, "revision": task["source_revision"], "iteration": task["iteration"],
             "generation": state["generation"], "epoch": state["progress_guard"]["task_epochs"][task["key"]]})
 
+    def original_bases(self):
+        primary = self.target.api + "/issues/" + str(self.personal.plan["issue"])
+        if self.c.track is None:
+            return (primary,)
+        return (primary, *(self.target.api + "/issues/" + str(number)
+            for number in sorted(o.issue.number for o in self.c.track.originals.values())
+            if number != self.personal.plan["issue"]))
+
     def current_original(self):
-        capture = OriginalRead(self.read, self.target.api + "/issues/" + str(self.personal.plan["issue"]))
+        bases = self.original_bases()
+        capture = OriginalRead(self.read, bases[0], additional=bases[1:])
         observer = GitHubDiscoveryAdapter(self.personal.plan["repository"]["name"], capture, max_requests=128, clock=self.clock)
         observer._halt, observer._requests, observer._coverage_items, observer._now = False, 0, [], self.clock()
-        observer._one(capture.base, "original-before")
-        for suffix in capture.SUFFIXES:
-            observer._pages(capture.base + "/" + suffix, "original-" + suffix)
-        observer._one(capture.base, "original-after")
+        for index, base in enumerate(bases):
+            observer._one(base, "original-before:" + str(index))
+            for suffix in capture.SUFFIXES:
+                observer._pages(base + "/" + suffix, "original-" + str(index) + ":" + suffix)
+            observer._one(base, "original-after:" + str(index))
         require(all(item.status == "COMPLETE" for item in observer._coverage_items),
                 "Original-ticket pagination, permissions or stability is unverified")
         return capture.observed
@@ -286,10 +301,11 @@ class PersonalPublication:
         if self.c.track is None:
             require(not p["native_prerequisites"], "Native prerequisites need independent acceptance before publication")
         else:
-            # The actual complete native graph and accepted closure must still
-            # qualify at BOTH existing pre-upload/pre-CAS dispatch boundaries.
-            # A selected track or an old READY judgment alone grants nothing.
-            self.c.fresh()
+            # Full current M4 admission/preflight is bound into the approved raw
+            # maps for EVERY selected original. Reobserve those exact maps below
+            # and the actual prerequisite receipts here, without another whole
+            # repository inventory inside the unchanged CAS request budget.
+            self.c.track.publication_prerequisites()
         require(self.current_original() == self.record()["view"]["original_observation"], "Original-ticket scope or native evidence changed")
         require([branch_rules(self.read, p["repository"]["name"], item["ref"].removeprefix("refs/heads/"))
                 for item in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")

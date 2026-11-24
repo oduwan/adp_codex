@@ -79,10 +79,14 @@ dispatches a workflow or substitutes a synthetic result. NOT_REQUIRED records
 verified absence/interpretation, never a zero-test PASS. Ordinary failures and
 review rejection remain same-ticket feedback within the original finite bounds.
 Separate next-window approval cannot renew the previous Issue's budget.
-The existing pre-upload and pre-CAS publication callbacks recheck the complete
-current native graph and actual accepted prerequisite closure. They retain the
-native edges; neither a selected track nor a cached READY result grants a push.
-Standalone enrollment still refuses native prerequisites without this verifier.
+Publication preflight still runs complete current M4 discovery and actual
+accepted prerequisite verification. Its exact raw observations for every selected
+original (including native dependency pages) are bound into publication consent.
+Both existing pre-upload/pre-CAS callbacks reobserve those complete targeted maps
+and actual accepted prerequisite receipts. This avoids repeating whole-repository
+inventories inside the unchanged 45-second/128-request batch; the raw-map limit
+also stays81. No stale snapshot is called current and no cached READY grants a
+push. Standalone enrollment keeps its single-original map and prerequisite refusal.
 
 ## Evidence, restart and limitations
 
@@ -141,6 +145,7 @@ The additive [focused inventory](PERSONAL_TRACK_TEST_INVENTORY.json),
 [operator commands](PERSONAL_TRACK_CLI_TEST_INVENTORY.json),
 [next recovery](PERSONAL_TRACK_RECOVERY_TEST_INVENTORY.json),
 [review-driven attachment/ref regressions](PERSONAL_TRACK_ATTACHMENT_TEST_INVENTORY.json),
+[publication projection controls](PERSONAL_TRACK_PUBLICATION_TEST_INVENTORY.json),
 [product reports](PERSONAL_REPORT_TEST_INVENTORY.json) and
 [uncertain report recovery](PERSONAL_REPORT_RECOVERY_TEST_INVENTORY.json) are separate
 from all 577 accepted tests and the existing installation denominator. API and

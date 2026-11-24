@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 import traceback
 from unittest.mock import patch
 
@@ -153,7 +154,30 @@ class TrackFixture(ProductFixture):
         pub = PersonalPublication(self.c, transport=self.http)
         self.http.authorize_write = pub.write_authorized
         proposed = pub.preview()
-        self.publish(proposed["approval"], publisher=pub)
+        original_dispatch = pub.validate_dispatch
+        def retain_dispatch_failure():
+            try:
+                return original_dispatch()
+            except Exception as error:
+                # Capture the already rejected callback's actual budget while
+                # its original ContextVar is still available. No new read.
+                budget = pub.service._budget.get()
+                coverage = []
+                frame = error.__traceback__
+                while frame is not None:
+                    if frame.tb_frame.f_code.co_name == "current_original":
+                        observer = frame.tb_frame.f_locals.get("observer")
+                        if observer is not None:
+                            coverage = [{"name": c.name, "status": c.status, "detail": c.detail}
+                                for c in observer._coverage_items][-24:]
+                    frame = frame.tb_next
+                error.add_note(json.dumps({"kind": "SYNTHETIC_PUBLICATION_FAILURE", "issue": p["issue"],
+                    "calls": budget.calls if budget else None,
+                    "remaining_ms": int((budget.end - time.monotonic()) * 1000) if budget else None,
+                    "coverage": coverage}, sort_keys=True))
+                raise
+        with patch.object(pub, "validate_dispatch", retain_dispatch_failure):
+            self.publish(proposed["approval"], publisher=pub)
         self.c = ProductCoordinator(self.personal, self.transport, NativePersonalReads(self), runtime=self.runtime, clock=lambda: self.now)
         self.product = PersonalProduct(self.c, transport=self.http)
         self.http.authorize_write = self.product.write_authorized

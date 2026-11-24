@@ -1,0 +1,4 @@
+[
+  "test_personal_track_publication.PersonalPublicationProjectionTests.test_complete_preflight_and_targeted_reads_bind_all_originals_and_native_edges",
+  "test_personal_track_publication.PersonalPublicationProjectionTests.test_changed_or_unavailable_parent_and_native_metadata_cannot_qualify"
+]

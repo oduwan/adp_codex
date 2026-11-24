@@ -395,6 +395,38 @@ class PersonalTrack:
             done.add(identity)
         return tuple(sorted(done - {selected.identity}))
 
+    def publication_prerequisites(self):
+        """Fresh receipt facts; the caller separately reobserves ALL raw originals.
+
+        The immutable admission graph selects opaque IDs only. It is neither a
+        current observation nor a cached READY/acceptance grant. Publication's
+        exact complete raw-map comparison proves its native edges still agree
+        with the full actual preflight, which already qualified this closure.
+        """
+        from .discovery import DependencyPlanner
+        from .discovery_types import Identity
+        snapshot = self.seed()
+        planned = DependencyPlanner(clock=self.c.clock).plan((snapshot,))
+        native = {candidate.identity: candidate.prerequisites for candidate in planned.candidates}
+        issues = {issue.identity: issue for issue in snapshot.issues}
+        cyclic = {identity for component in planned.cycles for identity in component}
+        selected = typed(Identity, self.link["identity"])
+        pending, done = [selected], set()
+        while pending:
+            identity = pending.pop()
+            if identity in done:
+                continue
+            require(identity in self.originals and identity in issues and identity in native and identity not in cyclic,
+                    "Original publication closure is missing or cyclic")
+            edges = lambda issue: {r for r in issue.relations if r.kind == "BLOCKED_BY" and r.confidence == "NATIVE"}
+            require(edges(issues[identity]) == edges(self.originals[identity].issue),
+                    "Admission prerequisite identities differ from the frozen original")
+            if identity != selected:
+                require(self.accepted(identity) is not None, "Publication requires actual current accepted prerequisite evidence")
+            pending.extend(native[identity])
+            done.add(identity)
+        return tuple(sorted(done - {selected}))
+
     def completion_preview(self, product):
         c = product.c
         c.live(); c.fresh(); c.workers.fence(); c.original_approval(); c.verify_local_review()
