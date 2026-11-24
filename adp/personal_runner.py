@@ -71,7 +71,7 @@ class PersonalCoordinator:
         if self.track is not None:
             self.track.require_attachment()
         if self.episode:
-            self.personal.active(memory=self.memory, allow_expired=False, now=self.clock())
+            _, _, subject = self.personal._active_view(memory=self.memory, allow_expired=False, now=self.clock())
         else:
             require(read_private(self.personal.directory / INTENT) == self.personal.intent
                     and read_private(Path(p["effects"]["marker"])) == {"schema_version": 1,
@@ -79,6 +79,9 @@ class PersonalCoordinator:
                     and p["window"]["issued_at"] <= self.clock() < p["window"]["expires_at"], "Personal consent changed or expired")
         observed = self.memory.inspect()
         require(observed["health"] == "SYNCED" and observed["local_owner"], "The original synchronized M1 owner is required")
+        if self.episode:
+            from .personal_episode import same_observation
+            same_observation(subject, observed)
         row = self.record()
         require(row is None or row["generation"] == observed["state"]["generation"], "Personal execution generation changed")
         self.check_administration(row)

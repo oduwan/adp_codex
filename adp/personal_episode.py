@@ -18,7 +18,7 @@ from .guard_schema import requirement_id
 from .guard_types import data
 from .personal_ci import native_inventory, prescribed_checks
 from .personal_enrollment import selection
-from .personal_history import archived
+from .personal_history import archived, _archived_view
 from .personal_recovery import Recovery, engine_digest, grant, immutable, journal_purpose
 from .personal_storage import (PersonalState, ROLE_LIMITS, approval, create_private, load_state,
                                private_directory, read_private, validate_plan)
@@ -79,6 +79,9 @@ class EpisodeState(PersonalState):
         return child_id(parent, self.descriptor["episode"])
 
     def active(self, *, memory=None, runtime=None, allow_expired=True, now=None):
+        return self._active_view(memory=memory, runtime=runtime, allow_expired=allow_expired, now=now)[:2]
+
+    def _active_view(self, *, memory=None, runtime=None, allow_expired=True, now=None):
         # Closed plans were validated on load. Re-read their exact protected
         # identities here; do not recursively reload the same root/plan/track
         # through every nested authority proof. No positive result is cached.
@@ -88,12 +91,11 @@ class EpisodeState(PersonalState):
                 and read_private(self.root.directory / "personal.json") == self.root.intent
                 and read_private(Path(self.root.plan["effects"]["marker"])) == {"schema_version": 1,
                     "directory": str(self.root.directory), "approval": self.root.intent["approval"]}, "Episode/original enrollment changed")
-        m, archive, contexts = archived(self.root, memory=memory, runtime=runtime, _child=self)
         memory = memory or self.memory()
-        observed = memory.inspect(recovery=True)
+        m, archive, contexts, observed, workers = _archived_view(self.root, memory=memory, runtime=runtime, _child=self)
         relation = entry(observed["state"])
         require(relation is not None and relation == expected_relation(self.root, m, archive, self.descriptor,
-                usage=relation["usage"]), "Exact canonical episode relation is missing")
+                usage=relation["usage"], _workers=workers), "Exact canonical episode relation is missing")
         original_link = read_private(self.root.state / "track-link.json")
         require(read_private(self.state / "track-link.json") == {**original_link, "schema_version": 2,
             "directory": str(self.directory), "setup": self.intent["approval"], "snapshot": digest(self.descriptor["base"]["snapshot"]),
@@ -105,7 +107,7 @@ class EpisodeState(PersonalState):
         require(activation == {"schema_version": 1, "descriptor": digest(self.descriptor),
             "checkpoint": activation["checkpoint"], "relation": digest({k: v for k, v in relation.items() if k != "usage"})},
             "Episode activation is not bound to its exact canonical relation")
-        target = episode_intent(self.root, self.descriptor, m, archive)
+        target = episode_intent(self.root, self.descriptor, m, archive, _workers=workers)
         require(read_private(self.directory / "intent.json") == target, "Retain the exact one-use episode intent")
         from .personal_history_git import verify
         verify(memory, [archive["result"], activation["checkpoint"]],
@@ -118,7 +120,7 @@ class EpisodeState(PersonalState):
             require(all(identifier == relation["parent_requirement"] or item["mode"] == "normal"
                         for identifier, item in observed["state"]["progress_guard"]["requirements"].items()),
                     "Only the qualified historical terminal is permitted; another guard stop blocks execution")
-        return relation, contexts
+        return relation, contexts, observed
 
     def live(self, now, *, owner=False):
         self.active(allow_expired=False, now=now)
@@ -152,11 +154,11 @@ def load_episode(directory):
     return EpisodeState(directory, intent, root, d)
 
 
-def expected_relation(root, m, archive, descriptor, *, usage=None):
+def expected_relation(root, m, archive, descriptor, *, usage=None, _workers=None):
     parent = m["view"]["binding"]["task_key"]
     parent_id = m["tasks"][parent]["id"]
     child = child_id(parent_id, descriptor["episode"])
-    workers = [read_private(p) for p in (root.state / "workers").glob("*.json")]
+    workers = _workers if _workers is not None else [read_private(p) for p in (root.state / "workers").glob("*.json")]
     from .personal_workers import ROLES as WORKER_ROLES
     used = dict.fromkeys(ROLES, 0)
     for row in workers:
@@ -397,13 +399,30 @@ def qualified_checks(root, choices, transport):
         accept_native_job_records=p["accept_native_job_records"])]
 
 
-def episode_intent(root, descriptor, master, archive):
-    relation = expected_relation(root, master, archive, descriptor)
+def episode_intent(root, descriptor, master, archive, *, _workers=None):
+    relation = expected_relation(root, master, archive, descriptor, _workers=_workers)
     state, tasks = deepcopy(master["result_state"]), deepcopy(master["result_tasks"])
     install(state, tasks, relation)
     state["revision"] += 1; state["task_keys"] = sorted(tasks)
     bundle(state, tasks, root.repository_id)
     return {"descriptor": digest(descriptor), "base": archive["result"], "state": state, "tasks": tasks}
+
+
+def same_observation(proven, current, *, recovery=False):
+    """Fresh final M1 read must match the exact subject just proved locally.
+
+    Only a lock-held existing checkpoint fence may inspect its own pending
+    transaction. Normal authority continues to require synchronized ownership.
+    No positive decision or observation is reused across calls.
+    """
+    require(proven["health"] == current["health"] and current["health"] in
+            (("SYNCED", "RECOVERY_REQUIRED") if recovery else ("SYNCED",))
+            and proven["local_owner"] is True and current["local_owner"] is True,
+            "Canonical proof lost synchronized ownership")
+    names = ("local_head", "remote_head", "state", "tasks", "local_owner", "inbox_count")
+    if recovery:
+        names += ("recovery_slots", "recovery_journal")
+    require(all(proven[n] == current[n] for n in names), "Canonical subject advanced during archival proof; obtain a fresh proof")
 
 
 def blueprint_ready(c, choices):

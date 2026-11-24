@@ -34,6 +34,10 @@ def retained(runtime, row):
 
 
 def archived(personal, *, memory=None, runtime=None, _child=None):
+    return _archived_view(personal, memory=memory, runtime=runtime, _child=_child)[:3]
+
+
+def _archived_view(personal, *, memory=None, runtime=None, _child=None):
     """Require actual retained raw records, exact H0→H1→H2 and permanent parent.
 
     No owner, expiry or terminal latch is renewed. A released owner is allowed
@@ -138,7 +142,9 @@ def archived(personal, *, memory=None, runtime=None, _child=None):
         require(relation["archive"] == digest(receipt) and relation["parent_task"] == task_key
                 and relation["parent_guard"] == digest(old) and relation["parent_task_digest"] == digest(now["tasks"][task_key]), "Canonical historical lineage differs")
     validate_administration(root, master, relation, now, child=_child)
-    return master, receipt, contexts
+    # These are the actual observation and authenticated original inventory
+    # already used in THIS proof. They are never retained between callbacks.
+    return master, receipt, contexts, now, rows
 
 
 def validate_administration(root, master, relation, observed, *, child=None):

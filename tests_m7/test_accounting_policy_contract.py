@@ -17,6 +17,33 @@ from adp.storage import atomic
 
 
 class AccountingPolicyContractTests(unittest.TestCase):
+    def test_same_call_view_requires_fresh_exact_canonical_subject_and_keeps_public_tuple(self):
+        from copy import deepcopy
+        from adp.personal_episode import same_observation
+        from adp.personal_history import archived
+        view = {"health": "SYNCED", "local_owner": True, "local_head": "a" * 40, "remote_head": "a" * 40,
+            "state": {"generation": 1, "owner": {"id": "original"}, "lineage": "exact"},
+            "tasks": {"original": {"source": "b" * 40}}, "inbox_count": 0,
+            "recovery_slots": [], "recovery_journal": None}
+        same_observation(view, deepcopy(view))
+        for changed in ({"local_head": "c" * 40}, {"remote_head": "c" * 40}, {"local_owner": False},
+                {"state": {**view["state"], "generation": 2}}, {"state": {**view["state"], "owner": None}},
+                {"state": {**view["state"], "lineage": "changed"}}, {"tasks": {}}, {"inbox_count": 1},
+                {"health": "REMOTE_MISMATCH"}):
+            with self.subTest(changed=changed), self.assertRaises(ADPError):
+                same_observation(view, {**deepcopy(view), **changed})
+        pending = {**view, "health": "RECOVERY_REQUIRED", "recovery_journal": "d" * 64, "recovery_slots": ["exact-slot"]}
+        with self.assertRaises(ADPError):same_observation(pending, pending)
+        same_observation(pending, deepcopy(pending), recovery=True)
+        for change in ({"recovery_journal": "e" * 64}, {"recovery_slots": []}):
+            with self.assertRaises(ADPError):same_observation(pending, {**pending, **change}, recovery=True)
+        first = ({"master": 1}, {"receipt": 1}, {"context-1"}, view, [{"authenticated": 1}])
+        second = ({"master": 2}, {"receipt": 2}, {"context-2"}, {**view, "local_head": "f" * 40}, [])
+        with patch("adp.personal_history._archived_view", side_effect=(first, second)) as actual:
+            self.assertEqual(archived("protected-subject"), first[:3])
+            self.assertEqual(archived("protected-subject"), second[:3])
+            self.assertEqual(actual.call_count, 2)  # Fresh proof, no retained ALLOW.
+
     def test_publication_binding_keeps_origin_historical_and_requires_current_live_reviews(self):
         from adp.personal_publication import PersonalPublication
         from adp.guard_types import DecisionKind

@@ -27,8 +27,10 @@ class PersonalAuthority:
         if not self.c.episode:
             return False
         from .accounting_policy import entry
-        relation, _ = self.c.personal.active(memory=self.c.memory)
+        relation, _, subject = self.c.personal._active_view(memory=self.c.memory)
         observed = self.c.memory.inspect()
+        from .personal_episode import same_observation
+        same_observation(subject, observed)
         require(observed["health"] == "SYNCED" and observed["local_owner"]
                 and observed["state"] == state and observed["tasks"].get(task["key"]) == task
                 and relation == entry(state) and task["key"] == relation["child_task"]
@@ -40,8 +42,11 @@ class PersonalAuthority:
     def fence_accounting(self):
         if not self.c.episode:
             return False
-        self.c.personal.active(memory=self.c.memory, allow_expired=False, now=self.c.clock())
-        self.c.memory._owner(self.c.memory.inspect(recovery=True)["state"])
+        _, _, subject = self.c.personal._active_view(memory=self.c.memory, allow_expired=False, now=self.c.clock())
+        observed = self.c.memory.inspect(recovery=True)
+        from .personal_episode import same_observation
+        same_observation(subject, observed, recovery=True)
+        self.c.memory._owner(observed["state"])
         self.c.episode_fence()
         return True
 

@@ -163,6 +163,14 @@ that later proof needs a native read it returns `HISTORICAL_NATIVE_READ_REQUIRED
 Use the explicitly selected read-only track adapter instead. No ref or default
 source change is excused merely because a continuation exists.
 
+Within one proof call, the historical verifier shares its actual canonical
+observation and authenticated original worker rows with the episode verifier.
+Normal authority and checkpoint fences then obtain a fresh observation and
+reject any changed canonical subject, owner, generation, task, lineage, inbox
+or pending transaction. No positive decision is cached across callbacks. Raw
+receipts, source, administration, host, consent and Git protections remain
+freshly verified; the existing operation deadlines and request caps still apply.
+
 The engineering tests use synthetic receipts/disposable repositories. Genuine
 M8 execution, live archival application, installation, adoption, acceptance,
 merge and advancement remain **NOT_AUTHORIZED / ON HOLD** pending separate
