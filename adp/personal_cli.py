@@ -23,6 +23,7 @@ from .schema import require
 ACTIONS = ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect", "run", "resume", "handoff")
 PUBLICATION = ("publication-preview", "publish", "publication-status")
 from .personal_product_cli import PRODUCT
+from .personal_track_cli import TRACK, WRITES
 
 
 def choices(parser):
@@ -60,6 +61,8 @@ def add_commands(commands):
 
 
 def publication_commands(stages, *, codex=False):
+    from .personal_track_cli import commands as track_commands
+    track_commands(stages, codex=codex)
     from .personal_product_cli import commands as product_commands
     product_commands(stages, codex=codex)
     for action in PUBLICATION:
@@ -110,21 +113,32 @@ def retained(args):
 def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
     action = args.enroll_command
     report = {"schema_version": 1, "backend": "PERSONAL", "command": action,
-        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") else "READ_ONLY",
+        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") + WRITES else "READ_ONLY",
         "status": "UNKNOWN", "questions": [], "plan": None, "approval": None, "result": None, "blockers": [],
         "runtime_qualification": "NOTRUN"}
     try:
         if action == "capabilities":
-            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT), "scope": "LOCAL_DRAFT",
+            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT + TRACK), "scope": "LOCAL_DRAFT",
                 "providers": "NOT_REQUIRED", "external_operations": "NOT_DELEGATED",
                 "publication": {"status": "AVAILABLE_UNDER_SEPARATE_EXACT_APPROVAL", "credential_envelope": "OPERATOR_ADMINISTRATIVE_QUIESCENCE"}})
             assert_public(report)
             return report, 0
-        require(action in ACTIONS + PUBLICATION + PRODUCT, "Unsupported personal command")
+        require(action in ACTIONS + PUBLICATION + PRODUCT + TRACK, "Unsupported personal command")
         require(not any(getattr(args, name, None) for name in ("operator_trust", "operator_socket", "operator_profile")),
                 "Choose personal mode or the unchanged signed-provider mode; never convert an enrollment")
         require(getattr(args, "rounds", 1) == 1 and getattr(args, "maximum_parallel", 1) == 1,
                 "Personal mode admits exactly one issue, one task iteration and one concurrent worker")
+        if action in TRACK:
+            from .personal_track_cli import dispatch
+            if transport is None and action in ("track-preview", "track-enroll", "track-status"):
+                transport = PersonalGitHubRead(discovery_token(getattr(args, "token_env", "GH_TOKEN")))
+            result = dispatch(args, retained(args), transport=transport, ci_transport=ci_transport,
+                publication_transport=publication_transport, runtime=runtime, clock=clock)
+            report.update(result)
+            assert_public(report)
+            return report, 0 if report["status"] in ("TRACK_PROPOSED", "TRACK_ENROLLED", "COMPLETE", "ACTIVE_ORIGINAL", "NEXT_SCOPE_REQUIRED",
+                "COMPLETION_PROPOSED", "ACCEPTED_COMPLETION", "REPORT_PROPOSED", "REPORTED", "NOT_DELEGATED",
+                "NEXT_PROPOSED", "NEXT_PROPOSED_RETAINED", "NEXT_ALREADY_ENROLLED", "NEXT_ENROLLED_SCOPE_REVIEW_REQUIRED") else 4
         if action in PRODUCT:
             from .personal_product_cli import dispatch
             result = dispatch(args, retained(args), runtime=runtime, clock=clock, transport=publication_transport)

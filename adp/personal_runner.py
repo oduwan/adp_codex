@@ -13,6 +13,7 @@ import time
 from .codex_runtime import CodexExecRuntime
 from .config import Config
 from .discovery_schema import digest, typed
+from .discovery_types import Identity
 from .enrollment import local_checkout
 from .errors import ADPError, GitError
 from .execution_memory import invocation_lock
@@ -55,11 +56,17 @@ class PersonalCoordinator:
         self.guard = ProgressGuard(self.memory, authority=self.authority, clock=self.clock)
         self.workers = PersonalWorkers(self)
         self.path = personal.state / "run.json"
+        self.track = None
+        if (personal.state / "track-link.json").exists():
+            from .personal_track import PersonalTrack
+            self.track = PersonalTrack(self)
 
     def live(self):
         # Recheck immutable retained consent and the actual owner. Do not rerun
         # Git configuration discovery for every nested evidence verification.
         p = self.personal.plan
+        if self.track is not None:
+            self.track.require_attachment()
         require(read_private(self.personal.directory / INTENT) == self.personal.intent
                 and read_private(Path(p["effects"]["marker"])) == {"schema_version": 1,
                     "directory": str(self.personal.directory), "approval": self.personal.intent["approval"]}
@@ -70,6 +77,7 @@ class PersonalCoordinator:
         require(row is None or row["generation"] == observed["state"]["generation"], "Personal execution generation changed")
         self.check_administration(row)
         require(self.personal.intent["phase"] == "ENROLLED", "Complete the original personal setup first")
+        return observed
 
     def seconds_left(self):
         self.live()
@@ -143,7 +151,12 @@ class PersonalCoordinator:
                 and self.original_matches(original[0])
                 and digest(governance(Path(plan["checkout"]["path"]))) == plan["governance_digest"],
                 "The original source, issue, native prerequisites, ownership or governance changed")
-        require(not plan["native_prerequisites"], "Native prerequisites need independent acceptance before this task can be READY")
+        if self.track is not None:
+            self.track.prerequisites(observation)
+            if self.record() is None or self.record()["phase"] in ("SCOPE", "FEATURE", "FEATURE_TRANSITION"):
+                self.track.native_base(self)
+        else:
+            require(not plan["native_prerequisites"], "Native prerequisites need independent acceptance before this task can be READY")
         if self.record() is None or self.record()["phase"] in ("SCOPE", "FEATURE", "FEATURE_TRANSITION"):
             require(not value(Path(plan["checkout"]["path"]), "status", "--porcelain", "--untracked-files=all"),
                     "Original checkout changed before scope admission or feature preparation")
@@ -176,6 +189,9 @@ class PersonalCoordinator:
             context["diff"] = git(root, "diff", "--no-ext-diff", "--no-textconv", "--binary",
                 *( ("--cached",) if purpose == "candidate" else (self.personal.plan["checkout"]["head"], "HEAD")), limit=16384).decode("utf-8", "strict")
             context["index_digest"] = index_digest(root)
+        if purpose == "original" and self.track is not None:
+            from .personal_track_preparation import semantic_bundle
+            context["track_preparation"] = semantic_bundle(self.track)
         return context
 
     def worker(self, request_id):
@@ -255,6 +271,9 @@ class PersonalCoordinator:
         self.fresh()
         self.workers.fence()
         request = row["request"]
+        if self.track is not None:
+            require(not self.track.completion_path(typed(Identity, self.track.link["identity"])).exists(),
+                    "An accepted original cannot restart development")
         require(self.clock() < request["deadline"] and request["revision"] == self.revision(), "Worker source/deadline differs")
         if row["purpose"] == "original":
             require(Path(request["workspace"]) == Path(self.personal.plan["checkout"]["path"]), "Original review workspace differs")
@@ -482,6 +501,9 @@ class PersonalCoordinator:
             row.update(original_review=review["request"]["id"], phase="FEATURE")
             self.save(row)
         self.original_approval()
+        if self.track is not None:
+            from .personal_track_preparation import prepare
+            prepare(self.track)
         if self.record()["phase"] in ("CHECKS_TRANSITION", "CANDIDATE_REJECTED"):
             self.finish_transition()
         if self.record()["phase"] in ("FEATURE", "FEATURE_TRANSITION"):

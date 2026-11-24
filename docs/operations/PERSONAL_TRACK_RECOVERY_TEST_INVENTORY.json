@@ -1,0 +1,4 @@
+[
+  "test_personal_track_recovery.PersonalTrackRecoveryTests.test_next_recovers_interrupted_setup_after_handoff_without_fork_or_budget_reset",
+  "test_personal_track_recovery.PersonalTrackRecoveryTests.test_changed_base_original_and_expiry_refuse_new_scope_before_owner_release"
+]

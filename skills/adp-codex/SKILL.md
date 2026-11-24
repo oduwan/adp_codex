@@ -112,8 +112,39 @@ permit `merge` with its separate flags/token and observed-base API assent.
 Use `product-status` for an uncertain outcome, never repeat a POST/PUT blindly.
 Report only actual PR/CI/review/merge facts and remaining product limitations.
 Stop on unknown effects/stops, authority conflicts or original budget exhaustion.
-Reporting, issue closure and next-ticket advancement are not supplied by this
-slice; no M8 pilot execution or installation follows from code qualification.
+Reporting and next-ticket advancement require the separately selected native
+track below. Issue closure remains undelegated; no M8 pilot execution or
+installation follows from code qualification.
+
+For a finite native dependency track, use the
+[personal track protocol](../../docs/operations/PERSONAL_TRACK.md). Require
+`track-preview`, `track-status`, `report-preview` and `next-preview` in personal
+capabilities. Select existing original Issue numbers before the first scope
+Reviewer, then obtain separate `track-enroll` evidence-write approval. Keep the
+existing per-Issue run/publication/PR/CI/merge gates. Only actual accepted
+completion, confirmed through `completion-preview`/`complete`, may unblock a
+successor. A closed Issue, draft, CI result or review alone cannot do so.
+
+Use read-only `track-status` to show actual M4 readiness, native blockers,
+historical accepted evidence and the unique next original or missing knowledge.
+Unreviewed scope remains NEEDS_SPEC. A next proposal must use the exact current
+native merged base already present in the owned clean default-branch source.
+For `NEXT_BASE_UNAVAILABLE`, explain normal project-owned source synchronization
+and obtain a fresh proposal afterward; ADP does not fetch or substitute an equal
+tree. Do not require JSON, a provider, custom controller or CI infrastructure.
+
+Show `report-preview`'s exact product body and ask separately before `report`
+with its report/memory/rules/quiescence flags. Setup, push and merge consent do
+not grant reporting rights. Use `report-status` after uncertainty; never post a
+replacement. For the next original, show `next-preview`'s complete new scope,
+paths, branch, checks, base SHA, finite per-role/window limits and old-owner
+release. Only after explicit confirmation call `next` with the exact review and
+setup tokens and memory-write flag. It starts no worker. Reconnect to its
+returned directory and obtain separate run approval; the new original Reviewer
+must still produce an actual TicketPreparer READY packet. Never re-enroll an
+old Issue or reset its counters. Stop for unknown process/effect evidence,
+changed scope, missing authority or M2 refusal. Do not infer pilot, installation,
+release or engineering-merge permission from this development capability.
 
 For the existing independently signed backend, keep the following flow:
 

@@ -33,8 +33,10 @@ approval can publish one exact independently reviewed nondefault feature SHA
 through the accepted GitHub CAS, under its explicit finite operator warrant.
 This branch's [personal product flow](docs/operations/PERSONAL_PRODUCT.md)
 adds separate Draft PR consent, actual current-SHA project CI, independent
-product review and a separate delegated merge decision or manual wait. Reporting
-and next-issue admission remain dependent #42 work, outside this slice.
+product review and a separate delegated merge decision or manual wait. The opt-in
+[native personal track](docs/operations/PERSONAL_TRACK.md) adds accepted completion,
+separate report/next-scope consent and retained per-Issue restart evidence.
+Its current native merged base must already be local; ADP does not fetch it.
 Genuine runtime/pilot qualification remains a separately authorized M8 gate.
 
 With the managed engine on PATH, inspect an explicitly selected disposable

@@ -29,7 +29,7 @@ from .personal_storage import (INTENT, LIMIT, PersonalBlocked, PersonalState, ap
 from .personal_storage import validate_plan
 from .policy_schema import branch, product_path
 from .project_validation_github import GitHubValidationHTTP
-from .schema import encode, require, string
+from .schema import encode, fields, require, string
 from .storage import atomic, locked
 
 
@@ -215,11 +215,22 @@ def plan_personal(observation, owner, choices: PersonalChoices, *, approved=None
     return proposed, original_data, docs
 
 
-def apply_personal(plan, original, docs, *, approved, authorized, transport, ci_transport=None, clock=None):
+def apply_personal(plan, original, docs, *, approved, authorized, transport, ci_transport=None, clock=None,
+                   _track_link=None):
     read_clock = clock or (lambda: int(time.time()))
     now = read_clock()
     require(authorized and approved == approval(plan), "Approve the exact personal plan and local memory writes")
     token_parts(approved, now)
+    if _track_link is not None:
+        # Internal next-intent composition only: mark the child as track-bound
+        # before setup can expose an ENROLLED standalone execution entry point.
+        fields(_track_link, "schema_version root index identity directory setup snapshot parent")
+        from .policy_schema import fingerprint
+        fingerprint(_track_link["index"]); fingerprint(_track_link["snapshot"])
+        require(type(_track_link["schema_version"]) is int and _track_link["schema_version"] == 1
+                and _track_link["directory"] == plan["effects"]["directory"]
+                and _track_link["setup"] == approved and _track_link["identity"] == original["identity"]
+                and _track_link["parent"] is not None, "Next setup requires its exact retained track identity")
     checkout = plan["checkout"]
     observation, owner = selection(Path(checkout["path"]), checkout["remote"],
                                    plan["repository"]["repository_id"], transport)
@@ -230,6 +241,9 @@ def apply_personal(plan, original, docs, *, approved, authorized, transport, ci_
                 "The original enrollment cannot be reapproved or replaced")
         existing.live(read_clock(), owner=existing.intent["phase"] == "ENROLLED")
         if existing.intent["phase"] == "ENROLLED":
+            if _track_link is not None:
+                require(read_private(existing.state / "track-link.json", optional=True) == _track_link,
+                        "Do not adopt an enrolled standalone task into an unfinished track intent")
             candidates = [row for row in observation.snapshot.issues if row.identity.issue_id == plan["issue_id"]]
             require(observation.checkout == checkout and owner == plan["owner"] and len(candidates) == 1
                     and digest(data(candidates[0])) == plan["original_digest"]
@@ -260,4 +274,7 @@ def apply_personal(plan, original, docs, *, approved, authorized, transport, ci_
         if existing is None:
             atomic(pointer, encode(expected), replace=False)
         personal = persist_intent(directory, plan, original, docs)
+        if _track_link is not None:
+            from .personal_track import immutable
+            immutable(personal.state / "track-link.json", _track_link)
         return complete_setup(personal, clock=read_clock)

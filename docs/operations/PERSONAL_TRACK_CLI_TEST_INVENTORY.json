@@ -1,0 +1,5 @@
+[
+  "test_personal_track_cli.PersonalTrackCLIContractTests.test_capabilities_and_both_cli_spellings_do_not_delegate_effects",
+  "test_personal_track_cli.PersonalTrackCLIContractTests.test_next_and_report_require_separate_review_tokens_and_next_setup_token",
+  "test_personal_track_cli.PersonalTrackCLIFixtureTests.test_cli_track_preview_and_declined_enrollment_preserve_source_and_memory"
+]

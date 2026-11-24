@@ -44,12 +44,16 @@ class OriginalRead:
     """
     SUFFIXES = ("comments", "timeline", "dependencies/blocked_by", "sub_issues")
 
-    def __init__(self, transport, base):
+    def __init__(self, transport, base, *, additional=()):
         self.transport, self.base, self.observed = transport, base, {}
+        self.bases = (base, *additional)
+        require(type(additional) is tuple and 1 <= len(self.bases) <= 8
+                and len(set(self.bases)) == len(self.bases), "Bounded unique original observations required")
 
     def get(self, path):
         response = self.transport.get(path)
-        if path == self.base or any(path.startswith(self.base + "/" + suffix + "?") for suffix in self.SUFFIXES):
+        if any(path == base or any(path.startswith(base + "/" + suffix + "?") for suffix in self.SUFFIXES)
+               for base in self.bases):
             require(response.status == 200, "Complete current original-ticket evidence required")
             observed = digest({"body": response.body,
                 "pagination": [(k.lower(), v) for k, v in response.headers if k.lower() == "link"]})
@@ -84,7 +88,7 @@ class PersonalPublication:
         self.port = GitHubGitExecutionPort(self.cfg, self.service, self.journal,
             bound_git_directory=Path(administration(self.personal.feature)["directory"]["path"]))
 
-    def record(self):
+    def record(self, *, _observed=None):
         row = read_private(self.path, optional=True)
         if row is None:
             require(not any(a["task_key"] == key(self.c.task_id) and a["operation"] == Operation.PUSH
@@ -95,7 +99,7 @@ class PersonalPublication:
         require(type(row["schema_version"]) is int and row["schema_version"] == 1
                 and row["action_id"] == digest({"personal-publication": row["view"]})
                 and row["view"]["setup_approval"] == self.personal.intent["approval"]
-                and row["view"]["generation"] == self.c.memory.inspect()["state"]["generation"],
+                and row["view"]["generation"] == (_observed if _observed is not None else self.c.memory.inspect())["state"]["generation"],
                 "Publication identity, consent or ownership changed")
         view = row["view"]
         require(view["administrative_quiescence_warrant"] == WARRANT and view["project_policy_assent"] == POLICY_ASSENT
@@ -115,7 +119,8 @@ class PersonalPublication:
         execution["tasks"][task_key] = task
 
     def local(self):
-        capture = OriginalRead(self.read, self.target.api + "/issues/" + str(self.personal.plan["issue"]))
+        bases = self.original_bases()
+        capture = OriginalRead(self.read, bases[0], additional=bases[1:])
         self.c.transport = capture
         try:
             self.c.fresh()
@@ -128,17 +133,17 @@ class PersonalPublication:
         self.c.original_approval()
         self.c.verify_local_review()
         require(self.review_binding() == review_binding, "Canonical review evidence changed during genuine verification")
-        require(capture.base in capture.observed and all(capture.base + "/" + suffix + "?per_page=100&page=1" in capture.observed
-            for suffix in capture.SUFFIXES), "Full preflight did not validate all original-ticket observations")
+        require(all(base in capture.observed and all(base + "/" + suffix + "?per_page=100&page=1" in capture.observed
+            for suffix in capture.SUFFIXES) for base in bases), "Full preflight did not validate all original-ticket observations")
         return capture.observed, review_binding
 
-    def review_binding(self):
+    def review_binding(self, *, _observed=None):
         """Current canonical evidence sealed by full genuine batch review.
 
         Recompare per object; this is not a new approval or a substitute for
         runtime verification before and after the whole immutable batch.
         """
-        observed = self.c.memory.inspect()
+        observed = _observed if _observed is not None else self.c.memory.inspect()
         require(observed["health"] == "SYNCED" and observed["local_owner"], "Current review owner is required")
         state, task = observed["state"], observed["tasks"][key(self.c.task_id)]
         row, reviews = self.c.record(), {}
@@ -161,14 +166,26 @@ class PersonalPublication:
         return digest({"reviews": reviews, "revision": task["source_revision"], "iteration": task["iteration"],
             "generation": state["generation"], "epoch": state["progress_guard"]["task_epochs"][task["key"]]})
 
+    def original_bases(self):
+        primary = self.target.api + "/issues/" + str(self.personal.plan["issue"])
+        # The accepted metadata-only helper needs no execution coordinator.
+        # A constructed coordinator still must explicitly expose its track.
+        if not hasattr(self, "c") or self.c.track is None:
+            return (primary,)
+        return (primary, *(self.target.api + "/issues/" + str(number)
+            for number in sorted(o.issue.number for o in self.c.track.originals.values())
+            if number != self.personal.plan["issue"]))
+
     def current_original(self):
-        capture = OriginalRead(self.read, self.target.api + "/issues/" + str(self.personal.plan["issue"]))
+        bases = self.original_bases()
+        capture = OriginalRead(self.read, bases[0], additional=bases[1:])
         observer = GitHubDiscoveryAdapter(self.personal.plan["repository"]["name"], capture, max_requests=128, clock=self.clock)
         observer._halt, observer._requests, observer._coverage_items, observer._now = False, 0, [], self.clock()
-        observer._one(capture.base, "original-before")
-        for suffix in capture.SUFFIXES:
-            observer._pages(capture.base + "/" + suffix, "original-" + suffix)
-        observer._one(capture.base, "original-after")
+        for index, base in enumerate(bases):
+            observer._one(base, "original-before:" + str(index))
+            for suffix in capture.SUFFIXES:
+                observer._pages(base + "/" + suffix, "original-" + str(index) + ":" + suffix)
+            observer._one(base, "original-after:" + str(index))
         require(all(item.status == "COMPLETE" for item in observer._coverage_items),
                 "Original-ticket pagination, permissions or stability is unverified")
         return capture.observed
@@ -240,10 +257,13 @@ class PersonalPublication:
         return {"status": "PUBLICATION_PROPOSED", "result": view, "approval": token}
 
     def live(self, *, review=True):
-        row = self.record()
+        # One actual fresh observation per call, never retained across objects
+        # or callbacks. c.live performs its full current M1/consent checks;
+        # generation and review seals refer to that same observed checkpoint.
+        observed = self.c.live()
+        row = self.record(_observed=observed)
         require(row is not None, "Exact publication consent is missing")
         view = row["view"]
-        self.c.live()
         require(view["issued_at"] <= self.clock() < view["expires_at"]
                 and self.port._value("rev-parse", "HEAD") == view["revision"]
                 and self.port._value("--no-replace-objects", "rev-parse", "HEAD^{tree}") == view["tree"]
@@ -251,7 +271,7 @@ class PersonalPublication:
                 and not self.port._value("status", "--porcelain", "--untracked-files=all")
                 and digest(administration(self.personal.feature)) == view["administration"]
                 and digest(self.c.workers.records()) == view["worker_inventory"]
-                and self.review_binding() == view["canonical_review_binding"]
+                and self.review_binding(_observed=observed) == view["canonical_review_binding"]
                 and self.transport.credential_binding == row["credential_binding"], "Publication source, review, credential or finite consent changed")
         if review:
             self.c.verify_local_review()
@@ -281,8 +301,16 @@ class PersonalPublication:
             expected_checkout["head"] = self.c.revision()
         require(local_checkout(Path(p["checkout"]["path"]), p["checkout"]["remote"]) == expected_checkout
                 and digest(governance(Path(p["checkout"]["path"]))) == p["governance_digest"]
-                and digest(governance(self.personal.feature)) == p["governance_digest"]
-                and not p["native_prerequisites"], "Original source, governance or admitted prerequisites changed")
+                and digest(governance(self.personal.feature)) == p["governance_digest"],
+                "Original source or governance changed")
+        if self.c.track is None:
+            require(not p["native_prerequisites"], "Native prerequisites need independent acceptance before publication")
+        else:
+            # Full current M4 admission/preflight is bound into the approved raw
+            # maps for EVERY selected original. Reobserve those exact maps below
+            # and the actual prerequisite receipts here, without another whole
+            # repository inventory inside the unchanged CAS request budget.
+            self.c.track.publication_prerequisites()
         require(self.current_original() == self.record()["view"]["original_observation"], "Original-ticket scope or native evidence changed")
         require([branch_rules(self.read, p["repository"]["name"], item["ref"].removeprefix("refs/heads/"))
                 for item in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")

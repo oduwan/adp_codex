@@ -1,0 +1,8 @@
+[
+  "test_personal_track.PersonalTrackTests.test_original_scope_packet_and_three_native_issue_completion_chain",
+  "test_personal_track.PersonalTrackTests.test_registration_scope_authority_and_missing_native_inventory_fail_closed",
+  "test_personal_track.PersonalTrackTests.test_closed_green_or_local_only_never_unblocks_successor",
+  "test_personal_track.PersonalTrackTests.test_missing_exact_merged_base_blocks_before_next_owner_or_source_effect",
+  "test_personal_track.PersonalTrackTests.test_next_requires_new_scope_and_preserves_previous_counters_and_owner_release",
+  "test_personal_track.PersonalTrackTests.test_original_version_scope_native_edge_and_permission_drift_stop"
+]
