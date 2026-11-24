@@ -432,6 +432,10 @@ class PersonalCoordinator:
         if p["unresolved_check_names"] or self.ci_transport is None:
             return {"status": "UNKNOWN", "qualified": False, "missing": p["required_check_names"]}
         require(row["observations"] < p["window"]["maximum_check_observations"], "Personal check observation budget is exhausted")
+        # Episode usage is canonical M1 state. Charge before creating the
+        # exact M3 plan: a later checkpoint would invalidate its authorization.
+        # Legacy personal mode keeps the same no-op charge behavior.
+        self.charge_check("local:" + permit.token)
         provider, task = self.provider(self.personal.feature, permit)
         plan = provider.plan(task, Request(Operation.VALIDATE))
         authorization = self.authority.authorize(plan)
@@ -443,7 +447,6 @@ class PersonalCoordinator:
             protected_roots=(self.personal.feature,), maximum_observations=p["window"]["maximum_check_observations"], clock=self.clock,
             retain_requests=True)
         row["observations"] += 1  # Consume before observation; lost results stay consumed.
-        self.charge_check("local:" + permit.token)
         self.save(row)
         _, _, reserved = self.guard._snapshot(self.task_id, permit.decision.baseline.requirement_id)
         remaining = min(self.seconds_left(), reserved["active"]["deadline"] - self.clock())

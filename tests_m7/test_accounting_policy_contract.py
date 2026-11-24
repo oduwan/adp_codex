@@ -1,6 +1,7 @@
 """Offline policy primitives; no worker, check, host probe or forge effects."""
 import unittest
 import hashlib
+from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -16,6 +17,48 @@ from adp.storage import atomic
 
 
 class AccountingPolicyContractTests(unittest.TestCase):
+    def test_check_charge_precedes_exact_m3_authorization_without_reusing_old_grant(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+        import test_policy as accepted_policy
+        from adp.personal_runner import PersonalCoordinator
+        from adp.policy_types import Authorization, Effect, Operation, Request
+        f = accepted_policy.PolicyFixture()
+        f.setUp()
+        old = f.provider.plan(f.task, Request(Operation.VALIDATE))
+        old_grant = Authorization(f.authority.sign(f.provider.authorization_subject(old), "operation"))
+        charged = []
+        def charge(identifier):
+            charged.append(identifier)
+            f.safety.value = replace(f.safety.value, memory_head="e" * 40)
+        def authorize(plan):
+            return Authorization(f.authority.sign(f.provider.authorization_subject(plan), "operation"))
+        @dataclass
+        class UnknownGate:
+            status: str = "UNKNOWN"
+            qualified: bool = False
+        def observe(phase, *, authorization, budget_ms):
+            self.assertEqual(charged, ["local:exact-permit"])
+            current = f.provider.plan(f.task, Request(Operation.VALIDATE))
+            self.assertEqual(f.provider.decide(current, authorization).effect, Effect.ALLOW)
+            self.assertNotEqual(f.provider.decide(current, old_grant).effect, Effect.ALLOW)
+            return UnknownGate()  # No project check or PASS is fabricated.
+        record = {"observations": 0}
+        plan = {"required_check_names": ["unit"], "unresolved_check_names": [], "repository": {"name": "owned/disposable"},
+            "window": {"maximum_check_observations": 3, "issued_at": 90, "expires_at": 200}}
+        c = SimpleNamespace(personal=SimpleNamespace(plan=plan, feature=Path("/tmp/not-executed"),
+            state=Path("/tmp/not-created"), repository_id=f.task.repository_id), record=lambda: record, ci_transport=object(),
+            provider=lambda *a: (f.provider, f.task), authority=SimpleNamespace(authorize=authorize,
+                check_policy=lambda plan, policy: policy, native_observation=lambda *a: None), checks=lambda: (),
+            charge_check=charge, save=lambda row: None, task_id=f.task.task_id, seconds_left=lambda: 100,
+            guard=SimpleNamespace(_snapshot=lambda *a: (None, None, {"active": {"deadline": 200}})), clock=lambda: 100)
+        permit = SimpleNamespace(token="exact-permit", decision=SimpleNamespace(baseline=SimpleNamespace(requirement_id=f.task.requirement_id)))
+        with patch("adp.personal_runner.ProjectValidation", return_value=SimpleNamespace(observe=observe)):
+            result = PersonalCoordinator.observe_checks(c, permit)
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertFalse(result["qualified"])
+        self.assertEqual(record["observations"], 1)
+
     def test_local_journal_v2_requires_exact_purpose_and_two_live_fences(self):
         from adp.memory import Memory
         from adp.personal_recovery import journal_purpose
