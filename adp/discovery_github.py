@@ -212,6 +212,14 @@ class GitHubDiscoveryAdapter:
             return "FORBIDDEN", "Authentication/permission unavailable"
         return "UNKNOWN", "Unavailable, malformed, redirected or unsupported metadata"
 
+    def _semantic(self, path, values):
+        # Default/signed-provider receipts retain their original raw contract.
+        return values
+
+    def _fingerprint(self, path, values, *, inventory=False):
+        semantic = self._semantic(path, values)
+        return digest(sorted(semantic, key=digest) if inventory else semantic)
+
     def _coverage(self, name, path, status, values, pages, detail="", response=None):
         retry = None
         if response is not None:
@@ -220,7 +228,7 @@ class GitHubDiscoveryAdapter:
             reset = dict(response.headers).get("x-ratelimit-reset", "")
             if retry is None and reset.isdigit() and len(reset) < 18:
                 retry = max(0, int(reset) - self._now)
-        self._coverage_items.append(Coverage(name, status, API + path, digest(values), pages, detail, retry))
+        self._coverage_items.append(Coverage(name, status, API + path, self._fingerprint(path, values), pages, detail, retry))
 
     def _one(self, path, name):
         response = self._get(path)
@@ -245,8 +253,8 @@ class GitHubDiscoveryAdapter:
             if len(batch) > self.per_page:
                 self._coverage(name, path, "PARTIAL", items, page - 1, "Page exceeds requested inventory bound")
                 return items
-            duplicate = any(digest(item) in seen for item in batch)
-            seen.update(digest(item) for item in batch)
+            duplicate = any(self._fingerprint(path, item) in seen for item in batch)
+            seen.update(self._fingerprint(path, item) for item in batch)
             items.extend(batch)
             if len(items) > MAX_ITEMS or duplicate:
                 items = items[:MAX_ITEMS]
@@ -379,7 +387,7 @@ class GitHubDiscoveryAdapter:
                 head, base = current.get("head") or {}, current.get("base") or {}
                 require(base.get("repo") is not None and _repo_id(base["repo"]) == rid, "Foreign PR base repository")
                 pr = PullRequest(Identity(rid, _id(current)), number, f"{repo.url}/pull/{number}", current["state"],
-                    current["updated_at"], digest(current), head.get("sha"), head.get("ref"),
+                    current["updated_at"], self._fingerprint(route, current), head.get("sha"), head.get("ref"),
                     _repo_id(head["repo"]) if head.get("repo") else None, base.get("sha"), base.get("ref"),
                     current.get("merged"), current.get("draft"))
                 if None in (pr.head_sha, pr.head_ref, pr.head_repository_id, pr.base_sha, pr.base_ref, pr.merged, pr.draft):
@@ -392,7 +400,8 @@ class GitHubDiscoveryAdapter:
         # offer a transaction; drift is reported rather than silently mixed.
         refreshed_issues = self._pages(prefix + "/issues", "issues-refresh", "state=all&sort=created&direction=asc")
         refreshed_pulls = self._pages(prefix + "/pulls", "pulls-refresh", "state=all&sort=created&direction=asc")
-        if digest(sorted(issue_rows, key=digest)) != digest(sorted(refreshed_issues, key=digest)) or digest(sorted(pull_rows, key=digest)) != digest(sorted(refreshed_pulls, key=digest)):
+        if (self._fingerprint(prefix + "/issues", issue_rows, inventory=True) != self._fingerprint(prefix + "/issues", refreshed_issues, inventory=True)
+                or self._fingerprint(prefix + "/pulls", pull_rows, inventory=True) != self._fingerprint(prefix + "/pulls", refreshed_pulls, inventory=True)):
             self._coverage("inventory-stable", prefix, "CHANGED", None, 0, "Inventory changed during discovery")
         else:
             self._coverage("inventory-stable", prefix, "COMPLETE", None, 1)
