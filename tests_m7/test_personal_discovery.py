@@ -126,10 +126,17 @@ class PersonalDiscoveryTests(PersonalFixture):
         for side in ("head", "base"):
             with self.subTest(side=side):
                 entries = self.entries(prs=True)
-                entries[self.prefix + "/pulls/10"].body[side]["repo"]["private"] = 1
+                detail = self.prefix + "/pulls/10"
+                # Inventory and detail must be independently observed objects.
+                entries[detail] = Response(200, deepcopy(entries[detail].body))
+                entries[detail].body[side]["repo"]["private"] = 1
                 observed = self.adapter(entries).discover()
                 self.assertEqual(observed.pulls, ())
                 self.assertTrue(any(c.status != "COMPLETE" for c in observed.coverage))
+                inventory = self.prefix + "/pulls?state=all&sort=created&direction=asc&per_page=100&page=1"
+                entries[inventory].body[0][side]["repo"]["private"] = 1
+                with self.assertRaisesRegex(ADPError, "Malformed personal repository transport metadata"):
+                    self.adapter(entries).discover()
 
     def test_rotating_pr_duplicates_still_mark_inventory_partial(self):
         entries = self.entries(prs=True, per_page=1)
