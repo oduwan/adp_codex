@@ -168,7 +168,9 @@ class PersonalPublication:
 
     def original_bases(self):
         primary = self.target.api + "/issues/" + str(self.personal.plan["issue"])
-        if self.c.track is None:
+        # The accepted metadata-only helper needs no execution coordinator.
+        # A constructed coordinator still must explicitly expose its track.
+        if not hasattr(self, "c") or self.c.track is None:
             return (primary,)
         return (primary, *(self.target.api + "/issues/" + str(number)
             for number in sorted(o.issue.number for o in self.c.track.originals.values())
