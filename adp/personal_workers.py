@@ -115,11 +115,46 @@ class PersonalWorkers:
     @staticmethod
     def result(row):
         observed = typed(RuntimeObservation, row["observation"])
-        return {"outcome": observed.result.outcome, "summary": "Observed personal " + row["purpose"] + " context",
+        require(observed.status == RuntimeStatus.COMPLETED and observed.stopped is True
+                and observed.result is not None, "A stopped typed personal result is required")
+        worker_result(observed.result)
+        # M1 deliberately has a smaller observation vocabulary. Preserve the
+        # immutable raw NOTRUN and its receipt; UNKNOWN is delivery accounting,
+        # never a successful check, code approval or product acceptance.
+        notrun = observed.result.outcome == Outcome.NOTRUN
+        if notrun:
+            require(row["purpose"] in ROLES and observed.result.approved is False
+                    and not observed.result.criteria and observed.result.forensic is None,
+                    "Only an unapproved empty-criteria NOTRUN can be bridged")
+        return {"outcome": Outcome.UNKNOWN if notrun else observed.result.outcome,
+                "summary": "Observed personal " + row["purpose"] + " context" + ("; original outcome NOTRUN" if notrun else ""),
                 "evidence": [observed.receipt]}
 
     def finish(self, row):
         observed = self.actual(row)
+        if observed.result.outcome == Outcome.NOTRUN:
+            # The bridge must not unlock ordinary delivery after either original
+            # deadline. Expired historical work needs a separate archival
+            # disposition, never a backdated observation or renewed window.
+            self.c.live()
+            root = Path(row["request"]["workspace"])
+            require(value(root, "rev-parse", "HEAD") == row["request"]["revision"]
+                    and source_seal(root) == row["result_source"] and admin_seal(root) == row["result_admin"]
+                    and source_seal(root, tuple(self.c.personal.plan["paths"]) if row["purpose"] == "develop" else ()) == row["outside"],
+                    "Stopped NOTRUN source/admin/outside seals changed")
+            state, task, item = self.c.guard._snapshot(self.c.task_id, row["requirement"])
+            if item["active"] is not None:
+                active = self.c.guard._active(state, task, item, row["permit"]["token"])
+                require(active["started"] <= self.c.clock() <= active["deadline"],
+                        "NOTRUN accounting deadline expired; preserve the stopped attempt for archival review")
+            else:
+                accepted = task["assignments"][row["assignment"]["assignment_id"]]
+                require(accepted["status"] == "accepted" and accepted["result"] == self.result(row)
+                        and item["last"] is not None
+                        and item["last"]["context"] == row["guard_context"]
+                        and item["last"]["observation"]["outcome"] == Outcome.NOTRUN
+                        and item["last"]["observation"]["evidence"] == [observed.receipt],
+                        "The exact contemporary NOTRUN observation is missing")
         assignment = row["assignment"]
         current = self.c.memory.inspect()["tasks"][key(self.c.task_id)]["assignments"][assignment["assignment_id"]]
         if current["status"] == "pending":
@@ -132,6 +167,12 @@ class PersonalWorkers:
             self.c.memory.accept(assignment["assignment_id"])
         else:
             require(current["status"] == "accepted" and current["result"] == self.result(row), "Existing delivery differs")
+            if observed.result.outcome == Outcome.NOTRUN:
+                inbox = self.c.memory.path / "inbox" / (key(assignment["assignment_id"]) + ".json")
+                if inbox.exists():
+                    require(read_private(inbox) == {"schema_version": 1, **assignment, "result": self.result(row)},
+                            "Conflicting immutable accepted NOTRUN delivery")
+                    self.c.memory.cleanup_inbox()
         _, _, item = self.c.guard._snapshot(self.c.task_id, row["requirement"])
         defer = getattr(self.c, "defer_developer_guard", None)
         if callable(defer) and defer(row, observed):
