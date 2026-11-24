@@ -22,9 +22,19 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from adp.discovery_github import ENROLLMENT_PATH, PATH
 from adp.network_http_child import MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, MAX_RESPONSE_BYTES, validate_request
+from urllib.parse import quote, unquote
 
 
 def validate_personal(method, path, body, seconds):
+    if method == "GET" and type(path) is str:
+        match = re.fullmatch(r"/repos/[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}/branches/([^/?]+)/protection", path)
+        if match:
+            from adp.policy_schema import branch
+            decoded = unquote(match[1])
+            branch(decoded)
+            if quote(decoded, safe="") != match[1]:
+                raise ValueError("Noncanonical protection branch")
+            return validate_request("GET", "/repos/owned/selected/git/commits/" + "1" * 40, body, seconds)
     if method == "GET" and type(path) is str and (path == "/user" or PATH.fullmatch(path) or ENROLLMENT_PATH.fullmatch(path)):
         # The original validator supplies shared bounds; only this separate
         # personal child admits the accepted discovery GET grammar.

@@ -294,7 +294,8 @@ class ProductAuthority(PersonalAuthority):
             protection, snapshot = typed(Protection, p["protection"]), typed(RepositorySnapshot, p["snapshot"])
             v, f = flow.active["view"], flow.active["view"]["facts"]
             expected = Protection(f["base_ref"], f["base_sha"], True, False, True, tuple(f["checks"]),
-                max(1, f["policy"]["native_reviews"]), tuple(f["methods"]), (), "personal:actual-native-base-policy",
+                max(1, f["policy"]["native_reviews"]), tuple(f["methods"]), (),
+                "personal:operator-plan-disabled-base-policy" if "availability" in f["policy"] else "personal:actual-native-base-policy",
                 v["issued_at"], v["expires_at"], mergeable_methods=tuple(f["methods"]))
             require(protection == expected and purpose == "policy/protection"
                     and subject == PolicyProvider(None).protection_subject(protection, snapshot), "Native protection proof differs")

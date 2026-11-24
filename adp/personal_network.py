@@ -15,14 +15,17 @@ import pwd
 import re
 import shutil
 import time
+from types import SimpleNamespace
 
-from .discovery_github import Response as ReadResponse
+from .discovery_github import ENROLLMENT_PATH, PATH, Response as ReadResponse
 from .errors import ADPError
 from .network_git import GitHubTarget, REF_QUERY, REFS_QUERY, UPDATE_REFS_MUTATION
 from .network_http import NetworkTransportError, Response, _supported, supervised_output
 from .execution_ports import UnconfirmedValidation
 from .personal_network_child import context, validate_personal
 from .schema import decode, fields, require
+from .github_rules import checked, retained_error
+from .personal_rules import PERSONAL_REF_QUERY
 
 
 class PersonalGitHubTransport:
@@ -93,7 +96,7 @@ class PersonalGitHubTransport:
             require(path == "/user" or path == "/graphql" or path.partition("?")[0] == self.target.api
                     or path.startswith(self.target.api + "/"), "Personal route targets another repository")
             if path == "/graphql":
-                require(body["query"] in (REF_QUERY, REFS_QUERY, UPDATE_REFS_MUTATION), "Unsupported personal GraphQL query")
+                require(body["query"] in (REF_QUERY, PERSONAL_REF_QUERY, REFS_QUERY, UPDATE_REFS_MUTATION), "Unsupported personal GraphQL query")
                 identity = body["variables"]["input"]["repositoryId"] if body["query"] == UPDATE_REFS_MUTATION else body["variables"].get("id")
                 require(identity == self.target.node_id, "Personal GraphQL recipient differs")
             mutation = method == "PUT" or method == "POST" and (path != "/graphql" or body["query"] == UPDATE_REFS_MUTATION)
@@ -117,7 +120,17 @@ class PersonalGitHubTransport:
                     and sum(len(k) + len(v) for k, v in headers) <= 65536, "Malformed private response headers")
             raw = base64.b64decode(reply["body_base64"], validate=True)
             require(len(raw) <= 1048576 and self._actor() == self._context, "Response or gh execution context changed")
-            self.last_response = (reply["status"], raw, tuple((k.lower(), v) for k, v in headers))
+            headers = tuple((k.lower(), v) for k, v in headers)
+            native = ReadResponse(reply["status"], None, headers)
+            ordinary_read = method == "GET" and (path == "/user" or bool(PATH.fullmatch(path)
+                or ENROLLMENT_PATH.fullmatch(path)) and "/rules/branches/" not in path)
+            validated = checked(SimpleNamespace(get=lambda _: native), self.target.owner + "/" + self.target.name,
+                path, retain_final_response=ordinary_read)
+            require(validated.status == reply["status"], "Unknown native control headers or exhausted rate budget")
+            require(not (method == "GET" and reply["status"] == 200 and "/rules/branches/" in path
+                    and "?" not in path and any(k == "link" for k, _ in headers)), "Ambiguous nonpaginated rules response")
+            # Rejected responses cannot be resurfaced through the read adapter.
+            self.last_response = (reply["status"], raw, headers)
             return Response(reply["status"], raw)
         except UnconfirmedValidation:
             raise  # The shared M7 service must retain its durable stop hazard.
@@ -137,7 +150,7 @@ class PersonalDiscoveryRead:
         except (ADPError, OSError):
             body = None
         observed = self.service.transport.last_response
-        if observed is None:
+        if observed is None or self.service.unconfirmed_contexts():
             return ReadResponse(0, None)
-        status, _, headers = observed
-        return ReadResponse(status, body if status == 200 else None, headers)
+        status, raw, headers = observed
+        return ReadResponse(status, body if status == 200 else retained_error(status, raw, headers, path), headers)

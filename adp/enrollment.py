@@ -149,7 +149,7 @@ class Observation:
         return self.facts["repository"]
 
 
-def inspect_project(checkout: dict, transport: ReadOnlyTransport, expected: str | None) -> Observation:
+def inspect_project(checkout: dict, transport: ReadOnlyTransport, expected: str | None, *, personal_owner=None) -> Observation:
     repo = canonical(transport, checkout["repository"], expected)
     cfg = Config.discover(Path(checkout["path"]), remote=checkout["remote"], repository_id=repo["repository_id"])
     try:
@@ -163,7 +163,12 @@ def inspect_project(checkout: dict, transport: ReadOnlyTransport, expected: str 
     branch = checkout["ref"].removeprefix("refs/heads/")
     default = repo["default_branch"]
     require(default is None or len(default) <= 255, "Invalid GitHub default branch")
-    branches = [branch_rules(transport, repo["name"], name) for name in dict.fromkeys(
+    def rules(name):
+        if personal_owner is not None:
+            from .personal_rules import enrollment_rules
+            return enrollment_rules(transport, repo, personal_owner, name)
+        return branch_rules(transport, repo["name"], name)
+    branches = [rules(name) for name in dict.fromkeys(
         [branch] + ([default] if default else []))]
     files = checkout_files(checkout)
     require(local_checkout(Path(checkout["path"]), checkout["remote"]) == checkout, "Checkout changed during inspection")

@@ -109,16 +109,45 @@ def constraints(branch, rules, legacy=None):
     return {"checks": sorted(checks), "origins": origins, "native_reviews": reviews, "methods": sorted(methods)}
 
 
-def observe_policy(read, target, base_ref):
+def observe_policy(read, target, base_ref, *, personal=None, expected_sha=None, service=None, expected_head=None):
     """Bounded complete native pages through the accepted authenticated read port."""
     branch = base_ref.removeprefix("refs/heads/")
     prefix = target.api
-    current = read.get(prefix + "/branches/" + quote(branch, safe=""))
+    from .github_rules import checked, plan_error
+    current = checked(read, target.owner + "/" + target.name, prefix + "/branches/" + quote(branch, safe=""))
     require(current.status == 200 and type(current.body) is dict and current.body.get("name") == branch,
             "UNKNOWN: current base branch is unavailable")
     rules, ids = [], set()
     for page in range(1, 21):
-        result = read.get(prefix + "/rules/branches/" + quote(branch, safe="") + f"?per_page=100&page={page}")
+        path = prefix + "/rules/branches/" + quote(branch, safe="") + f"?per_page=100&page={page}"
+        result = checked(read, target.owner + "/" + target.name, path)
+        unavailable = plan_error(result, path) if personal is not None and page == 1 else None
+        if unavailable is not None:
+            from .personal_rules import PERSONAL_REF_QUERY, private_repository, ref_value, supported_branch
+            from .network_git import GitHubCAS
+            repository, owner = personal
+            require(expected_sha is not None, "PLAN_UNAVAILABLE: exact observed base SHA required")
+            require(repository["node_id"] == target.node_id and repository["database_id"] == target.database_id
+                    and repository["repository_id"] == str(target.database_id) == target.memory_id
+                    and repository["name"] == target.owner + "/" + target.name
+                    and base_ref == "refs/heads/" + repository["default_branch"], "Plan capability targets a different base/repository")
+            identity = private_repository(read, repository, owner)
+            require(type(service) is GitHubCAS and service.target == target and expected_head is not None,
+                    "PLAN_UNAVAILABLE: current authenticated source/ref service required")
+            repo = service._repository(PERSONAL_REF_QUERY, {"ref": target.ref})
+            require(repo.get("viewerPermission") == "ADMIN" and ref_value(repo, target.branch) == expected_head
+                    and ref_value({"ref": repo.get("defaultBranchRef")}, branch) == expected_sha,
+                    "UNKNOWN: independent current GraphQL owner/base/source evidence differs")
+            supported_branch(current, branch, expected_sha)
+            classic_path = prefix + "/branches/" + quote(branch, safe="") + "/protection"
+            classic = plan_error(checked(read, repository["name"], classic_path), classic_path)
+            require(classic is not None, "UNKNOWN: classic protection is not verified plan-disabled")
+            availability = {"rules": unavailable, "classic": classic,
+                "protection_absence": "NOT_INDEPENDENTLY_OBSERVED", "identity": identity}
+            # These are supported operational minima under separate personal
+            # assent, not an observed-empty native rule/check/review inventory.
+            return {"checks": [], "origins": {}, "native_reviews": 0, "methods": ["merge", "squash"],
+                "availability": availability, "digest": digest({"branch": current.body, "rules": None, "availability": availability})}
         require(result.status == 200 and type(result.body) is list and len(result.body) <= 100,
                 "UNKNOWN: current native rules are unavailable")
         for row in result.body:
@@ -133,7 +162,7 @@ def observe_policy(read, target, base_ref):
         raise ValueError("Incomplete native rules")
     legacy = None
     if current.body.get("protected") is True:
-        observed = read.get(prefix + "/branches/" + quote(branch, safe="") + "/protection")
+        observed = checked(read, target.owner + "/" + target.name, prefix + "/branches/" + quote(branch, safe="") + "/protection")
         require(observed.status == 200, "UNKNOWN: required classic protection access unavailable")
         legacy = observed.body
     value = constraints(current.body, rules, legacy)
