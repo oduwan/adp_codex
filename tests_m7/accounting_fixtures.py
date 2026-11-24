@@ -60,10 +60,12 @@ class AccountingFixture(StoppedNotRunFixture):
         return super().plan(ci_transport=self.native, **kwargs)
 
     def dispatch(self, request):
-        if ":accounting:" in request.task_id:
+        if ":accounting:" in request.task_id or getattr(self, "personal", None) is not None and self.personal.plan["issue"] > 1:
             purpose = json.loads(request.prompt.split("\n", 1)[1])["purpose"]
             self.requests.append(request)
-            result = WorkerResult(Outcome.PASS, True, (purpose,), "Synthetic independent episode judgment; NOT genuine runtime")
+            if purpose == "develop":
+                (Path(request.workspace) / "product").write_text("Synthetic original Issue " + str(self.personal.plan["issue"]) + " implementation\n")
+            result = WorkerResult(Outcome.PASS, purpose != "develop", () if purpose == "develop" else (purpose,), "Synthetic independent episode judgment; NOT genuine runtime")
             create_private(self.runtime.directory)
             raw = {"host": self.runtime.host, "request_digest": digest(request), "status": "COMPLETED",
                 "pid": 51000 + len(self.requests), "start_time": "synthetic-only", "context": "synthetic:" + request.id,

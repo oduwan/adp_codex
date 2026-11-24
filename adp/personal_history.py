@@ -40,7 +40,7 @@ def archived(personal, *, memory=None, runtime=None, _child=None):
     only for historical observation; callers still need current live authority
     for every future effect.
     """
-    from .personal_recovery import Recovery, engine_digest, grant
+    from .personal_recovery import Recovery, engine_digest, grant, submission_provenance
     if _child is None:
         root = load_state(personal.directory)
     else:
@@ -55,7 +55,7 @@ def archived(personal, *, memory=None, runtime=None, _child=None):
     directory = root.state / "accounting-recovery"
     master = read_private(directory / "intent.json")
     receipt = read_private(directory / "archive.json")
-    fields(receipt, "schema_version policy master initial guard result consents observations")
+    fields(receipt, "schema_version policy master initial guard result consents observations recovery")
     require(receipt["schema_version"] == 1 and receipt["policy"] == POLICY
             and receipt["master"] == digest(master) and master["engine"] == engine_digest(), "Archived policy/source proof changed")
     expected = ((master["state"], master["tasks"]), (master["guard_state"], master["tasks"]),
@@ -64,6 +64,13 @@ def archived(personal, *, memory=None, runtime=None, _child=None):
     require(heads[0] == master["view"]["checkpoint"], "Original archival checkpoint changed")
     from .personal_history_git import verify
     verify(memory, heads, expected, engine=master["engine"], host=master["view"]["binding"]["host"])
+    require(type(receipt["recovery"]) is dict and len(receipt["recovery"]) <= 6, "Bounded recovery provenance required")
+    for relative, hashed in receipt["recovery"].items():
+        require(type(relative) is str and ".." not in Path(relative).parts and len(Path(relative).parts) == 2
+                and Path(relative).parts[0] in ("reconciliations", "submission-provenance")
+                and digest(read_private(directory / relative)) == hashed, "Exact historical recovery provenance changed")
+    for stage in ("guard", "result"):
+        submission_provenance(directory, stage, read_private(directory / (stage + "-intent.json")), master)
     for stage, index in (("guard", 0), ("result", 1)):
         intent = read_private(directory / (stage + "-intent.json"))
         fields(intent, "approval grant submitted_at payload")
@@ -149,35 +156,44 @@ def validate_administration(root, master, relation, observed, *, child=None):
     old_refs, new_refs = before["refs"], actual["refs"]
     changed = {name for name in old_refs.keys() | new_refs.keys() if old_refs.get(name) != new_refs.get(name)}
     allowed = {target}
+    from .personal_history_track import later_windows, scope_proof, exact_ref, accepted_merge
+    later = later_windows(child)
+    for identity, coordinator in later:
+        ref = "refs/heads/" + coordinator.personal.plan["feature"]["branch"]
+        if ref in new_refs or ref in old_refs:
+            scope_proof(coordinator)
+            exact_ref(coordinator, new_refs)
+        allowed.add(ref)
     if observed["state"]["owner"] is None and actual["outside"] != before["outside"]:
         # Historical observation after handoff may see the operator's normal
         # synchronization to the *already accepted* merge. This grants no effect.
         receipt = read_private(root.state / "track" / "accepted" / (digest(root.intent["original"]["identity"]) + ".json"))
         require(receipt["schema_version"] == 2 and receipt["directory"] == str(child.directory)
                 and receipt["lineage"] == {k: v for k, v in relation.items() if k != "usage"}
-                and actual["outside"]["head"] == receipt["merge"]
                 and not value(Path(root.plan["checkout"]["path"]), "status", "--porcelain", "--untracked-files=all"), "Unqualified historical default source change")
+        merged = receipt["merge"]
+        if actual["outside"]["head"] != merged:
+            for identity, coordinator in later:
+                candidate = read_private(coordinator.track.completion_path(identity), optional=True)
+                if candidate is not None:
+                    current = accepted_merge(coordinator, identity)
+                    git(Path(root.plan["checkout"]["path"]), "merge-base", "--is-ancestor", merged, current)
+                    merged = current
+                if merged == actual["outside"]["head"]:
+                    break
+        require(actual["outside"]["head"] == merged, "Default source lacks exact accepted later completion")
         allowed |= {before["outside"]["ref"], "refs/remotes/" + root.plan["checkout"]["remote"] + "/" + root.plan["repository"]["default_branch"]}
-        require(all(new_refs.get(n) == receipt["merge"] for n in changed - {target}), "Unrelated default/tracking ref change")
+        features = {target} | {"refs/heads/" + c.personal.plan["feature"]["branch"] for _, c in later}
+        require(all(new_refs.get(n) == merged for n in changed - features), "Unrelated default/tracking ref change")
     else:
         require(actual["outside"] == before["outside"], "Original source/index changed before owner release")
     require(changed <= allowed, "Foreign Git ref drift is not an episode effect")
     if target not in new_refs:
         require(not run["actions"] or run["actions"].get("feature", {}).get("status") != "OBSERVED", "Observed child feature disappeared")
         return
-    from .config import Config
-    from .execution_ports import GitExecutionPort
-    from .personal_git import administration
     actions = run["actions"]
     feature = actions.get("feature")
     require(feature is not None and feature["operation"] == "BRANCH" and feature["target"] == target
             and feature["payload"]["start_revision"] == root.plan["checkout"]["head"], "Child ref lacks its original M7 CAS intent")
-    source = Path(root.plan["checkout"]["path"]) if new_refs[target] == root.plan["checkout"]["head"] else child.feature
-    port = GitExecutionPort(Config.discover(source, remote=root.plan["checkout"]["remote"], repository_id=root.repository_id),
-        bound_git_directory=Path(administration(source)["directory"]["path"]))
-    candidates = [feature] if source != child.feature else [a for a in actions.values()
-        if a["operation"] == "COMMIT" and a["target"] == a["source_ref"] == target]
-    matches = [a for a in candidates if (result := port.observe(a)).status == "PRESENT" and result.revision == new_refs[target]
-               and (a["observation"] is None or a["observation"] == data(result))]
-    require(len(matches) == 1, "Current child ref is not the exact observed/submitted M7 effect")
-    require(value(source, "merge-base", root.plan["checkout"]["head"], new_refs[target]) == root.plan["checkout"]["head"], "Child ref lost original base ancestry")
+    from types import SimpleNamespace
+    exact_ref(SimpleNamespace(personal=child, record=lambda: run), new_refs)

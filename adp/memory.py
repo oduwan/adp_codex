@@ -173,10 +173,35 @@ class Memory:
         if not path.exists():
             return None
         pending = load_json(path, MAX_JOURNAL, protected=True) if protected else load_json(path, MAX_JOURNAL)
-        fields(pending, "base state tasks")
+        if "schema_version" in pending:
+            pending = load_json(path, MAX_JOURNAL, protected=True)
+            fields(pending, "schema_version base state tasks policy_fence")
+            require(type(pending["schema_version"]) is int and pending["schema_version"] == 2,
+                    "Unsupported local recovery journal")
+            self._journal_purpose(pending["policy_fence"])
+        else:
+            fields(pending, "base state tasks")
         require(isinstance(pending["base"], str) and SHA.fullmatch(pending["base"]), "Invalid recovery base")
         bundle(pending["state"], pending["tasks"], self.config.identity)
         return pending
+
+    @staticmethod
+    def _journal_purpose(purpose):
+        fields(purpose, "policy stage subject")
+        require(purpose["policy"] == "ACCOUNTING_EXPIRY_CONTINUATION" and purpose["stage"] in ("guard", "result", "episode")
+                and type(purpose["subject"]) is str and KEY.fullmatch(purpose["subject"]), "Invalid exact-purpose recovery binding")
+
+    @staticmethod
+    def _journal_fence(pending, purpose, fence, before_effects=None, *, recovering=False):
+        if "schema_version" in pending or "policy_fence" in pending:
+            fields(pending, "schema_version base state tasks policy_fence")
+            require(type(pending["schema_version"]) is int and pending["schema_version"] == 2, "Unsupported local recovery journal")
+            Memory._journal_purpose(pending["policy_fence"])
+            require(purpose == pending["policy_fence"] and callable(fence)
+                    and (not recovering or callable(before_effects)),
+                    "Use separately approved exact-purpose accounting reconciliation; ordinary recovery is refused")
+        else:
+            fields(pending, "base state tasks")
 
     def _recovery_slots(self, pending, tasks):
         if pending is not None:
@@ -300,7 +325,7 @@ class Memory:
             _fence()
         atomic(self.path / "state.json", encode(state))
 
-    def _checkpoint(self, head: str, state: dict, tasks: dict[str, dict], *, _fence=None) -> dict:
+    def _checkpoint(self, head: str, state: dict, tasks: dict[str, dict], *, _fence=None, _purpose=None) -> dict:
         if _fence is not None:
             _fence()
         previous, _ = self._read_ref(head)
@@ -329,13 +354,18 @@ class Memory:
                 task_key: epochs.get(task_key, state["revision"]) for task_key in tasks}
         bundle(state, tasks, self.config.identity)
         pending = {"base": head, "state": state, "tasks": tasks}
+        if _purpose is not None:
+            self._journal_purpose(_purpose)
+            require(callable(_fence), "Exact-purpose checkpoint requires live authority")
+            pending.update(schema_version=2, policy_fence=copy.deepcopy(_purpose))
         if _fence is not None:
             _fence()
         atomic(self.control / "pending.json", encode(pending, MAX_JOURNAL))
-        self._finish(pending, _fence=_fence)
+        self._finish(pending, _fence=_fence, _purpose=_purpose)
         return self.inspect()
 
-    def _finish(self, pending: dict, *, expected_remote=_UNREVIEWED_REMOTE, _fence=None) -> None:
+    def _finish(self, pending: dict, *, expected_remote=_UNREVIEWED_REMOTE, _fence=None, _purpose=None) -> None:
+        self._journal_fence(pending, _purpose, _fence)
         base, state, tasks = pending["base"], pending["state"], pending["tasks"]
         if expected_remote is not _UNREVIEWED_REMOTE:
             require(self._remote_head() == expected_remote, "Reviewed remote checkpoint changed before recovery")
@@ -350,6 +380,8 @@ class Memory:
             if _fence is not None:
                 _fence()
             self._write_git(self.path, "add", "--all", "--", "state.json", "tasks")
+            if _fence is not None:
+                _fence()
             self._write_git(self.path, "commit", "-m", f"Checkpoint coordination revision {state['revision']}")
         else:
             require(value(self.path, "rev-parse", "HEAD^") == base, "Pending checkpoint parent mismatch")
@@ -418,7 +450,7 @@ class Memory:
             state["owner"] = None
             return self._checkpoint(head, state, tasks)
 
-    def recover(self, *, before_effects=None, expected_remote=_UNREVIEWED_REMOTE, validate_states=None, _fence=None) -> dict:
+    def recover(self, *, before_effects=None, expected_remote=_UNREVIEWED_REMOTE, validate_states=None, _fence=None, _purpose=None) -> dict:
         """Explicitly publish a validated pending transaction or fast-forward sync.
 
         A missing owner is never repaired by recovery. Released/foreign owners
@@ -426,6 +458,9 @@ class Memory:
         """
         author(self.config.root)
         with locked(self.control):
+            initial_pending = self._recovery_document(protected=expected_remote is not _UNREVIEWED_REMOTE)
+            if initial_pending is not None:
+                self._journal_fence(initial_pending, _purpose, _fence, before_effects, recovering=True)
             if before_effects is not None:
                 before_effects()
             self._registered()
@@ -433,6 +468,7 @@ class Memory:
             if guarded:
                 require(self._remote_head() == expected_remote, "Reviewed remote checkpoint changed before recovery")
             pending = self._recovery_document(protected=guarded)
+            require(pending == initial_pending, "Pending recovery purpose/subject changed")
             if pending is not None:
                 previous, _ = self._read_ref(pending["base"])
                 require(pending["state"]["revision"] == previous["revision"] + 1, "Invalid pending revision")
@@ -447,9 +483,9 @@ class Memory:
                         _fence()
                     clear_slot(path, limit)
                 if guarded:
-                    self._finish(pending, expected_remote=expected_remote, _fence=_fence)
+                    self._finish(pending, expected_remote=expected_remote, _fence=_fence, _purpose=_purpose)
                 else:
-                    self._finish(pending, _fence=_fence)
+                    self._finish(pending, _fence=_fence, _purpose=_purpose)
             else:
                 committed, committed_tasks = self._read_ref(value(self.path, "rev-parse", "HEAD"))
                 if validate_states is not None:

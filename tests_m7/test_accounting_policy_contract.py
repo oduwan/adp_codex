@@ -16,6 +16,57 @@ from adp.storage import atomic
 
 
 class AccountingPolicyContractTests(unittest.TestCase):
+    def test_local_journal_v2_requires_exact_purpose_and_two_live_fences(self):
+        from adp.memory import Memory
+        from adp.personal_recovery import journal_purpose
+        purpose = journal_purpose("guard", {"immutable_original_intent": 1})
+        legacy = {"base": "a" * 40, "state": {}, "tasks": {}}
+        Memory._journal_fence(legacy, None, None, recovering=True)
+        pending = {**legacy, "schema_version": 2, "policy_fence": purpose}
+        callback = lambda: None
+        for changed, fence, before in ((None, None, None), (purpose, None, callback), (purpose, callback, None),
+                ({**purpose, "stage": "result"}, callback, callback),
+                ({**purpose, "subject": "b" * 64}, callback, callback)):
+            with self.subTest(purpose=changed), self.assertRaises(ADPError):
+                Memory._journal_fence(pending, changed, fence, before, recovering=True)
+        Memory._journal_fence(pending, purpose, callback, callback, recovering=True)
+        for changed in ({**pending, "extra": True}, {**pending, "schema_version": True},
+                {**pending, "policy_fence": {**purpose, "policy": "GENERAL_UNSAFE_BYPASS"}}):
+            with self.subTest(changed=changed), self.assertRaises(ADPError):
+                Memory._journal_fence(changed, purpose, callback, callback, recovering=True)
+
+    def test_complete_future_projection_is_bounded_before_irreversible_accounting(self):
+        from adp.personal_episode import bound_projection
+        ordinary = {"original": "Original scope", "candidate_source": "x" * 12000, "track_preparation": "y" * 12000}
+        bound_projection({"descriptor": "x" * 100}, {"intent": "x" * 100}, ordinary)
+        # Individually bounded source and metadata can exceed the actual total
+        # prompt limit when combined. Neither constituent limit is relaxed.
+        oversized = {**ordinary, "native_originals": "z" * 12000}
+        for descriptor, intent, context in (({}, {}, oversized), ({"full_descriptor": "x" * 131072}, {}, ordinary),
+                ({}, {"full_intent": "x" * 131072}, ordinary)):
+            with self.subTest(kind=list(descriptor) + list(intent)), self.assertRaises(ADPError):
+                bound_projection(descriptor, intent, context)
+
+    def test_marker_restoration_keeps_original_prepared_authority_across_another_crash(self):
+        from adp.personal_recovery import immutable, submission_provenance
+        with TemporaryDirectory(prefix="adp-offline-marker-") as temporary:
+            directory = Path(temporary)
+            original, master = {"immutable": "stage"}, {"immutable": "master"}
+            payload = {"stage": "guard", "master": digest(master), "intent": digest(original), "canonical": {"step": 0}}
+            token, _ = grant("reconcile-guard", digest(payload), 1000)
+            restored = {"stage": "guard", "intent": digest(original), "reconciliation": digest(token), "prepared_at": 1001}
+            path = directory / "submission-provenance" / "guard.json"
+            immutable(directory / "reconciliations" / (digest(token) + ".json"), {"approval": token, "payload": payload})
+            immutable(path, restored)
+            # A subsequent live grant does not overwrite old provenance.
+            other, _ = grant("reconcile-guard", digest(payload), 1100)
+            self.assertNotEqual(token, other)
+            self.assertEqual(submission_provenance(directory, "guard", original, master), restored)
+            self.assertEqual(read_bytes := path.read_bytes(), encode(restored))
+            for changed_original, changed_master in (({"changed": True}, master), (original, {"changed": True})):
+                with self.assertRaises(ADPError):submission_provenance(directory, "guard", changed_original, changed_master)
+            self.assertEqual(path.read_bytes(), read_bytes)
+
     def test_final_archival_fence_refuses_expiry_during_proof_and_changed_master(self):
         with TemporaryDirectory(prefix="adp-offline-accounting-clock-") as temporary:
             r = Recovery.__new__(Recovery)

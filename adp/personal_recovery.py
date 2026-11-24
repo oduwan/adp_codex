@@ -37,6 +37,31 @@ def immutable(path, body):
         atomic(path, encode(body, LIMIT), replace=False)
 
 
+def journal_purpose(stage, intent):
+    require(stage in ("guard", "result", "episode"), "Unsupported recovery stage")
+    return {"policy": POLICY, "stage": stage, "subject": digest(intent)}
+
+
+def submission_provenance(directory, stage, original, master):
+    """Authenticate a previously prepared marker restoration, never renew it."""
+    require(stage in ("guard", "result"), "Unsupported archival stage")
+    restored = read_private(directory / "submission-provenance" / (stage + ".json"), optional=True)
+    if restored is None:
+        return None
+    fields(restored, "stage intent reconciliation prepared_at")
+    key_ = restored["reconciliation"]
+    require(type(key_) is str and len(key_) == 64 and all(c in "0123456789abcdef" for c in key_), "Invalid reconciliation identity")
+    record = read_private(directory / "reconciliations" / (key_ + ".json"))
+    fields(record, "approval payload")
+    fields(record["payload"], "stage master intent canonical")
+    grant("reconcile-" + stage, digest(record["payload"]), restored["prepared_at"], record["approval"])
+    require(restored["stage"] == record["payload"]["stage"] == stage
+            and restored["intent"] == record["payload"]["intent"] == digest(original)
+            and record["payload"]["master"] == digest(master)
+            and digest(record["approval"]) == key_, "Submission restoration authority differs")
+    return restored
+
+
 def engine_digest():
     root = Path(__file__).parent
     return digest({p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.glob("*.py"))})
@@ -198,6 +223,8 @@ class Recovery:
             "guard_state": guard_state, "result_state": result_state, "result_tasks": result_tasks,
             "administration": administration_snapshot(self.personal)}
         encode(master, LIMIT)
+        from .personal_episode import preflight
+        preflight(c, master)
         return master
 
     def master(self):
@@ -210,7 +237,7 @@ class Recovery:
                 require(intent["payload"]["master"] == digest(m), "The immutable recovery master changed")
         return m
 
-    def validate_evidence(self, m):
+    def validate_evidence(self, m, *, remote=True):
         """No locks/writers/live authority here; safe inside canonical fencing."""
         c, view = self.c, m["view"]
         require(type(c.clock()) is int and c.clock() >= self.personal.plan["window"]["expires_at"], "Original expiry cannot be backdated")
@@ -228,7 +255,7 @@ class Recovery:
                 and _seals(c, row, original) == view["binding"]["evidence"]["seals"], "Original host/receipt/source provenance changed")
         self.measurements(row, m["state"]["progress_guard"]["requirements"][row["requirement"]]["active"]["action"])
         self.measurements(original)
-        require(self.graph() == m["blueprint"]["graph"] and material(c) == m["blueprint"]["material"], "Original graph/material changed")
+        require((not remote or self.graph() == m["blueprint"]["graph"]) and material(c) == m["blueprint"]["material"], "Original graph/material changed")
         require(administration_snapshot(self.personal) == m["administration"], "Original Git administration content changed")
         require(m["engine"] == engine_digest(), "Recovery engine changed")
         return row
@@ -259,6 +286,9 @@ class Recovery:
             target = next((i+1 for i, t in enumerate(targets) if (pending["state"], pending["tasks"]) == t), None)
             require(target is not None and (step == target-1 and pending["base"] == head
                     or step == target and value(memory.config.root, "rev-parse", head + "^") == pending["base"]), "Pending checkpoint is not the exact authorized transaction")
+            stage = "guard" if target == 1 else "result"
+            require(pending.get("policy_fence") == journal_purpose(stage, read_private(self.root / (stage + "-intent.json"))),
+                    "Pending archival journal lost its original purpose")
             require(observed["remote_head"] in (pending["base"], head) and observed["remote_head"] is not None, "Uncertain/foreign remote checkpoint")
         else:
             from .storage import temporary_slot
@@ -323,6 +353,7 @@ class Recovery:
         self.live_grant(stage, payload, reviewed)  # Last, after potentially blocking evidence/network reads.
 
     def apply(self, stage, *, reviewed, authorized, acknowledge, request=None, choices=None):
+        require(stage in ("guard", "result"), "Unsupported archival stage")
         require(authorized is True and acknowledge is True, "Separately authorize this exact archival effect and overdue-accounting severity")
         with invocation_lock(self.c.memory.control):
             existing = read_private(self.root / (stage + "-intent.json"), optional=True)
@@ -360,7 +391,8 @@ class Recovery:
                     fence()
                     memory._deliver(envelope, state, tasks)
                 memory._accept_result(envelope, state, tasks)
-            memory._checkpoint(head, state, tasks, _fence=fence)
+            memory._checkpoint(head, state, tasks, _fence=fence,
+                _purpose=journal_purpose(stage, read_private(self.root / (stage + "-intent.json"))))
             if stage == "result":
                 fence()
                 inbox.unlink(); sync_directory(inbox.parent)
@@ -374,17 +406,22 @@ class Recovery:
             immutable(self.root / "archive.json", {"schema_version": 1, "policy": POLICY, "master": digest(m),
                 "initial": m["view"]["checkpoint"], "guard": canon["chain"][1], "result": canon["head"],
                 "consents": {s: digest(read_private(self.root / (s + "-intent.json"))) for s in ("guard", "result")},
-                "observations": {s: digest(read_private(self.root / (s + "-observed.json"))) for s in ("guard", "result")}})
+                "observations": {s: digest(read_private(self.root / (s + "-observed.json"))) for s in ("guard", "result")},
+                "recovery": {str(p.relative_to(self.root)): digest(read_private(p)) for directory in
+                             (self.root / "reconciliations", self.root / "submission-provenance") for p in sorted(directory.glob("*.json"))}})
         return self.summary(stage, m, status="ARCHIVAL_GUARD_OBSERVED" if stage == "guard" else "ARCHIVED_UNKNOWN_NOT_ACCEPTED")
 
     def status(self):
-        m = self.master(); canon = self.canonical(m)
+        m = self.master()
+        self.validate_evidence(m, remote=False)
+        canon = self.canonical(m)
         stage = "result" if canon["step"] == 2 or (self.root / "result-intent.json").exists() else "guard"
         return {**self.summary(stage, m, status="RECOVERY_RECONCILIATION_REQUIRED" if canon["pending"] is not None
             or not (self.root / (stage + "-observed.json")).exists() else "ARCHIVED_UNKNOWN_NOT_ACCEPTED" if canon["step"] == 2 else "ARCHIVAL_GUARD_OBSERVED"),
             "canonical_step": canon["step"], "pending": canon["pending"] is not None}
 
     def reconcile_preview(self, stage, reviewed=None):
+        require(stage in ("guard", "result"), "Unsupported archival stage")
         m = self.master(); intent = read_private(self.root / (stage + "-intent.json"))
         self.validate_evidence(m); canon = self.canonical(m)
         payload = {"stage": stage, "master": digest(m), "intent": digest(intent), "canonical": canon}
@@ -396,6 +433,10 @@ class Recovery:
         with invocation_lock(self.c.memory.control):
             _, payload = self.reconcile_preview(stage, reviewed)
             m = self.master(); original = read_private(self.root / (stage + "-intent.json"))
+            completed = self.canonical(m)
+            if completed["pending"] is None and (self.root / (stage + "-submitted.json")).exists() and (self.root / (stage + "-observed.json")).exists() \
+                    and completed["step"] >= (1 if stage == "guard" else 2) and (stage == "guard" or (self.root / "archive.json").exists()):
+                return self.status()  # Observation only; no new recovery grant consumption.
             def fence():
                 require(read_private(self.master_path) == m and read_private(self.root / (stage + "-intent.json")) == original,
                         "Original archival intent or master changed during reconciliation")
@@ -414,9 +455,19 @@ class Recovery:
             require(not directory.exists() or len(list(directory.glob("*.json"))) < 4
                     or (directory / (digest(reviewed) + ".json")).exists(), "Finite archival reconciliation grants exhausted")
             immutable(directory / (digest(reviewed) + ".json"), {"approval": reviewed, "payload": payload})
+            if not (self.root / (stage + "-submitted.json")).exists():
+                self.live_grant("reconcile-" + stage, payload, reviewed)
+                # Record actual reconstruction authority/time BEFORE restoring
+                # the exact original marker; never invent an old submission time.
+                if submission_provenance(self.root, stage, original, m) is None:
+                    immutable(self.root / "submission-provenance" / (stage + ".json"), {
+                        "stage": stage, "intent": digest(original), "reconciliation": digest(reviewed), "prepared_at": self.c.clock()})
+                self.live_grant("reconcile-" + stage, payload, reviewed)
+                immutable(self.root / (stage + "-submitted.json"), {"subject": digest(original["payload"])})
             canon = self.canonical(m)
             if canon["pending"] is not None or canon["slots"]:
-                self.c.memory.recover(before_effects=fence, expected_remote=canon["remote"], _fence=fence)
+                self.c.memory.recover(before_effects=fence, expected_remote=canon["remote"], _fence=fence,
+                    _purpose=journal_purpose(stage, original))
                 canon = self.canonical(m)
             if canon["step"] == (0 if stage == "guard" else 1):
                 require(canon["head"] == original["payload"]["head"], "Absent effect is not its exact original baseline")

@@ -27,6 +27,16 @@ class AccountingRecoveryTests(AccountingFixture):
         self.assertEqual(self.recovery.status()["status"], "ARCHIVED_UNKNOWN_NOT_ACCEPTED")
         self.assertEqual(archived(self.personal)[0], m)
         self.assertEqual(len(self.requests), 2)
+        from adp.personal_recovery_cli import observe
+        from adp.personal_storage import PersonalBlocked
+        path = self.runtime.directory / (m["request"] + ".stop.json")
+        raw = path.read_bytes()
+        path.unlink()
+        with patch("adp.personal_cli.discovery_token", side_effect=AssertionError("No credentials")), self.assertRaises(PersonalBlocked) as failed:
+            observe(self.c, m["request"])
+        self.assertEqual(failed.exception.reason, "ARCHIVAL_EVIDENCE_UNVERIFIED")
+        atomic(path, raw)
+        self.assertEqual(observe(self.c, m["request"])["status"], "ARCHIVAL_OBSERVATION_VERIFIED")
 
     def test_preflight_refuses_scope_caps_permissions_host_and_nonaccounting_hazards(self):
         self.incident()
@@ -70,6 +80,11 @@ class AccountingRecoveryTests(AccountingFixture):
             raise OSError("Synthetic interrupted canonical write")
         with patch.object(self.c.memory, "_write_files", side_effect=interrupted), self.assertRaises(OSError):
             self.recovery.apply("guard", reviewed=view["approval"], authorized=True, acknowledge=True, request=request, choices=self.child_choices)
+        journal = (self.c.memory.control / "pending.json").read_bytes()
+        for arguments in ({}, {"before_effects": lambda: None}, {"_fence": lambda: None}):
+            with self.subTest(recovery=tuple(arguments)), self.assertRaisesRegex(ADPError, "exact-purpose"):
+                self.c.memory.recover(**arguments)
+            self.assertEqual((self.c.memory.control / "pending.json").read_bytes(), journal)
         proposed, _ = self.recovery.reconcile_preview("guard")
         self.recovery.reconcile("guard", reviewed=proposed["approval"], authorized=True)
         h1 = self.c.memory.inspect()
@@ -84,6 +99,31 @@ class AccountingRecoveryTests(AccountingFixture):
         self.recovery.apply("result", reviewed=result["approval"], authorized=True, acknowledge=True)
         self.assertEqual(self.c.memory.inspect(), final)
         self.assertEqual(final["state"]["progress_guard"], h1["state"]["progress_guard"])
+        self.assertEqual(len(self.requests), 2)
+
+    def test_stage_marker_and_restoration_crashes_recover_without_replacing_original_intents(self):
+        from adp.personal_recovery import immutable
+        self.incident()
+        for stage in ("guard", "result"):
+            proposal = self.recovery.preview(stage, request=self.row["request"]["id"], choices=self.child_choices)[0]
+            def missing_marker(path, body):
+                if path.name == stage + "-submitted.json":raise OSError("Synthetic pre-marker interruption")
+                immutable(path, body)
+            with patch("adp.personal_recovery.immutable", side_effect=missing_marker), self.assertRaises(OSError):
+                self.recovery.apply(stage, reviewed=proposal["approval"], authorized=True, acknowledge=True,
+                    request=self.row["request"]["id"], choices=self.child_choices)
+            original = read_private(self.recovery.root / (stage + "-intent.json"))
+            reconciliation = self.recovery.reconcile_preview(stage)[0]
+            with patch("adp.personal_recovery.immutable", side_effect=missing_marker), self.assertRaises(OSError):
+                self.recovery.reconcile(stage, reviewed=reconciliation["approval"], authorized=True)
+            provenance = read_private(self.recovery.root / "submission-provenance" / (stage + ".json"))
+            self.now += 1
+            reconciliation = self.recovery.reconcile_preview(stage)[0]
+            self.recovery.reconcile(stage, reviewed=reconciliation["approval"], authorized=True)
+            self.assertEqual(read_private(self.recovery.root / (stage + "-intent.json")), original)
+            self.assertEqual(read_private(self.recovery.root / "submission-provenance" / (stage + ".json")), provenance)
+        self.assertEqual(len(read_private(self.recovery.root / "archive.json")["recovery"]), 6)
+        self.assertEqual(archived(self.personal)[0], self.recovery.master())
         self.assertEqual(len(self.requests), 2)
 
     def test_native_readonly_observer_omits_private_subject_and_never_launches(self):

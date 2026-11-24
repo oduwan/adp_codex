@@ -98,7 +98,7 @@ def publication_commands(stages, *, codex=False):
             parser.add_argument("--accept-plan-unavailable", action="store_true", help="Separately accept the exact proposal's private personal plan limitation; waive no project requirement")
 
 
-def retained(args):
+def retained(args, *, resolve=True):
     checkout = local_checkout(args.repo, args.remote)
     directory = args.directory
     if directory is None:
@@ -124,13 +124,33 @@ def retained(args):
             and checkout["repository"] == p["repository"]["name"] and checkout["remote"] == p["checkout"]["remote"]
             and str(args.repo.absolute()) in (p["checkout"]["path"], p["feature"]["workspace"]),
             "Reconnect only to the exact personal repository, issue and selected workspace")
-    if args.enroll_command not in ARCHIVAL + RECOVERY:
+    if resolve and args.enroll_command not in ARCHIVAL + RECOVERY:
         from .personal_episode import effective
         personal = effective(personal)
     return personal
 
 
 def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
+    from .personal_history_track import READ_TRANSPORT, cli_port
+    port = None
+    # Existing ordinary commands already admit native project reads. Resolve
+    # their historical read route before effective() can need it. Archival
+    # observation must never initialize credentials or a network adapter.
+    if args.enroll_command not in ARCHIVAL + RECOVERY + ("inspect", "plan", "apply", "capabilities"):
+        try:
+            port = cli_port(retained(args, resolve=False), publication_transport)
+        except (ADPError, OSError, KeyError, TypeError, ValueError):
+            pass  # The ordinary closed subject validation below reports it.
+    binding = READ_TRANSPORT.set(port) if port is not None else None
+    try:
+        return _run(args, transport=transport, ci_transport=ci_transport, runtime=runtime, clock=clock,
+            publication_transport=publication_transport)
+    finally:
+        if binding is not None:
+            READ_TRANSPORT.reset(binding)
+
+
+def _run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
     action = args.enroll_command
     report = {"schema_version": 1, "backend": "PERSONAL", "command": action,
         "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") + WRITES + RECOVERY_WRITES else "READ_ONLY",

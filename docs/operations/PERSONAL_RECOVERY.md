@@ -74,6 +74,12 @@ and its separately approved `archive-reconcile --stage ... --reviewed ...
 intermediate checkpoints are qualified before recovery; uncertain effects
 never receive blind retries. There are at most four additional reconciliation
 grants across archival/setup. They do not replenish M2 or worker budgets.
+These transactions use a closed local recovery-journal v2, bound to the exact
+original stage intent. Generic memory recovery and Conductor resume refuse to
+publish that journal without its purpose and live reconciliation fences; older
+readers fail closed. Canonical M1 state/task versions remain unchanged. A crash
+before the submission marker is restored under a separate current grant, with
+the original intent and actual restoration authority/time retained permanently.
 `archive-revoke` separately revokes an exact approval, without rolling back
 history or claiming a process stop. Expired/revoked approvals cannot cause
 new effects. Private historical authentication does not revive authority.
@@ -147,6 +153,15 @@ unsafe/unfinished guards refuse. Historical observation after expiry/owner
 release grants no execution. Issue #1 remains NOT_ACCEPTED until genuine
 acceptance, and native Issues #2/#3 remain blocked. Reporting/next admission
 use the same qualified effective episode and original finite track.
+
+Later admitted normal windows retain v1 acceptance. Their feature refs require
+the exact predecessor admission, stopped scope Reviewer/M1 evidence and native
+M7 CAS observation. Synchronization beyond the first accepted merge requires
+the later window's full existing acceptance proof and a fresh native merge read.
+Host-only `archive-observe` never acquires credentials or network access; when
+that later proof needs a native read it returns `HISTORICAL_NATIVE_READ_REQUIRED`.
+Use the explicitly selected read-only track adapter instead. No ref or default
+source change is excused merely because a continuation exists.
 
 The engineering tests use synthetic receipts/disposable repositories. Genuine
 M8 execution, live archival application, installation, adoption, acceptance,

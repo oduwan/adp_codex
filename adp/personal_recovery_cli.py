@@ -8,6 +8,7 @@ from .discovery_schema import digest
 from .personal_recovery import Recovery
 from .personal_storage import PersonalBlocked
 from .schema import require
+from .errors import ADPError
 
 ACTIONS = ("archive-observe", "archive-guard-preview", "archive-guard", "archive-result-preview", "archive-result",
            "archive-status", "archive-reconcile-preview", "archive-reconcile", "archive-revoke", "continuation-preview",
@@ -78,9 +79,14 @@ def observe(c, request):
                 stage, reference = view["status"], view["binding"]
         return {"status": "ARCHIVAL_OBSERVATION_VERIFIED", "result": {"stage": stage, "reference": reference,
             "runtime_context": "ORIGINAL_MATCH", "timeliness": "UNKNOWN", "worker_outcome": "NOTRUN",
+            "verification": "LOCAL_RETAINED_EVIDENCE_ONLY", "remote_scope": "NOT_REOBSERVED",
             "product_acceptance": "NOT_ACCEPTED", "effects": "NONE", "apply_authority": "NOT_DELEGATED"}}
     except PermissionError as exc:
         raise PersonalBlocked("BLOCKED_ARCHIVAL_OBSERVATION_ACCESS", "Original evidence is inaccessible in this execution context; request supported native host observation without changing filesystem protections.") from exc
+    except PersonalBlocked:
+        raise
+    except (ADPError, OSError, ValueError, KeyError, TypeError) as exc:
+        raise PersonalBlocked("ARCHIVAL_EVIDENCE_UNVERIFIED", "Retain and verify the exact local receipt, stop and source evidence; no recovery effect is authorized.", status="UNKNOWN") from exc
 
 
 def dispatch(args, personal, *, transport=None, ci_transport=None, runtime=None, clock=None):

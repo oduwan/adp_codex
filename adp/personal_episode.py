@@ -19,10 +19,10 @@ from .guard_types import data
 from .personal_ci import native_inventory, prescribed_checks
 from .personal_enrollment import selection
 from .personal_history import archived
-from .personal_recovery import Recovery, engine_digest, grant, immutable
+from .personal_recovery import Recovery, engine_digest, grant, immutable, journal_purpose
 from .personal_storage import (PersonalState, ROLE_LIMITS, approval, create_private, load_state,
                                private_directory, read_private, validate_plan)
-from .schema import bundle, fields, key, require
+from .schema import bundle, encode, fields, key, require
 from .storage import locked
 
 NAME = "accounting-expiry-1"
@@ -99,7 +99,8 @@ class EpisodeState(PersonalState):
             "directory": str(self.directory), "setup": self.intent["approval"], "snapshot": digest(self.descriptor["base"]["snapshot"]),
             "episode": self.descriptor["episode"], "original_link": digest(original_link)}
             and read_private(self.state / "episode-admission.json") == self.descriptor["base"]["admission"], "Episode track attachment changed")
-        activation = read_private(self.directory / "activation.json")
+        activation = read_private(self.directory / "activation.json", optional=True)
+        require(activation is not None, "Exact episode activation is missing")
         fields(activation, "schema_version descriptor checkpoint relation")
         require(activation == {"schema_version": 1, "descriptor": digest(self.descriptor),
             "checkpoint": activation["checkpoint"], "relation": digest({k: v for k, v in relation.items() if k != "usage"})},
@@ -185,6 +186,11 @@ class Continuation:
         self.directory = episode_directory(self.root)
 
     def base(self, m, archive, reviewed=None):
+        self.recovery.validate_evidence(m)
+        return self.describe(m, archive, reviewed)
+
+    def describe(self, m, archive, reviewed=None):
+        """Read-only complete projection; no grant is persisted or exercised."""
         choices = m["blueprint"]["choices"]
         now = self.c.clock()
         if reviewed:
@@ -196,7 +202,6 @@ class Continuation:
         window = {**{n: choices.get(n, CAPS[n]) for n in ROLES}, "issued_at": issued, "expires_at": expires, "nonce": nonce}
         window.update(scope_reviewers=1, forensic_reviewers=0)
         require(expires - issued == choices["seconds"], "Episode window changed")
-        self.recovery.validate_evidence(m)
         observed, owner = selection(Path(self.root.plan["checkout"]["path"]), self.root.plan["checkout"]["remote"], self.root.repository_id, self.c.transport)
         checks = qualified_checks(self.root, choices, self.c.ci_transport)
         base = {"schema_version": 1, "policy": POLICY, "root": digest(self.root.intent), "archive": digest(archive),
@@ -227,6 +232,7 @@ class Continuation:
         canon = self.recovery.canonical(m)
         require(canon["step"] == 2 and canon["pending"] is None and not self.c.memory._inbox(), "Complete exact historical disposition first")
         d = self.base(m, archive, reviewed)
+        preflight(self.c, m, archive=archive, descriptor=d)
         return {"status": "CONTINUATION_PROPOSED", "approval": d["approval"], "result": {
             "policy": POLICY, "episode": d["episode"], "issue": 1, "window": d["plan"]["window"],
             "historical_terminal": "PERMANENT_STOP_UNSAFE", "product_acceptance": "NOT_ACCEPTED",
@@ -299,7 +305,8 @@ class Continuation:
                 and observed["remote_head"] in (intent["base"], observed["local_head"])
                 and not self.c.memory._inbox(), "Episode canonical baseline changed")
         if pending:
-            require(pending == {"base": intent["base"], "state": intent["state"], "tasks": intent["tasks"]}, "Foreign pending checkpoint")
+            require(pending == {"schema_version": 2, "base": intent["base"], "state": intent["state"], "tasks": intent["tasks"],
+                "policy_fence": journal_purpose("episode", intent)}, "Foreign pending checkpoint")
         if current == (m["result_state"], m["result_tasks"]):
             require(observed["local_head"] == intent["base"], "Episode expected H2 changed")
         else:
@@ -315,7 +322,8 @@ class Continuation:
             head, state, tasks = self.c.memory._start()
             require(head == intent["base"], "Expected H2 changed inside canonical lock")
             target = deepcopy(intent["state"]); target["revision"] -= 1
-            self.c.memory._checkpoint(head, target, deepcopy(intent["tasks"]), _fence=lambda: self.fence(d, intent, reconciliation=reconciliation))
+            self.c.memory._checkpoint(head, target, deepcopy(intent["tasks"]), _fence=lambda: self.fence(d, intent, reconciliation=reconciliation),
+                _purpose=journal_purpose("episode", intent))
 
     def activate(self, d, intent):
         with locked(self.c.memory.control):
@@ -356,7 +364,8 @@ class Continuation:
             fence = lambda: self.fence(d, intent, reconciliation=(payload, reviewed))
             fence()
             if self.c.memory._recovery_document(protected=True) is not None:
-                self.c.memory.recover(before_effects=fence, expected_remote=payload["remote"], _fence=fence)
+                self.c.memory.recover(before_effects=fence, expected_remote=payload["remote"], _fence=fence,
+                    _purpose=journal_purpose("episode", intent))
             elif self.c.memory.inspect()["local_head"] == intent["base"]:
                 self._write(d, intent, reconciliation=(payload, reviewed))
             if self.c.clock() >= d["plan"]["window"]["expires_at"] or (self.recovery.root / "revoked" / (digest(d["approval"]) + ".json")).exists():
@@ -415,6 +424,51 @@ def blueprint_ready(c, choices):
               "expires_at": c.clock() + choices["seconds"], "nonce": "0" * 32, "forensic_reviewers": 0}
     base = {"choices": choices, "checks": checks, "window": window, "discovery_digest": root.plan["discovery_digest"]}
     plan_valid(root, make_plan(root, base), episode_directory(root))
+
+
+def preflight(c, master, *, archive=None, descriptor=None):
+    """Bound the complete future Scope prompt and both durable C records.
+
+    The B preview uses fixed-size placeholder checkpoint hashes only for byte
+    qualification. They are never receipts, persisted evidence or authority.
+    Actual C preview repeats this with its real immutable predecessor.
+    """
+    from copy import copy
+    from types import SimpleNamespace
+    from .discovery_schema import typed
+    from .discovery_types import Snapshot
+    from .personal_storage import LIMIT
+    from .personal_runner import PersonalCoordinator
+    from .personal_workers import prompt
+    archive = archive or {"initial": master["view"]["checkpoint"], "guard": "0" * 40, "result": "0" * 40}
+    d = descriptor or Continuation(c).describe(master, archive)
+    plan_valid(c.personal, d["plan"], episode_directory(c.personal))
+    intent = episode_intent(c.personal, d, master, archive)
+    p = EpisodeState(episode_directory(c.personal), {"schema_version": 1, "kind": "ACCOUNTING_EPISODE",
+        "phase": "ENROLLED", "plan": d["plan"], "original": d["original"], "governance": d["governance"], "approval": d["approval"]}, c.personal, d)
+    prospective = SimpleNamespace(personal=p, episode=True, record=lambda: None,
+        revision=lambda: p.plan["checkout"]["head"], accounting_material=lambda: master["blueprint"]["material"])
+    track = copy(c.track)
+    track.c, track.personal = prospective, p
+    track.link = {**track.link, "directory": str(p.directory), "setup": d["approval"]}
+    track.seed = lambda: typed(Snapshot, d["base"]["snapshot"])
+    track.admission = lambda: d["base"]["admission"]
+    prospective.track = track
+    context = PersonalCoordinator.context(prospective, "original")
+    bound_projection(d, intent, context)
+    return context
+
+
+def bound_projection(descriptor, intent, context):
+    from .execution_privacy import credential_shaped
+    from .personal_storage import LIMIT
+    from .personal_workers import prompt
+    encode(descriptor, LIMIT)
+    encode(intent, LIMIT)
+    # Reserve only byte-width growth of future real UTC fields; execution and
+    # accepted prompt limits remain unchanged. Actual C projection is rechecked.
+    require(len(prompt("original", context).encode()) + 128 <= 32768 and not credential_shaped(context),
+            "Complete continuation Scope context exceeds the existing worker limit or contains sensitive material")
 
 
 def effective(personal):

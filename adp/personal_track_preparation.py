@@ -69,7 +69,7 @@ def semantic_bundle(track):
             and snapshot.repository.checkout_ref == p["checkout"]["ref"], "Preparation source differs from the approved window")
     # Admission's original snapshot is immutable. Mechanical predecessor proof
     # summaries are frozen into that exact semantic bundle before its Reviewer.
-    lineage = read_private(track.admission_path())
+    lineage = track.admission()
     completions = lineage["completions"]
     return {"schema_version": 1, "selected": data(selected), "snapshot": data(snapshot),
         "originals": [data(o) for _, o in sorted(track.originals.items())], "scope": data(scope),

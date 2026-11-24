@@ -23,6 +23,7 @@ from .policy_schema import fingerprint, sha
 from .schema import encode, fields, key, require
 from .storage import atomic, locked
 from .ticket_preparation import TicketArchive
+from .personal_history_track import with_reads
 
 LINK = "track-link.json"
 
@@ -187,6 +188,9 @@ class PersonalTrack:
         return (self.personal.state / "episode-admission.json" if self.c.episode else
                 self.root / "admissions" / (digest(self.link["identity"]) + ".json"))
 
+    def admission(self):
+        return read_private(self.admission_path())
+
     def completion_path(self, identity):
         require(identity in self.originals, "Completion outside original track")
         return self.root / "accepted" / (digest(identity) + ".json")
@@ -240,6 +244,7 @@ class PersonalTrack:
         fields(admission, "policy_snapshot policy_sources completions")
         self.seed()  # Existence alone is not a qualified immutable snapshot.
 
+    @with_reads
     def current(self):
         p = self.personal.plan
         observation, owner = selection(Path(p["checkout"]["path"]), p["checkout"]["remote"], self.personal.repository_id, self.c.transport)
@@ -251,6 +256,7 @@ class PersonalTrack:
             self.original_issue(identity, found[identity])
         return observation
 
+    @with_reads
     def accepted(self, identity, *, transport=None, runtime=None):
         """Read historical facts without reviving an expired execution grant."""
         path = self.completion_path(identity)
@@ -384,6 +390,7 @@ class PersonalTrack:
                     and item.get("merged_by", {}).get("id") == receipt["actor"], "Current exact merged result/actor changed")
         return receipt
 
+    @with_reads
     def prerequisites(self, observation, *, transport=None, runtimes=None):
         require(complete_snapshot(observation.snapshot), "Native dependency coverage is unknown")
         issues = {i.identity: i for i in observation.snapshot.issues}
@@ -507,6 +514,7 @@ class PersonalTrack:
             immutable(path, receipt)
             return self.accepted(identity, transport=product.transport, runtime=product.c.runtime)
 
+    @with_reads
     def status(self, *, transport=None, runtimes=None):
         from .personal_episode import settled_guards
         from .discovery import DependencyPlanner, review_subject
@@ -641,6 +649,7 @@ class PersonalTrack:
             return child, True
         return child, False
 
+    @with_reads
     def next_preview(self, product, choices, *, approved=None):
         from .git import SHA
         require(type(choices) is PersonalChoices, "Typed explicit next choices required")
@@ -703,6 +712,7 @@ class PersonalTrack:
         return {"status": "NEXT_PROPOSED", "result": view,
             "approval": "personal-next:" + digest(binding), "setup_approval": approval(plan)}
 
+    @with_reads
     def next(self, product, choices, *, reviewed, setup_approval, authorized):
         require(authorized is True and type(choices) is PersonalChoices,
                 "Separately approve exactly this new original task, local setup and finite scope/window")

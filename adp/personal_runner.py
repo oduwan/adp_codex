@@ -138,6 +138,14 @@ class PersonalCoordinator:
             if historical:
                 from .personal_history import retained
                 retained(self.runtime, worker)
+                current = self.memory.inspect()
+                job = current["tasks"][key(self.task_id)]["assignments"].get(worker["assignment"]["assignment_id"])
+                require(worker["phase"] == "ACCOUNTED" and worker["observation"]["result"]["approved"] is False
+                        and worker["observation"]["result"]["criteria"] == [] and job is not None
+                        and job["status"] == "accepted" and job["result"] == self.workers.result(worker)
+                        and job["worker"] == "worker:" + row["developer"]
+                        and job["generation"] == worker["request"]["generation"] == current["state"]["generation"]
+                        and job["source_revision"] == worker["request"]["revision"], "Historical source author evidence differs")
             else:
                 self.workers.actual(worker, accounted=True)
             return {"kind": "DEVELOPER", "label": row["developer"], "authors": ["worker:" + row["developer"]],
@@ -147,7 +155,14 @@ class PersonalCoordinator:
         return adopted(self, historical=historical)
 
     def source_authors(self):
-        return tuple(self.source_origin()["authors"])
+        if not self.episode:
+            # Existing M7 proves the exact current code Reviewer separately.
+            # Its Developer author was at the precommit SHA, not the active
+            # MERGE reservation's committed SHA. Preserve that author contract.
+            identifier = self.record()["developer"]
+            require(type(identifier) is str, "Actual source author is missing")
+            return ("worker:" + identifier,)
+        return tuple(self.source_origin(historical=True)["authors"])
 
     def assign_worker(self, row):
         if not self.episode:
@@ -233,6 +248,9 @@ class PersonalCoordinator:
     def original_matches(self, issue):
         return digest(data(issue)) == self.personal.plan["original_digest"]
 
+    def accounting_material(self):
+        return read_private(self.personal.root.state / "accounting-recovery" / "intent.json")["blueprint"]["material"]
+
     def context(self, purpose):
         plan, row = self.personal.plan, self.record()
         context = {"purpose": purpose, "repository_id": self.personal.repository_id,
@@ -263,7 +281,7 @@ class PersonalCoordinator:
             context["accounting_episode"] = {"policy": "ACCOUNTING_EXPIRY_CONTINUATION", "episode": self.personal.descriptor["episode"],
                 "historical_terminal": "PERMANENT_STOP_UNSAFE_OVERDUE_ACCOUNTING", "worker_timeliness": "UNKNOWN",
                 "candidate_material": self.personal.descriptor["base"]["choices"]["paths"],
-                "adoption_scope": read_private(self.personal.root.state / "accounting-recovery" / "intent.json")["blueprint"]["material"],
+                "adoption_scope": self.accounting_material(),
                 "source_acceptance": "UNACCEPTED; new staged-diff and committed-SHA review and actual project CI required"}
             if purpose == "original":
                 context["accounting_episode"]["candidate_source"] = candidate_diff(self.personal.root)
