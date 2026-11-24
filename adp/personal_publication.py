@@ -177,7 +177,10 @@ class PersonalPublication:
         binding = {"reviews": reviews, "revision": task["source_revision"], "iteration": task["iteration"],
             "generation": state["generation"], "epoch": state["progress_guard"]["task_epochs"][task["key"]]}
         if self.c.episode:
-            binding["source_origin"] = self.c.source_origin()
+            # This seals provenance only. Full live original/code approval is
+            # checked at the batch boundaries; do not recursively reauthorize
+            # it inside every per-object metadata projection.
+            binding["source_origin"] = self.c.source_origin(historical=True)
         return digest(binding)
 
     def original_bases(self):

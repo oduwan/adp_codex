@@ -250,6 +250,18 @@ class AccountingCandidateTests(AccountingFixture):
         self.assertEqual(relation["usage"]["checks"], 1)
         self.assertEqual(self.original_c.memory.inspect()["state"]["progress_guard"]["requirements"][relation["parent_requirement"]]["mode"], "unsafe")
         self.assertIsNone(self.c.track.accepted(next(i for i, o in self.c.track.originals.items() if o.issue.number == 1)))
+        from adp.personal_publication import PersonalPublication
+        projection = PersonalPublication.__new__(PersonalPublication);projection.c = self.c
+        binding = projection.review_binding()
+        with patch.object(self.c, "original_approval", side_effect=AssertionError("No repeated live judgment in a binding projection")):
+            self.assertEqual(projection.review_binding(), binding)
+        before = self.c.memory.inspect()
+        stop = self.runtime.directory / (self.c.record()["original_review"] + ".stop.json")
+        raw = stop.read_bytes();stop.unlink()
+        with self.assertRaises((ADPError, OSError)):projection.review_binding()
+        atomic(stop, raw)
+        self.assertEqual(self.c.memory.inspect(), before)
+        self.assertEqual(projection.review_binding(), binding)
 
     def test_one_append_only_episode_preserves_parent_and_scope_quota(self):
         result = self.episode()

@@ -17,6 +17,60 @@ from adp.storage import atomic
 
 
 class AccountingPolicyContractTests(unittest.TestCase):
+    def test_publication_binding_keeps_origin_historical_and_requires_current_live_reviews(self):
+        from adp.personal_publication import PersonalPublication
+        from adp.guard_types import DecisionKind
+        from adp.discovery_github import Response
+        from adp.schema import key
+        from unittest.mock import Mock
+        task_id, revision = "personal:offline-binding", "a" * 40
+        result = {"outcome": "PASS"}
+        workers, assignments, guards = {}, {}, {}
+        for purpose in ("original", "code"):
+            identifier = purpose + "-request"
+            workers[identifier] = {"purpose": purpose, "phase": "ACCOUNTED", "assignment": {"assignment_id": identifier},
+                "request": {"generation": 1, "revision": revision}, "requirement": purpose}
+            assignments[identifier] = {"status": "accepted", "worker": "worker:" + identifier,
+                "generation": 1, "source_revision": revision, "result": result}
+            guards[purpose] = {"approval": {"context": "exact-current-context"}}
+        task = {"key": key(task_id), "source_revision": revision, "assignments": assignments, "iteration": 1}
+        observed = {"health": "SYNCED", "local_owner": True, "tasks": {key(task_id): task},
+            "state": {"generation": 1, "progress_guard": {"requirements": guards, "task_epochs": {key(task_id): 1}}}}
+        origin = {"kind": "RETAINED_UNACCEPTED", "evidence": "b" * 64}
+        def historical_origin(*, historical=False):
+            self.assertTrue(historical, "Digest projection must not recursively reauthorize source")
+            return origin
+        row = {"revision": revision, "original_review": "original-request", "code_review": "code-request",
+            "phase": "LOCAL_DRAFT_CODE_REVIEWED", "coordination": None}
+        c = SimpleNamespace(task_id=task_id, episode=True, record=lambda: row, worker=lambda n: workers[n],
+            workers=SimpleNamespace(result=lambda _: result, fence=lambda: None),
+            guard=SimpleNamespace(_decision=Mock(return_value=SimpleNamespace(kind=DecisionKind.ALLOW)),
+                _context=lambda *a: "exact-current-context"), source_origin=historical_origin,
+            memory=SimpleNamespace(inspect=lambda: observed), transport=None)
+        p = PersonalPublication.__new__(PersonalPublication);p.c = c
+        sealed = p.review_binding()
+        origin["evidence"] = "c" * 64
+        self.assertNotEqual(p.review_binding(), sealed)
+        for changed in ("owner", "source", "guard", "approval"):
+            with self.subTest(changed=changed):
+                if changed == "owner":observed["local_owner"] = False
+                if changed == "source":task["source_revision"] = "d" * 40
+                if changed == "guard":c.guard._decision.return_value.kind = DecisionKind.STOP_UNSAFE
+                if changed == "approval":guards["code"]["approval"] = None
+                with self.assertRaises(ADPError):p.review_binding()
+                observed["local_owner"] = True;task["source_revision"] = revision
+                c.guard._decision.return_value.kind = DecisionKind.ALLOW;guards["code"]["approval"] = {"context": "exact-current-context"}
+        base = "/repos/owned/disposable/issues/1"
+        p.original_bases = lambda: (base,)
+        p.read = SimpleNamespace(get=lambda path: Response(200, {}))
+        c.fresh = lambda: [c.transport.get(base + suffix) for suffix in ("", "/comments?per_page=100&page=1",
+            "/timeline?per_page=100&page=1", "/dependencies/blocked_by?per_page=100&page=1", "/sub_issues?per_page=100&page=1")]
+        for rejected in ("original_approval", "verify_local_review"):
+            c.original_approval = Mock();c.verify_local_review = Mock()
+            setattr(c, rejected, Mock(side_effect=ADPError("Synthetic live review revoked")))
+            with self.subTest(rejected=rejected), self.assertRaisesRegex(ADPError, "live review revoked"):
+                p.local()
+
     def test_check_charge_precedes_exact_m3_authorization_without_reusing_old_grant(self):
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
