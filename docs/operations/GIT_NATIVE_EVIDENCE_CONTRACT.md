@@ -158,11 +158,30 @@ not-yet-activated H3 is not a migration bootstrap: the original installer and
 archival mutation path still require current-engine consent and existing exact
 recovery. No generic allow_legacy/ignore_engine flag is introduced.
 
+This includes load_episode's descriptor/base.engine comparison and original
+episode ae1 grant (episode:148–167), not just the archive's guard/result grants.
+The loader first rejects an episode descriptor in the original ancestor (no
+recursive load_state dispatch). Protected descriptor and activation are locators,
+not authentication: load the original root, inspect its actual canonical Memory,
+read H3, compare its fixed relation with the current fixed relation excluding
+usage, check direct H2 parent and ancestry, and bind actual archive/master and
+descriptor episode/plan/grant/blueprint hashes. Pin both existing storage
+interpretations and authenticate actual object bytes before using a recorded
+engine. Only this established chain permits literal historical descriptor/grant
+decoding; full expected_relation/episode_intent and raw provenance qualification
+still follow at the cold boundary. No active view or archive recursion is needed
+to bootstrap that Git binding. Missing activation may use ONLY the unchanged
+current-engine preactivation installer/status path, never historical decoding.
+
 Live Recovery.grant/issuance/apply still binds the current engine and trusted
 current clock. A new publication view separately binds the actual current reader
 engine plus the existing H3/R. Actual current engine bytes remain freshly checked;
 HEAD alone is not an engine seal. This is a closed read-only historical format
 interpretation, not an allow-any-engine issuance option or additional trust root.
+Replace _legacy_inputs' current-engine-equals-master assertion with two distinct
+operands: the authenticated immutable historical engine and freshly hashed actual
+current reader bound to the new consent. A changed historical engine or a changed
+current reader during that consent still refuses. Do not delete the engine seal.
 
 ## 4. Operation-local subject and the short write fence
 
@@ -369,6 +388,41 @@ current engine_digest). The EXISTING view/token/action_id digest binds all
 three; no additional approval file is created. Old readers refuse schema2.
 No M1/M2 schema, separate consent journal or additional effect record is added.
 D2 does not shorten the mutation fence; D3 replaces it only after D2 review.
+
+### Close the existing accounting writer families
+
+Historical decoding removes an old global current-engine rejection. Therefore
+publish2 alone is insufficient: Product.local calls Coordinator.live and does
+not transitively bind a publication view. Apply the SAME three fields to the
+EXISTING accounting Product PR/MERGE/CI/REVIEW/CORRECT and REPORT approval views.
+Select product record schema2 and product2 token grammar for accounting only;
+the independent report.json parser must enforce the same view/token gate.
+RevisionPublication inherits publish2 and cannot use an old Product correction
+consent to mint a replacement. Old accounting Product/report rows remain literal
+observation-only history; a retained legacy intent blocks any replacement writer
+and returns an explicit disposition blocker when observation cannot reconcile it.
+Ordinary personal product1 and signed-provider behavior are unchanged. Fresh
+consents require the current reader at issuance AND at the actual write boundary.
+
+Completion and NEXT can mutate authority without Product.live. Bind the same
+three fields into the EXISTING accounting completion approval view/digest, with
+personal-completion2 prefix; no additional acceptance journal is introduced.
+For an accounting parent, select next view schema2 and include the same three
+fields in its existing normalized-snapshot approval digest. Revalidate them before
+handoff, enrollment or attachment; old pending next intents permit observation or
+reconnection to an already COMPLETE exact successor only, never finish/remint an
+incomplete successor. A changed reader requires explicit disposition, not silent
+new consent over the same pending intent. Ordinary completion/NEXT formats stay
+unchanged. Existing accepted() receipts remain valid historical observations;
+reading them grants no permission and does not require a fresh-reader token.
+An active accounting episode already requires its original track attachment;
+new registration cannot replace it and must refuse rather than invent a link.
+
+These are version/field replacements within existing approvals, not a second
+policy, store or live backend. D2 must fail closed at all affected writer entries
+while this cutover is staged; D4 must leave one qualified writer family, with no
+legacy live fallback. Add focused changed-reader, old-token, pending-NEXT and
+historical-read negatives for each affected consumer before final cutover.
 
 - Fresh qualified view: H3/R and current reader engine are part of the exact
   existing view/token/action_id. Old source, time and role grants stay literal.
