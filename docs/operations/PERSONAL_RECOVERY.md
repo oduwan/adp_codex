@@ -173,11 +173,13 @@ freshly verified; the existing operation deadlines and request caps still apply.
 
 One episode-only `Publication.live(review=True)` computation also uses a private
 synchronous read frame to prevent repeated expansion of that same history
-through nested review/Guard checks. It performs three independent complete
-active/archival proofs: before either local pass, between the two passes, and
-after both passes with no subsequent framed body. It repeats actual publication,
-raw-review, source, administration and credential checks, and rejects changed
-subjects. Every nested factual lookup still reads current canonical ownership,
+through nested review/Guard checks. It performs a full actual active/archival
+proof, one complete original semantic check, and an independent full closing
+proof with no subsequent semantic body. A protected bounded input seal before
+the body and after closing compares the exact consent, current run/worker rows,
+child runtime/stop/progress/adoption inputs, source/index/ref/admin/governance
+and credentials without repeating authority checks. Changed inputs refuse.
+Every nested factual lookup still reads current canonical ownership,
 state/tasks/inbox and checks time/revocation. Defensive copies prevent a reader
 from modifying the retained inputs. The frame is bound to the exact objects,
 process and thread, is destroyed on exceptions, and never crosses a callback,
@@ -191,6 +193,17 @@ read, binding the entire active consent, credential binding, action and
 reservation and copying the result to prevent mutable-view aliasing. Its final
 own operation expiry is checked at actual current time. Genuine/native reads
 and product write authorization explicitly use the original unframed checks.
+
+Episode memory retains the exact accepted `Memory` type and inherited current
+inspection/ownership/remote/status/layout/inbox/recovery/CAS behavior. A private,
+nonpersistent opt-in batches the at-most-four canonical blob reads after the
+unchanged actual tree parser. Every call reads and rehashes all actual bytes,
+validates exact bounded framing, then qualifies the same decode/schema checks.
+Every read performs the original decode/schema validation. No decoded current
+state, ref, health, owner credential, time, permission or authority verdict is
+memoized. Larger inventories use the original reader. Missing, corrupt or
+malformed input refuses. Ordinary and signed memory factories never select
+this optimization.
 
 The accounting-only historical Git reader batches each command's actual pin
 queries and may retain bounded decoded immutable commit facts. Every reuse

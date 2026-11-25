@@ -267,24 +267,53 @@ class AccountingCandidateTests(AccountingFixture):
         # must refuse before the outer publication read can return a result.
         from types import SimpleNamespace
         from adp.personal_read_frame import publication_live
+        from adp.config import Config
+        from adp.execution_ports import GitExecutionPort
+        from adp.personal_history_product_git import administration
+        port = GitExecutionPort(Config.discover(self.personal.feature, remote="forge", repository_id=self.personal.repository_id),
+            bound_git_directory=Path(administration(self.personal.feature)["directory"]["path"]))
+        consent = {"view": {"issued_at": self.now - 1, "expires_at": self.now + 1}}
+        observer = SimpleNamespace(c=self.c, record=lambda **kwargs: consent, port=port,
+            transport=SimpleNamespace(credential_binding="synthetic-private-not-a-credential"))
         old_stop = self.original_c.runtime.directory / (self.recovery.master()["request"] + ".stop.json")
         original_stop = old_stop.read_bytes()
         for lose_on in (1, 2):
             read_calls, returned = [], []
             def interrupted_read(**kwargs):
-                read_calls.append(True)
-                if len(read_calls) == lose_on:
-                    old_stop.unlink()
-                self.c.live()
-                returned.append(True)
-                return {"unaccepted": True, "view": {"issued_at": self.now - 1, "expires_at": self.now + 1}}
+                for part in (1, 2):
+                    read_calls.append(part)
+                    if part == lose_on:
+                        old_stop.unlink()
+                    self.c.live()
+                    returned.append(part)
+                return consent
+            observer._live_current = interrupted_read
             try:
                 with self.assertRaises((ADPError, OSError)):
-                    publication_live(SimpleNamespace(c=self.c, _live_current=interrupted_read))
+                    publication_live(observer)
             finally:
                 atomic(old_stop, original_stop)
-            self.assertEqual(len(read_calls), lose_on)
-            self.assertEqual(len(returned), lose_on)  # Refusal came after the completed body.
+            self.assertEqual(read_calls, [1, 2])
+            self.assertEqual(returned, [1, 2])  # Both early/last nested reads returned before FULL close refused.
+        # Losing a CHILD code stop after the closing historical proof must be
+        # caught by the final private-input seal, without a second semantic pass.
+        from adp.personal_episode import EpisodeState
+        actual = EpisodeState._active_view
+        code_stop = self.runtime.directory / (self.c.record()["code_review"] + ".stop.json")
+        code_raw, captures, bodies = code_stop.read_bytes(), [], []
+        def closing_then_loss(state, *args, **kwargs):
+            result = actual(state, *args, **kwargs)
+            if state is self.personal and kwargs.get("_capture") is not None:
+                captures.append(True)
+                if len(captures) == 2:code_stop.unlink()
+            return result
+        def one_body(**kwargs):bodies.append(True);return consent
+        observer._live_current = one_body
+        try:
+            with patch.object(EpisodeState, "_active_view", closing_then_loss), self.assertRaisesRegex(ADPError, "receipt"):
+                publication_live(observer)
+        finally:atomic(code_stop, code_raw)
+        self.assertEqual((len(captures), len(bodies)), (2, 1))
         self.assertEqual(self.c.memory.inspect(), before)
         self.assertEqual(projection.review_binding(), binding)
         # A replacement of an ancestry commit lies outside a HEAD/tree fact
@@ -312,3 +341,14 @@ class AccountingCandidateTests(AccountingFixture):
         self.assertEqual(relation["allocations"]["current"]["forensic_reviewers"], 0)
         self.assertEqual(observed["state"]["progress_guard"]["requirements"][relation["parent_requirement"]]["mode"], "unsafe")
         self.assertEqual(len(self.requests), 2)
+        # Actual registry-v2 input, not a guessed schema-cost projection. The
+        # timing is evidence only; native parity and every live field remain
+        # mandatory, and no phase-budget PASS follows from this microbenchmark.
+        from time import monotonic
+        ordinary, batched = child.root.memory(), child.memory()
+        start = monotonic();expected = ordinary.inspect();native_seconds = monotonic() - start
+        start = monotonic();cold = batched.inspect();cold_seconds = monotonic() - start
+        start = monotonic();warm = batched.inspect();warm_seconds = monotonic() - start
+        self.assertEqual((cold, warm), (expected, expected))
+        print("SYNTHETIC_REGISTRY_V2_MEMORY_READ native_seconds=" + str(round(native_seconds, 6))
+              + " cold_seconds=" + str(round(cold_seconds, 6)) + " warm_seconds=" + str(round(warm_seconds, 6)), flush=True)

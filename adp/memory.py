@@ -30,6 +30,7 @@ class Memory:
     def __init__(self, config: Config, *, pinned_local_remote: Path | None = None):
         self.config = config
         self.pinned_local_remote = pinned_local_remote
+        self._accounting_reads = False  # Private ephemeral optimization, never authority or persisted state.
         self.branch, self.path = config.require_storage()
         self.common = safe_path(Path(value(config.root, "rev-parse", "--path-format=absolute", "--git-common-dir")))
         self.control = safe_path(self.common / "adp" / key(self.branch))
@@ -97,14 +98,41 @@ class Memory:
             blobs[name] = sha
         require(len(blobs) <= MAX_TASKS + 2 and {"state.json", ".gitignore"} <= set(blobs), "Invalid memory tree size/layout")
         values: dict[str, bytes] = {}
-        for name, sha in blobs.items():
-            require(int(value(self.config.root, "cat-file", "-s", sha)) <= MAX_JSON, "Oversized memory blob")
-            values[name] = git(self.config.root, "cat-file", "blob", sha, limit=MAX_JSON)
+        batched = self._accounting_reads is True and len(blobs) <= 4
+        if batched:
+            values = self._accounting_blobs(blobs)
+        else:
+            for name, sha in blobs.items():
+                require(int(value(self.config.root, "cat-file", "-s", sha)) <= MAX_JSON, "Oversized memory blob")
+                values[name] = git(self.config.root, "cat-file", "blob", sha, limit=MAX_JSON)
         require(values.pop(".gitignore") == IGNORE, "Unexpected memory ignore rules")
         state = decode(values.pop("state.json"))
         tasks = {name[6:-5]: decode(raw) for name, raw in values.items()}
         bundle(state, tasks, self.config.identity)
         return state, tasks
+
+    def _accounting_blobs(self, blobs):
+        """Read every actual blob byte now; retain no decoded fact or verdict."""
+        require(2 <= len(blobs) <= 4 and all(SHA.fullmatch(oid) for oid in blobs.values()),
+                "Unsupported accounting blob inventory")
+        raw = git(self.config.root, "cat-file", "--batch", input=("\n".join(blobs.values()) + "\n").encode("ascii"),
+                  limit=len(blobs) * (MAX_JSON + 256))
+        cursor, values = 0, {}
+        for name, oid in blobs.items():
+            end = raw.find(b"\n", cursor)
+            require(end >= cursor, "Truncated accounting blob header")
+            header = raw[cursor:end].decode("ascii", "strict").split()
+            require(len(header) == 3 and header[0] == oid and header[1] == "blob"
+                    and header[2].isdigit() and 0 <= int(header[2]) <= MAX_JSON,
+                    "Missing, malformed or oversized accounting blob")
+            size = int(header[2]);cursor = end + 1
+            body = raw[cursor:cursor + size]
+            require(len(body) == size and raw[cursor + size:cursor + size + 1] == b"\n", "Truncated accounting blob body")
+            digest = (hashlib.sha1 if len(oid) == 40 else hashlib.sha256)(b"blob " + str(size).encode() + b"\0" + body).hexdigest()
+            require(digest == oid, "Accounting blob bytes differ from their immutable identity")
+            values[name] = body;cursor += size + 1
+        require(cursor == len(raw), "Unexpected accounting blob output")
+        return values
 
     def _registered(self) -> Path | None:
         safe_path(self.path)

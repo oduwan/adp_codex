@@ -71,7 +71,11 @@ class EpisodeState(PersonalState):
     descriptor: dict
 
     def memory(self):
-        return self.root.memory()
+        memory = self.root.memory()
+        # Keep the exact accepted Memory type (including validation's strict
+        # trusted-type gate). No state, owner or observation is memoized.
+        memory._accounting_reads = True
+        return memory
 
     @property
     def task_id(self):

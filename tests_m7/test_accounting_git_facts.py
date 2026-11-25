@@ -45,6 +45,44 @@ class AccountingGitFactTests(unittest.TestCase):
         self.action, self.revision = action, revision
         self.port, self.native = HistoryReadPort(config, bound_git_directory=bound), GitExecutionPort(config, bound_git_directory=bound)
 
+    def test_final_input_seal_observes_child_proof_source_credential_and_consent_drift(self):
+        from types import SimpleNamespace
+        from adp.personal_read_frame import _inputs
+        from adp.schema import key
+        from adp.storage import atomic
+        state, runtime, evidence = (self.root.parent / name for name in ("private-state", "private-runtime", "private-evidence"))
+        for path in (state, runtime, evidence):path.mkdir(mode=0o700)
+        request, proof = "a" * 64, "b" * 64
+        record, stop = runtime / (request + ".json"), runtime / (request + ".stop.json")
+        attestation = evidence / (proof + ".json")
+        for path in (record, stop, attestation):atomic(path, b"{}\n")
+        workers = [{"request": {"id": request}}]
+        run, consent = {"current": "exact"}, {"view": {"exact": True}}
+        c = SimpleNamespace(task_id="original", personal=SimpleNamespace(state=state, feature=self.root),
+            runtime=SimpleNamespace(directory=runtime, _path=lambda identifier: runtime / (identifier + ".json")),
+            authority=SimpleNamespace(directory=evidence), workers=SimpleNamespace(records=lambda: workers), record=lambda: run)
+        owner = SimpleNamespace(c=c, port=self.native, record=lambda **kwargs: consent, active={"view": {}, "binding": "exact", "action": "one"},
+            transport=SimpleNamespace(credential_binding="synthetic-only"))
+        observed = {"state": {"progress_guard": {"requirements": {"code": {"tasks": [key(c.task_id)],
+            "approval": {"reference": "personal:" + proof}}}}}}
+        baseline = _inputs(owner, observed, product=False)
+        for path in (record, stop, attestation):
+            raw = path.read_bytes();atomic(path, b"{ }\n")
+            self.assertNotEqual(_inputs(owner, observed, product=False), baseline)
+            atomic(path, raw)
+            self.assertEqual(_inputs(owner, observed, product=False), baseline)
+        raw = stop.read_bytes();stop.unlink()
+        self.assertNotEqual(_inputs(owner, observed, product=False), baseline);atomic(stop, raw)
+        consent["view"]["exact"] = False
+        self.assertNotEqual(_inputs(owner, observed, product=False), baseline);consent["view"]["exact"] = True
+        owner.transport.credential_binding = "changed"
+        self.assertNotEqual(_inputs(owner, observed, product=False), baseline);owner.transport.credential_binding = "synthetic-only"
+        raw = (self.root / "product").read_bytes();(self.root / "product").write_bytes(b"Uncommitted source\n")
+        self.assertNotEqual(_inputs(owner, observed, product=False), baseline);(self.root / "product").write_bytes(raw)
+        self.assertEqual(_inputs(owner, observed, product=False), baseline)
+        expected = _inputs(owner, observed, product=True);owner.active["action"] = "other"
+        self.assertNotEqual(_inputs(owner, observed, product=True), expected)
+
     def test_warm_facts_match_native_reduce_spawns_and_preserve_files_and_refs(self):
         expected = self.native.observe(self.action)
         self.assertEqual(observe(self.port, self.action, self.revision), expected)

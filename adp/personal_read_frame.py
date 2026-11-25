@@ -2,12 +2,72 @@
 from contextvars import ContextVar
 from copy import deepcopy
 import os
+import hashlib
+import re
+import stat
 import threading
 
 from .discovery_schema import digest
 from .schema import require
 
 _CURRENT = ContextVar("accounting_publication_read", default=None)
+
+
+def _private_digest(path):
+    """Protected bounded byte observation, including honest absence."""
+    from .config import safe_path
+    from .personal_storage import LIMIT
+    safe_path(path)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1
+                and not info.st_mode & 0o077 and info.st_size <= LIMIT, "Unverified private observation input")
+        raw = os.read(fd, LIMIT + 1)
+        require(len(raw) == info.st_size and len(raw) <= LIMIT, "Private observation input was truncated or exceeds bound")
+        return hashlib.sha256(raw).hexdigest()
+    finally:
+        os.close(fd)
+
+
+def _inputs(owner, observed, *, product):
+    """Re-read fixed inputs without admission, authority or native callbacks."""
+    from .execution_containment import admin_seal
+    from .personal_enrollment import governance
+    from .personal_history_product_git import administration
+    from .personal_storage import read_private
+    from .schema import key
+    c = owner.c
+    workers, files = c.workers.records(), {}
+    require(len(workers) <= 16, "Bounded independent worker inputs required")
+    for row in workers:
+        identifier = row["request"]["id"]
+        files[identifier] = (_private_digest(c.runtime._path(identifier)),
+            _private_digest(c.runtime.directory / (identifier + ".stop.json")))
+    for item in observed["state"]["progress_guard"]["requirements"].values():
+        if key(c.task_id) in item["tasks"] and item["approval"] is not None:
+            reference = item["approval"]["reference"]
+            matched = re.fullmatch(r"personal:([0-9a-f]{64})", reference)
+            require(matched is not None, "Unverified private progress reference")
+            files[reference] = _private_digest(c.authority.directory / (matched[1] + ".json"))
+    for name in ("adoption.json", "adoption-intent.json", "run.json", "product.json", "publication.json"):
+        files[name] = _private_digest(c.personal.state / name)
+    adoption = read_private(c.personal.state / "adoption.json", optional=True)
+    if adoption is not None:
+        require(type(adoption.get("manifest")) is list and len(adoption["manifest"]) == 2, "Exact retained candidate inputs required")
+        for row in adoption["manifest"]:
+            name = digest(row["path"]) + ".json"
+            files["adoption-file:" + name] = _private_digest(c.personal.state / "adoption-files" / name)
+    root = c.personal.feature
+    return digest({"consent": deepcopy(owner.active) if product else owner.record(_observed=observed), "run": c.record(),
+        "workers": workers, "private": files,
+        "head": owner.port._value("rev-parse", "HEAD"), "tree": owner.port._value("--no-replace-objects", "rev-parse", "HEAD^{tree}"),
+        "ref": owner.port._value("symbolic-ref", "HEAD"), "dirty": owner.port._value("status", "--porcelain", "--untracked-files=all"),
+        "physical": administration(root), "admin": admin_seal(root), "governance": governance(root),
+        "credential": owner.transport.credential_binding})
 
 
 def forbid_writes():
@@ -80,33 +140,27 @@ def _live(owner, *, product=False):
     c = owner.c
     forbid_writes()
     first = _Read(owner, product=product)
-    before = first.run()
-    # Construct with the shortcut unavailable: raw host/receipt/source/Git and
-    # lineage proof is independently repeated, never checked from the frame.
-    final = _Read(owner, product=product)
-    require(final.identity == first.identity and final.active == first.active
-            and final.archive == first.archive and final.consent == first.consent,
-            "Accounting evidence changed during publication observation")
-    after = final.run()  # Re-read actual publication/review/credential inputs too.
-    require(after == before, "Publication subject changed during read-only observation")
-    # The second local pass can itself race a retained-evidence change. Its
-    # input proof is not a closing proof: independently authenticate AGAIN
-    # after every framed body, with no body following this final capture.
+    inputs = _inputs(owner, first.active[2], product=product)
+    result = first.run()  # Every original semantic predicate executes once.
+    # The shortcut is unavailable here. No semantic body follows this truly
+    # closing full raw/host/source/lineage proof.
     closing = _Read(owner, product=product)
-    require(closing.identity == final.identity and closing.active == final.active
-            and closing.archive == final.archive and closing.consent == final.consent,
+    require(closing.identity == first.identity and closing.active == first.active
+            and closing.archive == first.archive and closing.consent == first.consent,
             "Accounting evidence changed during final publication read")
     closing.closed = True
+    require(_inputs(owner, closing.active[2], product=product) == inputs,
+            "Source, review, receipt, credential or consent changed during observation")
     # current() normally rejects a closed frame; this last fence is explicitly
     # fresh and does not reopen one or return a cached owner/clock verdict.
     from .personal_episode import same_observation
     same_observation(closing.active[2], c.memory.inspect())
     c.episode_fence()
     now = c.clock()
-    view = after if product else after["view"]
+    view = result if product else result["view"]
     require(type(now) is int and view["issued_at"] <= now < view["expires_at"],
             "Operation consent expired during final observation")
-    return after
+    return result
 
 
 def publication_live(publication):
