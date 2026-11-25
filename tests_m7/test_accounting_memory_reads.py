@@ -37,16 +37,88 @@ class AccountingMemoryReadTests(GitFixture):
             calls.append(args[1:]);return git(*args, **kwargs)
         with patch("adp.memory.git", side_effect=counted), patch("adp.git.git", side_effect=counted):
             start = time.monotonic();expected = self.native.inspect();native_seconds = time.monotonic() - start
-            native_calls = len(calls);calls.clear()
+            native_calls = len(calls);native_blobs = sum(c[0] == "cat-file" for c in calls);calls.clear()
             start = time.monotonic();actual = self.fast.inspect();batch_seconds = time.monotonic() - start
             batch_calls = len(calls)
         self.assertEqual(actual, expected)
         self.assertLess(batch_calls, native_calls)
-        self.assertEqual(native_calls - batch_calls, 7)  # Four size/body pairs become one exact batch.
+        self.assertEqual(native_blobs - sum(c[0] == "cat-file" for c in calls), 7)  # Four size/body pairs become one exact batch.
+        self.assertEqual(native_calls - batch_calls, 9)  # Plus three registration queries becoming one.
         self.assertEqual(self.preserved(), before)
         self.assertIs(type(self.fast), Memory)
         print("SYNTHETIC_CURRENT_MEMORY_COMMANDS native=" + str(native_calls) + " batch=" + str(batch_calls)
               + " native_seconds=" + str(round(native_seconds, 6)) + " batch_seconds=" + str(round(batch_seconds, 6)), flush=True)
+
+    def test_context_query_parity_recovery_freshness_and_late_dirty_observation(self):
+        before = self.preserved()
+        directory = self.native._registered()
+        self.assertEqual(self.fast._accounting_registered(), (directory, None))
+        self.assertEqual(self.fast._accounting_registered(head=True), (directory, value(self.native.path, "rev-parse", "HEAD")))
+        expected = self.native.inspect(recovery=True)
+        calls = []
+        def counted(*args, **kwargs):
+            calls.append(args[1:]);return git(*args, **kwargs)
+        with patch("adp.memory.git", side_effect=counted), patch("adp.git.git", side_effect=counted):
+            self.assertEqual(self.fast.inspect(recovery=True), expected)
+        self.assertEqual(len(calls), 9)
+        context = [c for c in calls if "--symbolic-full-name" in c]
+        self.assertEqual(len(context), 2)  # Recovery re-registers the actual context after reading blobs.
+        self.assertEqual((context[0].count("HEAD"), context[1].count("HEAD")), (2, 1))
+        self.assertEqual(self.preserved(), before)
+        with patch.object(self.fast, "_accounting_registered", side_effect=AssertionError("Default writer read keeps native registration")):
+            self.assertEqual(self.fast._local(dirty=True), self.native._local(dirty=True))
+        state = self.fast.path / "state.json";raw = state.read_bytes()
+        native_read = self.fast._read_ref
+        def drift(ref):
+            result = native_read(ref)
+            atomic(state, b"{}\n")
+            return result
+        try:
+            with patch.object(self.fast, "_read_ref", side_effect=drift):
+                self.assertEqual(self.fast.inspect()["health"], "RECOVERY_REQUIRED")
+        finally:atomic(state, raw)
+        for kind in ("insteadOf", "pushInsteadOf"):
+            name = "url." + str(self.base / "unapproved.git") + "." + kind
+            git(self.a, "config", name, str(self.remote))
+            try:
+                for memory in (self.native, self.fast):
+                    with self.assertRaises(ADPError):memory.inspect()
+            finally:git(self.a, "config", "--unset-all", name)
+        self.assertEqual(self.fast.inspect(), self.native.inspect())
+
+    def test_context_framing_branch_common_backlink_and_unsupported_paths_refuse(self):
+        for head in (False, True):
+            for fault in ("missing", "extra", "nul", "cr", "branch", "common", "head"):
+                if fault == "head" and not head:continue
+                def malformed(root, *args, **kwargs):
+                    raw = git(root, *args, **kwargs)
+                    if "--symbolic-full-name" not in args:return raw
+                    lines = raw.split(b"\n")
+                    if fault == "missing":return b"\n".join(lines[:-2]) + b"\n"
+                    if fault == "extra":return raw + b"extra\n"
+                    if fault == "nul":return raw.replace(b"\n", b"\0\n", 1)
+                    if fault == "cr":return raw.replace(b"\n", b"\r\n", 1)
+                    if fault == "branch":lines[-2] = b"HEAD"
+                    if fault == "common":lines[1] = str(self.base / "foreign.git").encode()
+                    if fault == "head":lines[2] = b"not-a-sha"
+                    return b"\n".join(lines)
+                with self.subTest(head=head, fault=fault), patch("adp.memory.git", side_effect=malformed):
+                    with self.assertRaises(ADPError):self.fast._accounting_registered(head=head)
+        directory = self.native._registered();backlink = directory / "gitdir";raw = backlink.read_bytes()
+        backlink.write_text(str(self.base / "foreign" / ".git") + "\n")
+        try:
+            for memory in (self.native, self.fast):
+                with self.assertRaises(ADPError):memory.inspect()
+        finally:backlink.write_bytes(raw)
+        path = self.fast.path
+        self.fast.path = Path(str(path) + "\nunsupported")
+        try:
+            with patch("adp.memory.git", side_effect=AssertionError("Unsupported framing uses original path")):
+                self.assertIsNone(self.fast._accounting_registered())
+        finally:self.fast.path = path
+        with patch.object(self.fast, "_accounting_registered", return_value=None), patch.object(self.fast, "_registered", wraps=self.fast._registered) as original:
+            self.assertEqual(self.fast.inspect(), self.native.inspect())
+            original.assert_called_once()
 
     def test_owner_inbox_pending_dirty_remote_and_path_changes_are_always_observed(self):
         def same():self.assertEqual(self.fast.inspect(), self.native.inspect())

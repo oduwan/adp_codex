@@ -157,8 +157,42 @@ class Memory:
         require(value(self.path, *prefix, "symbolic-ref", "HEAD") == "refs/heads/" + self.branch, "Memory branch mismatch")
         return directory
 
-    def _layout(self, slots=()) -> None:
-        self._registered()
+    def _accounting_registered(self, *, head=False):
+        """One fresh native context query, only for selected observations."""
+        if (not self._accounting_reads or self.pinned_local_remote is None
+                or any(p != p.strip() or "\n" in p or "\r" in p for p in (str(self.path), str(self.common), self.branch))):
+            return None  # Unsupported framing uses the unchanged native reader.
+        safe_path(self.path)
+        require(self.path.is_dir(), "Memory worktree is absent; use authorized init --apply")
+        gitfile = self.path / ".git"
+        require(gitfile.is_file() and not gitfile.is_symlink(),
+                "Storage is not a registered linked memory worktree; unexpected files are refused")
+        args = ("rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir",
+                *(("HEAD",) if head else ()), "--symbolic-full-name", "HEAD")
+        raw = git(self.path, *args, limit=32768)
+        try:
+            lines = raw.decode("utf-8").split("\n")
+        except UnicodeError as exc:
+            raise ADPError("Malformed accounting Git context") from exc
+        require(len(lines) == (5 if head else 4) and lines[-1] == ""
+                and all(line and line == line.strip() and "\r" not in line and "\0" not in line for line in lines[:-1]),
+                "Malformed accounting Git context framing")
+        directory = safe_path(Path(lines[0]))
+        require(Path(lines[0]).is_absolute() and directory.parent == self.common / "worktrees",
+                "Guided memory worktree administration changed")
+        backlink = safe_path(directory / "gitdir")
+        require(backlink.is_file() and backlink.stat().st_size <= 4096
+                and safe_path(directory / backlink.read_text().removesuffix("\n")) == gitfile,
+                "Git administration does not belong to the selected memory worktree")
+        require(Path(lines[1]) == self.control.parent.parent, "Memory belongs to another repository")
+        require(lines[-2] == "refs/heads/" + self.branch, "Memory branch mismatch")
+        if head:
+            require(SHA.fullmatch(lines[2]) is not None, "Malformed accounting HEAD")
+        return directory, lines[2] if head else None
+
+    def _layout(self, slots=(), *, _accounting_inspection=False) -> None:
+        if not _accounting_inspection or self._accounting_registered() is None:
+            self._registered()
         # os.scandir does not follow directory symlinks. Reject before recursion.
         for top in self.path.iterdir():
             require(not top.is_symlink(), "Symlinked memory entry")
@@ -183,8 +217,11 @@ class Memory:
             else:
                 raise ADPError("Storage contains unexpected files; refusing to modify it")
 
-    def _local(self, *, dirty: bool = False) -> tuple[str, dict, dict[str, dict]]:
-        self._layout()
+    def _local(self, *, dirty: bool = False, _accounting_inspection=False) -> tuple[str, dict, dict[str, dict]]:
+        if _accounting_inspection:
+            self._layout(_accounting_inspection=True)
+        else:
+            self._layout()
         head = value(self.path, "rev-parse", "HEAD")
         state, tasks = self._read_ref(head)
         if not dirty:
@@ -247,17 +284,27 @@ class Memory:
         slots = set()
         extra = {}
         if recovery:
-            self._registered()
-            head = value(self.path, "rev-parse", "HEAD")
+            context = self._accounting_registered(head=True) if self._accounting_reads else None
+            if context is None:
+                self._registered()
+                head = value(self.path, "rev-parse", "HEAD")
+            else:
+                _, head = context
             state, tasks = self._read_ref(head)
             pending = self._recovery_document(protected=True)
             slots = {slot for path, limit in self._recovery_slots(pending, tasks)
                      if (slot := interrupted_slot(path, limit)) is not None}
-            self._layout(slots)
+            if self._accounting_reads:
+                self._layout(slots, _accounting_inspection=True)
+            else:
+                self._layout(slots)
             extra = {"recovery_slots": sorted(str(slot.relative_to(self.path)) for slot in slots),
                      "recovery_journal": hashlib.sha256(encode(pending, MAX_JOURNAL)).hexdigest() if pending is not None else None}
         else:
-            head, state, tasks = self._local(dirty=True)
+            if self._accounting_reads:
+                head, state, tasks = self._local(dirty=True, _accounting_inspection=True)
+            else:
+                head, state, tasks = self._local(dirty=True)
         dirty = bool(value(self.path, "status", "--porcelain", "--untracked-files=all"))
         pending = (self.control / "pending.json").exists()
         return {"health": "RECOVERY_REQUIRED" if pending or dirty or slots else

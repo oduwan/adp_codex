@@ -252,3 +252,13 @@ bytes, so hiding a file cannot bypass its parser. Later completion observations
 bind directory/setup to the already qualified deterministic coordinator before
 following receipts. Direct current-M1 reads and ordinary/signed paths retain
 their existing native checks; no remembered filesystem answer is returned.
+
+Accounting inspections also batch only fresh native registration queries. Normal
+HEAD remains observed after layout; final actual status stays after blob reads.
+Recovery batches its adjacent first registration/HEAD and performs another fresh
+registration after reading the blobs. Exact Git framing, selected common/ref and
+backlink checks remain; unsupported input framing takes the original path, while
+malformed output refuses. All four endpoint/remote observations stay unchanged.
+Default and writer local reads retain their original calls. This reduces native
+process overhead without caching state, ownership, URLs, time or authorization;
+whole-operation fit still needs fixed-budget qualification.
