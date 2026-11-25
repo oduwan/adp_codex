@@ -71,6 +71,8 @@ def create_private(path: Path) -> None:
 def read_private(path: Path, *, optional=False):
     safe_path(path)
     if not path.exists() and optional:
+        from .personal_read_frame import consumed
+        consumed(path)
         return None
     return load_json(path, LIMIT, protected=True)
 

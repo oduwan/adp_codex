@@ -57,11 +57,19 @@ class AccountingGitFactTests(unittest.TestCase):
         attestation = evidence / (proof + ".json")
         for path in (record, stop, attestation):atomic(path, b"{}\n")
         workers = [{"request": {"id": request}}]
-        run, consent = {"current": "exact"}, {"view": {"exact": True}}
-        c = SimpleNamespace(task_id="original", personal=SimpleNamespace(state=state, feature=self.root),
+        from adp.personal_enrollment import governance
+        from adp.discovery_schema import digest
+        source = {"revision": self.revision, "tree": value(self.root, "rev-parse", "HEAD^{tree}"),
+            "source_ref": "refs/heads/work/original", "administration": digest(administration(self.root))}
+        run, consent = {"current": "exact", "revision": self.revision}, {"view": {**source, "exact": True}, "credential_binding": "synthetic-only"}
+        plan = {"feature": {"branch": "work/original"}, "governance_digest": digest(governance(self.root)),
+            "effects": {"marker": str(state / "marker.json")}}
+        c = SimpleNamespace(task_id="original", personal=SimpleNamespace(state=state, feature=self.root, directory=state,
+            root=SimpleNamespace(state=state, directory=state), plan=plan), track=None,
             runtime=SimpleNamespace(directory=runtime, _path=lambda identifier: runtime / (identifier + ".json")),
             authority=SimpleNamespace(directory=evidence), workers=SimpleNamespace(records=lambda: workers), record=lambda: run)
-        owner = SimpleNamespace(c=c, port=self.native, record=lambda **kwargs: consent, active={"view": {}, "binding": "exact", "action": "one"},
+        owner = SimpleNamespace(c=c, port=self.native, record=lambda **kwargs: consent,
+            active={"view": {**source, "source_tree": source["tree"]}, "binding": "synthetic-only", "action": "one"},
             transport=SimpleNamespace(credential_binding="synthetic-only"))
         observed = {"state": {"progress_guard": {"requirements": {"code": {"tasks": [key(c.task_id)],
             "approval": {"reference": "personal:" + proof}}}}}}
@@ -76,9 +84,11 @@ class AccountingGitFactTests(unittest.TestCase):
         consent["view"]["exact"] = False
         self.assertNotEqual(_inputs(owner, observed, product=False), baseline);consent["view"]["exact"] = True
         owner.transport.credential_binding = "changed"
-        self.assertNotEqual(_inputs(owner, observed, product=False), baseline);owner.transport.credential_binding = "synthetic-only"
+        with self.assertRaises(ADPError):_inputs(owner, observed, product=False)
+        owner.transport.credential_binding = "synthetic-only"
         raw = (self.root / "product").read_bytes();(self.root / "product").write_bytes(b"Uncommitted source\n")
-        self.assertNotEqual(_inputs(owner, observed, product=False), baseline);(self.root / "product").write_bytes(raw)
+        with self.assertRaises(ADPError):_inputs(owner, observed, product=False)
+        (self.root / "product").write_bytes(raw)
         self.assertEqual(_inputs(owner, observed, product=False), baseline)
         expected = _inputs(owner, observed, product=True);owner.active["action"] = "other"
         self.assertNotEqual(_inputs(owner, observed, product=True), expected)

@@ -123,7 +123,11 @@ class CodexExecRuntime:
 
     def _read(self, request_id):
         path = self._path(request_id)
-        return load_json(path, 32768) if path.exists() else None
+        if not path.exists():
+            from .personal_read_frame import consumed
+            consumed(path)
+            return None
+        return load_json(path, 32768)
 
     def _save(self, request_id, record):
         atomic(self._path(request_id), encode(record, 32768))
@@ -140,6 +144,8 @@ class CodexExecRuntime:
     def _stop_receipt(self, request_id, record):
         path = self.directory / (request_id + ".stop.json")
         if not path.exists():
+            from .personal_read_frame import consumed
+            consumed(path)
             return None
         observed = load_json(path, 2048)
         from .schema import fields

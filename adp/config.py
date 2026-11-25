@@ -35,6 +35,8 @@ def load_json(path: Path, limit: int = 65536, *, protected: bool = False) -> dic
             raise ADPError("JSON payload exceeds size limit")
     finally:
         os.close(descriptor)
+    from .personal_read_frame import consumed
+    consumed(path, raw, metadata)
     def pairs(items: list[tuple[str, object]]) -> dict:
         data: dict = {}
         for key, item in items:

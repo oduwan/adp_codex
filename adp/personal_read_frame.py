@@ -6,11 +6,67 @@ import hashlib
 import re
 import stat
 import threading
+from pathlib import Path
 
 from .discovery_schema import digest
 from .schema import require
 
 _CURRENT = ContextVar("accounting_publication_read", default=None)
+
+
+def consumed(path, raw=None, metadata=None):
+    """Deny changed actual inputs; never return remembered bytes or authority."""
+    frame = _CURRENT.get()
+    if frame is None:
+        return
+    frame.context()
+    path = Path(os.path.abspath(path))
+    name = str(path)
+    if name not in frame.readset and not any(path.is_relative_to(root) for root in frame.roots):
+        return  # Current M1/control reads remain actual, outside private proofs.
+    expected = frame.readset.get(name)  # Closed inventory proves omitted paths absent.
+    if metadata is None:
+        require(raw is None and expected is None, "Private proof presence changed during observation")
+        return
+    from .personal_storage import LIMIT
+    require(stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid()
+            and metadata.st_nlink == 1 and not metadata.st_mode & 0o077
+            and len(raw) == metadata.st_size <= LIMIT and expected is not None
+            and hashlib.sha256(raw).hexdigest() == expected,
+            "Actual private proof differs from the sealed protected input")
+
+
+def _private_inputs(c):
+    """Closed, bounded private JSON inventory, including optional absence."""
+    from .config import safe_path
+    roots = {c.personal.state, c.personal.root.state, c.personal.directory,
+             c.runtime.directory, c.authority.directory}
+    if c.track is not None:
+        roots.add(c.track.root)
+    roots = {safe_path(p) for p in roots}
+    roots = tuple(sorted((p for p in roots if not any(p != other and p.is_relative_to(other)
+                          for other in roots)), key=str))
+    files, total = {}, 0
+    for root in roots:
+        def unreadable(error):
+            require(False, "Private observation directory is unavailable")
+        for directory, names, leaves in os.walk(root, followlinks=False, onerror=unreadable):
+            info = safe_path(Path(directory)).stat()
+            require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
+                    and not info.st_mode & 0o022, "Unverified private input directory")
+            for name in names:
+                safe_path(Path(directory) / name)
+            names.sort()
+            for name in sorted(leaves):
+                if name.endswith(".json"):
+                    path = Path(directory) / name
+                    files[str(path)] = _private_digest(path)
+                    total += path.stat().st_size
+                    require(len(files) <= 1024 and total <= 8 * 1024 * 1024,
+                            "Private observation inventory exceeds bound")
+    for path in (c.personal.root.directory / "personal.json", Path(c.personal.plan["effects"]["marker"])):
+        files[str(safe_path(path))] = _private_digest(path)
+    return files, roots
 
 
 def _private_digest(path):
@@ -63,13 +119,26 @@ def _inputs(owner, observed, *, product):
             files["adoption-file:" + name] = _private_digest(c.personal.state / "adoption-files" / name)
     root = c.personal.feature
     consent = deepcopy(owner.active) if product else owner.record(_observed=observed)
-    sealed = digest({"consent": consent, "run": c.record(),
+    run = c.record()
+    head = owner.port._value("rev-parse", "HEAD")
+    tree = owner.port._value("--no-replace-objects", "rev-parse", "HEAD^{tree}")
+    ref = owner.port._value("symbolic-ref", "HEAD")
+    dirty = owner.port._value("status", "--porcelain", "--untracked-files=all")
+    physical, admin, rules = administration(root), admin_seal(root), governance(root)
+    view = consent["view"]
+    require(head == view["revision"] == run["revision"] and tree == view["source_tree" if product else "tree"]
+            and ref == view["source_ref"] == "refs/heads/" + c.personal.plan["feature"]["branch"]
+            and not dirty and digest(physical) == view["administration"]
+            and digest(rules) == c.personal.plan["governance_digest"]
+            and owner.transport.credential_binding == consent["binding" if product else "credential_binding"],
+            "Actual source, administration, governance or credential differs from approved consent")
+    readset, roots = _private_inputs(c)
+    sealed = digest({"consent": consent, "run": run,
         "workers": workers, "private": files,
-        "head": owner.port._value("rev-parse", "HEAD"), "tree": owner.port._value("--no-replace-objects", "rev-parse", "HEAD^{tree}"),
-        "ref": owner.port._value("symbolic-ref", "HEAD"), "dirty": owner.port._value("status", "--porcelain", "--untracked-files=all"),
-        "physical": administration(root), "admin": admin_seal(root), "governance": governance(root),
+        "head": head, "tree": tree, "ref": ref, "dirty": dirty,
+        "physical": physical, "admin": admin, "governance": rules,
         "credential": owner.transport.credential_binding})
-    return sealed, deepcopy(consent)
+    return sealed, deepcopy(consent), readset, roots
 
 
 def forbid_writes():
@@ -96,10 +165,13 @@ class _Read:
         self.archive = deepcopy(capture["archive"])
         self.current()  # Full proof must end at this exact live subject.
 
-    def current(self):
+    def context(self):
         require(not self.closed and self.owner.c is self.c and _identity(self.c) == self.identity
                 and (not self.product or self.owner.active == self.consent),
                 "Accounting publication read context changed")
+
+    def current(self):
+        self.context()
         from .personal_episode import same_observation
         actual = self.c.memory.inspect()
         same_observation(self.active[2], actual)
@@ -143,6 +215,7 @@ def _live(owner, *, product=False):
     forbid_writes()
     first = _Read(owner, product=product)
     inputs = _inputs(owner, first.active[2], product=product)
+    first.readset, first.roots = deepcopy(inputs[2]), inputs[3]
     result = first.run()  # Every original semantic predicate executes once.
     # The shortcut is unavailable here. No semantic body follows this truly
     # closing full raw/host/source/lineage proof.

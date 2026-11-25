@@ -17,7 +17,7 @@ class AccountingReadFrameTests(unittest.TestCase):
         observed = {"health": "SYNCED", "local_owner": True, "local_head": "a" * 40, "remote_head": "a" * 40,
             "state": {"generation": 1, "owner": "original", "guard": "exact"}, "tasks": {"original": {}}, "inbox_count": 0}
         inputs = {"raw": "original", "valid": True, "now": 100, "expires": 200, "revoked": False,
-            "full": 0, "reads": 0, "events": [], "seal": {"review": "exact"}, "during_close": None}
+            "full": 0, "reads": 0, "events": [], "seal": {"review": "exact"}, "during_close": None, "readset": {}, "roots": ()}
         def inspect():
             inputs["reads"] += 1
             return deepcopy(observed)
@@ -45,7 +45,7 @@ class AccountingReadFrameTests(unittest.TestCase):
         personal._active_view = full
         publication = SimpleNamespace(c=c, consent={"view": {"issued_at": 50, "expires_at": 150}})
         probe = patch("adp.personal_read_frame._inputs", side_effect=lambda owner, *args, **kwargs:
-            (deepcopy(inputs["seal"]), deepcopy(owner.active if kwargs["product"] else owner.consent)))
+            (deepcopy(inputs["seal"]), deepcopy(owner.active if kwargs["product"] else owner.consent), deepcopy(inputs["readset"]), inputs["roots"]))
         probe.start();self.addCleanup(probe.stop)
         return c, publication, observed, inputs
 
@@ -245,3 +245,71 @@ class AccountingReadFrameTests(unittest.TestCase):
         p.consent = {"view": {"issued_at": 50, "expires_at": 150}}
         p._live_current = lambda **kwargs: {"view": {"issued_at": 50, "expires_at": 999}}
         with self.assertRaises(ADPError):publication_live(p)
+
+    def test_semantic_private_reads_reject_transient_missing_or_malformed_inputs(self):
+        from tempfile import TemporaryDirectory
+        from adp.config import load_json
+        from adp.personal_read_frame import _private_digest
+        from adp.storage import atomic
+        for baseline in (None, b"malformed original bytes\n"):
+            with self.subTest(baseline=baseline), TemporaryDirectory(prefix="adp-transient-proof-") as temporary:
+                c, p, _, inputs = self.fixture()
+                path = Path(temporary) / "mandatory-proof.json"
+                if baseline is not None:atomic(path, baseline)
+                inputs["readset"][str(path)] = _private_digest(path)
+                def read(**kwargs):
+                    atomic(path, b'{"proof":"genuine"}\n')
+                    try:
+                        self.assertEqual(load_json(path, protected=True), {"proof": "genuine"})
+                    finally:
+                        if baseline is None:path.unlink()
+                        else:atomic(path, baseline)
+                    return deepcopy(p.consent)
+                p._live_current = read
+                with self.assertRaises(ADPError):publication_live(p)
+                self.assertEqual(_private_digest(path), inputs["readset"][str(path)])
+
+    def test_actual_private_presence_metadata_and_closed_paths_are_enforced(self):
+        from tempfile import TemporaryDirectory
+        from adp.config import load_json
+        from adp.codex_runtime import CodexExecRuntime
+        from adp.personal_storage import read_private
+        from adp.personal_read_frame import _private_digest
+        from adp.storage import atomic
+        for change in ("unchanged", "optional_absent", "runtime_absent", "stop_absent", "new_path", "mode", "hardlink", "short_read"):
+            with self.subTest(change=change), TemporaryDirectory(prefix="adp-proof-consumption-") as temporary:
+                c, p, _, inputs = self.fixture()
+                root = Path(temporary);identifier = "a" * 64
+                runtime = CodexExecRuntime.__new__(CodexExecRuntime)
+                runtime.directory = root
+                path = root / (identifier + (".stop.json" if change == "stop_absent" else ".json"))
+                atomic(path, b'{"proof":"genuine"}\n')
+                inputs["roots"] = (root,)
+                if change != "new_path":inputs["readset"][str(path)] = _private_digest(path)
+                original = path.read_bytes()
+                def read(**kwargs):
+                    if change.endswith("absent"):path.unlink()
+                    elif change == "mode":path.chmod(0o644)
+                    elif change == "hardlink":(root / "alias").hardlink_to(path)
+                    try:
+                        if change == "optional_absent":read_private(path, optional=True)
+                        elif change == "runtime_absent":runtime._read(identifier)
+                        elif change == "stop_absent":runtime._stop_receipt(identifier, {})
+                        elif change == "short_read":
+                            with patch("adp.config.os.read", return_value=b"{}"):
+                                load_json(path)  # The actual complete-read fence is mandatory too.
+                        else:self.assertEqual(load_json(path), {"proof": "genuine"})
+                    finally:
+                        if change.endswith("absent"):atomic(path, original)
+                        if change == "mode":path.chmod(0o600)
+                        if change == "hardlink":(root / "alias").unlink()
+                    return deepcopy(p.consent)
+                p._live_current = read
+                if change == "unchanged":self.assertEqual(publication_live(p), p.consent)
+                else:
+                    with self.assertRaises(ADPError):publication_live(p)
+                self.assertIsNone(_CURRENT.get())
+                # Outside the private frame, the original caller's behavior remains.
+                path.chmod(0o644)
+                self.assertEqual(load_json(path), {"proof": "genuine"})
+                path.unlink();self.assertIsNone(runtime._read(identifier))

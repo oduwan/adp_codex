@@ -220,3 +220,15 @@ The engineering tests use synthetic receipts/disposable repositories. Genuine
 M8 execution, live archival application, installation, adoption, acceptance,
 merge and advancement remain **NOT_AUTHORIZED / ON HOLD** pending separate
 operator integration and live decisions.
+
+The private synchronous publication/product read frame binds every actual JSON
+proof consumed by the unchanged validators to its pre-body byte/presence seal.
+It inventories bounded protected personal/runtime/track roots before observation;
+unlisted present inputs, changed optional absence, incomplete reads and
+unprotected runtime files refuse. The hook reads real bytes and parses them
+normally, supplies no cached data, and is inactive outside this frame. Current
+M1 owner/ref/control reads remain fresh and outside these proof roots. Actual
+HEAD/tree/ref, clean status, administration, governance and credentials must
+already match the approved consent at both seals. Independent full historical
+proof follows the single semantic body; no later body can replace a proof only
+during validation. Native/write/reauthorization gates remain unframed.
