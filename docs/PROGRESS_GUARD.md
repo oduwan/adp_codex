@@ -111,3 +111,32 @@ leave remaining cases NOTRUN. Original inventory order and denominator never
 shrink. Quarantined observations retain raw outcomes and are counted separately
 from effective PASS. Campaigns are diagnostic censuses, never formal acceptance.
 Only one census is admitted without new independently verified progress.
+
+## Explicit accounting-expiry successor policy
+
+The named Issue #50 `ACCOUNTING_EXPIRY_CONTINUATION` policy is a narrow opt-in
+terminal admission, not an unsafe reset. Only the exact original first personal
+Issue #1, confirmed stopped unapproved NOTRUN Developer, independently approved
+original scope, unchanged request/receipt/host/source/owner/generation, native
+#1→#2→#3 graph and pristine original reservation qualify. Request measurements
+must fit both original Worker and reservation caps. Other recorded hazards or
+unknown stops refuse; absolute stop timeliness remains UNKNOWN.
+
+Historical accounting performs the existing guard-first UNKNOWN/STOP_UNSAFE
+abandonment at current time, then the exact original M1 UNKNOWN delivery. Its
+latch, counters and history remain immutable. A separate finite operator grant
+can install one explicit same-Issue child whose product counters, thresholds,
+authors, facts and forensic history carry forward. Exactly one additive scope
+Reviewer is allocated; no fresh forensic grant is created. Per-role requests,
+checks and measured resource usage accumulate canonically alongside historical
+consumption. New semantic/source revalidation uses only existing personal M7
+gates, and every action still needs the unchanged Guard.
+
+Only new independently verified progress can clear the child's ordinary
+anti-loop counters. The old terminal and lifetime usage never clear. Exhausted
+correction/stall/role/time limits still stop; starting another episode cannot
+avoid them. Expired or revoked activation grants do not authorize execution.
+Every interrupted effect must match its exact durable intent and checkpoint;
+reconciliation grants account only for that effect, never a new attempt or
+execution window. Full boundaries and operator steps are in
+[personal recovery](operations/PERSONAL_RECOVERY.md).

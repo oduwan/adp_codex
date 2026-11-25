@@ -43,7 +43,7 @@ class PersonalProductHTTPTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises((ValueError, ADPError)):
                 validate_product("GET", path, None, 5)
         with self.assertRaises(ValueError):
-            validate_product("GET", "/repos/owned/project", None, 6)
+            validate_product("GET", "/repos/owned/project", None, 31)
 
     def test_tighter_ci_deadline_reaches_shared_http_and_consumes_outer_budget(self):
         from adp.network_git import _Budget

@@ -115,3 +115,15 @@ delegated REPORT/next-scope actions. It is not a second canonical task tracker.
 It requires the exact current merged base already local and never fetches objects.
 Issue editing/closure and automatic future execution remain undelegated. Synthetic code
 qualification is not genuine M8 runtime proof or integration authorization.
+
+The separately approved [accounting-expiry policy](operations/PERSONAL_RECOVERY.md)
+adds a closed one-use historical disposition and same-original-Issue episode.
+It preserves the original enrollment/marker/track index and canonical terminal
+parent, with an explicit linked successor in the same M1 namespace. It does not
+re-enroll, normalize STOP_UNSAFE, create a general recovery authority or dispatch
+workers. Retained source has a distinct unaccepted origin, followed by the same
+M7 scope/staged/SHA/project-CI/product/merge/acceptance gates. Track consumers
+resolve only the authenticated effective episode and cannot unblock later
+Issues from archival accounting. Same-host read-only Codex observation preserves
+machine/UID/PID-namespace authentication and returns BLOCKED where the client's
+native approved host route cannot provide the original context.

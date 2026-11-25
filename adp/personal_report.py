@@ -27,6 +27,7 @@ from .network_git import GitHubTarget
 from .policy_types import Effect, Operation, Request
 from .schema import encode, fields, key, require
 from .storage import atomic
+from .runtime_limits import bind_consent, network_operation
 
 
 class PersonalReportTransport(PersonalProductTransport):
@@ -89,7 +90,9 @@ class PersonalReport(PersonalProduct):
     def save_report(self, row):
         atomic(self.report_path, encode(row, LIMIT))
 
+    @network_operation("product.report_preview")
     def report_preview(self, *, approved=None):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: REPORT needs the current reader binding")
         now = self.clock()
         if approved is None:
             issued, expires, nonce = now, min(now + 300, self.personal.plan["window"]["expires_at"]), secrets.token_hex(16)
@@ -99,6 +102,7 @@ class PersonalReport(PersonalProduct):
             issued, expires, nonce = int(match[1]), int(match[2]), match[3]
         require(issued <= now < expires <= self.personal.plan["window"]["expires_at"] and expires - issued <= 300,
                 "Original report window expired")
+        bind_consent({"runtime_limits": self.service.limits.values(), "expires_at": expires}, now)
         track = self.c.track
         identity = typed(Identity, track.link["identity"])
         with self.service.bounded():
@@ -116,7 +120,8 @@ class PersonalReport(PersonalProduct):
                 + ("\nNext original Issue " + str(current["next_issue"]) + " needs separate scope/window approval."
                     if current["next_issue"] is not None else "\nTrack: " + current["status"] + "."))
             product_text("Product outcome", body)
-            view = {"operation": "REPORT", "setup": self.personal.intent["approval"], "repository": self.personal.plan["repository"],
+            view = {"operation": "REPORT", "runtime_limits": self.service.limits.values(),
+                "setup": self.personal.intent["approval"], "repository": self.personal.plan["repository"],
                 "revision": self.c.revision(), "source_tree": accepted["tree"], "source_ref": self.target.ref,
                 "facts": facts, "method": None, "title": None, "body": body,
                 "target": self.personal.intent["original"]["url"], "completion": digest(accepted),
@@ -136,7 +141,9 @@ class PersonalReport(PersonalProduct):
                     runtime=self.c.runtime) is not None and self._policy_final() is True,
                 "Current exact accepted completion and M3 authority required")
 
+    @network_operation("product.report_observation")
     def observed_report(self, row):
+        bind_consent(row["view"])
         owner = owned_repository(self.read, self.forge.repository, self.personal.repository_id)
         metadata = self.service.request("GET", self.target.api)
         require(owner == self.personal.plan["owner"] and type(metadata) is dict and metadata.get("node_id") == self.target.node_id,
@@ -170,7 +177,9 @@ class PersonalReport(PersonalProduct):
                 and _author(comment) == _author(before), "Accepted own report identity or metadata changed")
         return observed, comment
 
+    @network_operation("product.report")
     def report(self, *, reviewed, authorized, authorize_memory, assume_quiescence, confirm_rules):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: observe original REPORT only")
         require(authorized is True and authorize_memory is True and assume_quiescence is True and confirm_rules is True,
                 "Separate exact REPORT, memory, rules and administrative-quiescence approvals required")
         self.c.live()
@@ -186,6 +195,7 @@ class PersonalReport(PersonalProduct):
                     "before": data(issue), "after": None, "comment": None}
                 immutable(self.report_path, row)
             require(row["approval"] == reviewed, "Only the original report may reconcile")
+            bind_consent(row["view"])
             self.active = row
             actions = self.journal.inspect()["state"]["execution"]["actions"]
             if row["action"] not in actions:

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from adp.discovery_github import Response
 from adp.errors import ADPError
 from adp.personal_publication import OriginalRead, PersonalPublication
+from adp.runtime_limits import DEFAULTS
 from personal_fixtures import PersonalFixture
 
 
@@ -20,6 +21,7 @@ class PersonalPublicationObservationTests(PersonalFixture):
         pub.personal = SimpleNamespace(plan={"issue": 1, "repository": {"name": self.name}})
         pub.target = SimpleNamespace(api=self.prefix)
         pub.read, pub.clock = transport, lambda: self.now
+        pub.service = SimpleNamespace(limits=DEFAULTS)
         return pub, capture.observed
 
     def test_targeted_receipts_are_the_actual_validated_original_and_detect_changes(self):

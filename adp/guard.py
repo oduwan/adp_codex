@@ -94,7 +94,30 @@ class ProgressGuard:
         if item["mode"] in ("unsafe", "operator"):
             kind = DecisionKind.STOP_UNSAFE if item["mode"] == "unsafe" else DecisionKind.OPERATOR_DECISION_REQUIRED
             reason = item["reason"]
+        from .accounting_policy import entry
+        continuation = entry(state)
+        if continuation is not None and task["key"] == continuation["child_task"] and kind == DecisionKind.ALLOW:
+            if not continuation["window"]["issued_at"] <= self._now() < continuation["window"]["expires_at"]:
+                kind, reason = DecisionKind.OPERATOR_DECISION_REQUIRED, "The distinct accounting continuation window expired; never renew it"
+            elif not self._qualified_accounting(state, task):
+                kind, reason = DecisionKind.OPERATOR_DECISION_REQUIRED, "The exact accounting episode activation/provenance is unverified"
         return Decision(kind, reason, self._baseline(identifier, state, task, item))
+
+    def _qualified_accounting(self, state, task):
+        from .accounting_policy import entry
+        relation = entry(state)
+        if relation is None or task["key"] != relation["child_task"]:
+            return True
+        verify = getattr(self.authority, "qualify_accounting", None)
+        if not callable(verify) or not callable(getattr(self.authority, "fence_accounting", None)):
+            return False
+        try:
+            return verify(state, task) is True
+        except (ADPError, OSError, KeyError, ValueError, TypeError, AttributeError):
+            return False
+
+    def _accounting_fence(self):
+        require(self.authority.fence_accounting() is True, "Accounting episode admission expired or lost provenance")
 
     def _snapshot(self, task_id: str, identifier: str) -> tuple[dict, dict, dict]:
         inspected = self.memory.inspect()
@@ -109,17 +132,25 @@ class ProgressGuard:
         return self._decision(identifier, *self._snapshot(task_id, identifier))
 
     def _change(self, task_id: str, identifier: str,
-                transition: Callable[[dict, dict, dict], T]) -> tuple[T, Decision]:
+                transition: Callable[[dict, dict, dict], T], *, _admission=False) -> tuple[T, Decision]:
         with locked(self.memory.control):
             head, state, tasks = self.memory._start()
             task = self.memory._task(tasks, task_id)
             item = self._get(state, task, identifier)
             before = encode(item)
+            previous = copy.deepcopy(item)
             value = transition(state, task, item)
             if encode(item) != before:
+                from .accounting_policy import observe
+                observe(state, task, previous, item)
                 item["sequence"] += 1
                 record(item, identifier, self.memory.config.identity)
-                self.memory._checkpoint(head, state, tasks)
+                from .accounting_policy import entry
+                relation = entry(state)
+                if _admission and value is not None and relation is not None and task["key"] == relation["child_task"]:
+                    self.memory._checkpoint(head, state, tasks, _fence=self._accounting_fence)
+                else:
+                    self.memory._checkpoint(head, state, tasks)
             return value, self._decision(identifier, state, task, item)
 
     def _verify(self, evidence: Attestation | None, purpose: str, subject: str,
@@ -228,7 +259,7 @@ class ProgressGuard:
             if bounded:
                 item["mode"] = "running"
             return token
-        token, decision = self._change(task_id, identifier, transition)
+        token, decision = self._change(task_id, identifier, transition, _admission=True)
         if token is None:
             raise GuardRefusal(decision)
         return Permit(token, Decision(DecisionKind.ALLOW, "One exact bounded reservation; no execution authority granted",
@@ -342,6 +373,8 @@ class ProgressGuard:
                 self._active(state, task, item, permit.token)
                 if input_error is not None:
                     raise input_error
+                if measured.progress is not None:
+                    require(self._qualified_accounting(state, task), "Unqualified accounting episode cannot attest new progress")
                 measured_data = supplied
                 subject = digest({"baseline": asdict(self._baseline(identifier, state, task, item)),
                                   "permit": permit.token, "observation": measured_data})
@@ -370,31 +403,32 @@ class ProgressGuard:
         """Acknowledge interrupted/stale work as UNKNOWN; never silently retry it."""
         string(evidence_reference)
         def transition(state: dict, task: dict, item: dict) -> None:
-            if item["mode"] in ("unsafe", "operator"):
-                raise GuardRefusal(self._decision(identifier, state, task, item))
-            active = item["active"]
-            require(active is not None, "There is no reserved attempt to abandon")
-            expired = self._now() < active["started"] or self._now() > active["deadline"]
-            measured = data(Observation(Outcome.UNKNOWN, (evidence_reference,), tuple(item["unresolved"])))
-            self._account(item, active["action"], measured, False)
-            item["last_event"] = "attempt"
-            item["last"] = {"context": active["context"], "action": active["action"],
-                            "observation": measured, "counters": copy.deepcopy(item["counters"])}
-            item["active"] = None
-            if expired:
-                self._terminal(item, "An interrupted attempt exceeded containment; operator disposition required", unsafe=True)
-            elif active["bounded"]:
-                if item["forensic_round"] >= 2:
-                    self._terminal(item, "Second bounded proof interrupted; operator decision required")
-                else:
-                    item["mode"] = "forensic"
-                    item["reason"] = "Interrupted bounded proof needs the final independent reassessment"
-                    item["request"] = None
-                    item["plan"] = None
-            else:
-                self._threshold(item)
+            self._abandon_transition(state, task, item, identifier, evidence_reference)
         _, decision = self._change(task_id, identifier, transition)
         return decision
+
+    def _abandon_transition(self, state, task, item, identifier, evidence_reference):
+        """Existing lock-held transition, shared with exact archival fencing."""
+        if item["mode"] in ("unsafe", "operator"):
+            raise GuardRefusal(self._decision(identifier, state, task, item))
+        active = item["active"]
+        require(active is not None, "There is no reserved attempt to abandon")
+        expired = self._now() < active["started"] or self._now() > active["deadline"]
+        measured = data(Observation(Outcome.UNKNOWN, (evidence_reference,), tuple(item["unresolved"])))
+        self._account(item, active["action"], measured, False)
+        item["last_event"] = "attempt"
+        item["last"] = {"context": active["context"], "action": active["action"],
+                        "observation": measured, "counters": copy.deepcopy(item["counters"])}
+        item["active"] = None
+        if expired:
+            self._terminal(item, "An interrupted attempt exceeded containment; operator disposition required", unsafe=True)
+        elif active["bounded"]:
+            if item["forensic_round"] >= 2:
+                self._terminal(item, "Second bounded proof interrupted; operator decision required")
+            else:
+                item.update(mode="forensic", reason="Interrupted bounded proof needs the final independent reassessment", request=None, plan=None)
+        else:
+            self._threshold(item)
 
     def request_forensic(self, task_id: str, identifier: str) -> ForensicRequest:
         def transition(state: dict, task: dict, item: dict) -> dict:

@@ -217,12 +217,17 @@ M1 state/task versions, M2 guard schemas/counters/migration and M3 plans are unc
 
 There are at most 16 selected repositories and 256 combined proposed tasks,
 256 issues/PRs per inventory, 20 pages per endpoint, 2048 total requests,
-100 items per page, 1 MiB per API response, 30 seconds per HTTP request and
+100 items per page, 1 MiB per API response and
 16 MiB per normalized snapshot/track. Untrusted text is limited to 64 KiB per
 body. Native relationships/comments are bounded at 256 per issue. Each candidate
 retains at most eight progress records, eight reviews, eight issue observation
 digests and 64 PR HEAD observations. Capacity exhaustion refuses rather than
 discarding accepted evidence. No unbounded diagnostic log is stored.
+
+Live HTTP consumes the centralized [runtime profile](operations/RUNTIME_LIMITS.md),
+which can tighten the adapter's data-inventory ceiling: defaults are10 seconds
+per request,120 seconds and128 requests per outer operation. Unknown/incomplete
+observations never become acceptance or authority.
 
 Qualification uses synthetic API responses and disposable Git remotes/worktrees.
 It exercises pagination, rate/permission failures, native versus inferred edges,

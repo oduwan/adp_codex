@@ -76,6 +76,17 @@ def frontend_environment():
     return {name: os.environ[name] for name in names if name in os.environ}
 
 
+def _host_identity():
+    """Actual existing host fingerprint; observation never launches a worker."""
+    machine = Path("/etc/machine-id")
+    identity = machine.read_bytes() if machine.exists() else platform.node().encode()
+    try:
+        namespace = os.readlink('/proc/self/ns/pid').encode()
+    except OSError:
+        namespace = b'unsupported'
+    return hashlib.sha256(identity + str(getattr(os, 'getuid', lambda: 'unsupported')()).encode() + namespace).hexdigest()
+
+
 class CodexExecRuntime:
     """One foreground CLI process per request. No daemon or blind redispatch.
 
@@ -89,13 +100,7 @@ class CodexExecRuntime:
         self.clock = clock or time.monotonic
         self._live = {}
         self._mutex = threading.RLock()
-        machine = Path("/etc/machine-id")
-        identity = machine.read_bytes() if machine.exists() else platform.node().encode()
-        try:
-            namespace = os.readlink('/proc/self/ns/pid').encode()
-        except OSError:
-            namespace = b'unsupported'
-        self.host = hashlib.sha256(identity + str(getattr(os, 'getuid', lambda: 'unsupported')()).encode() + namespace).hexdigest()
+        self.host = _host_identity()
         self._capabilities = None
         self.supervisor = Path(__file__).with_name("execution_supervisor.py")
 
@@ -123,7 +128,11 @@ class CodexExecRuntime:
 
     def _read(self, request_id):
         path = self._path(request_id)
-        return load_json(path, 32768) if path.exists() else None
+        if not path.exists():
+            from .personal_read_frame import consumed
+            consumed(path)
+            return None
+        return load_json(path, 32768)
 
     def _save(self, request_id, record):
         atomic(self._path(request_id), encode(record, 32768))
@@ -140,6 +149,8 @@ class CodexExecRuntime:
     def _stop_receipt(self, request_id, record):
         path = self.directory / (request_id + ".stop.json")
         if not path.exists():
+            from .personal_read_frame import consumed
+            consumed(path)
             return None
         observed = load_json(path, 2048)
         from .schema import fields
@@ -164,6 +175,8 @@ class CodexExecRuntime:
         return self._observation(request_id, record)
 
     def dispatch(self, request: WorkerRequest):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         require(type(request) is WorkerRequest and 1 <= request.seconds <= 300, "Invalid bounded worker request")
         require(request.deadline is None or type(request.deadline) is int and request.deadline > time.time(),
                 "Worker reservation deadline is absent or expired")

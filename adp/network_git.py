@@ -30,6 +30,8 @@ from .policy_adapters import GitPolicyAdapter
 from .policy_schema import branch
 from .policy_types import Effect, Operation, Ref
 from .schema import decode, encode, require, string
+from .runtime_limits import (Budget as _Budget, current_budget, operation_scope,
+                            measurements_for, network_operation, settings_for, work_span)
 
 ZERO = "0" * 40
 REF_QUERY = """query ADPRef($id: ID!, $ref: String!) {
@@ -88,19 +90,16 @@ class NetworkUncertain(OSError):
     """No response text, URL, credential or arbitrary external exception escapes."""
 
 
-@dataclass
-class _Budget:
-    end: float
-    calls: int = 0
-
-
 class GitHubCAS:
     """Authenticated observations and immutable upload; rights remain external."""
-    def __init__(self, target: GitHubTarget, transport: HTTPTransport, *, personal=False):
+    def __init__(self, target: GitHubTarget, transport: HTTPTransport, *, personal=False, runtime_settings=None):
         require(type(target) is GitHubTarget, "Select a typed pinned GitHub target")
         require(callable(getattr(transport, "bind_repository", None)), "A repository-ID-confined authenticated transport is required")
         transport.bind_repository(target.node_id, target.database_id)
         self.target, self.transport = target, transport
+        self.runtime_settings = settings_for(transport, runtime_settings)
+        self.limits = self.runtime_settings.limits
+        self.measurements = measurements_for(self)
         self._budget = contextvars.ContextVar("adp-network-budget", default=None)
         self.control = None
         self._live_unknown = False
@@ -153,22 +152,37 @@ class GitHubCAS:
         self._live_unknown = False
 
     @contextmanager
-    def bounded(self):
-        token = self._budget.set(_Budget(time.monotonic() + 45))
-        try:
-            yield
-        finally:
-            self._budget.reset(token)
+    def bounded(self, *, name="network", seconds=None):
+        with operation_scope(self.runtime_settings, name=name, seconds=seconds,
+                             budget=self._budget.get() or current_budget(), measurements=self.measurements) as budget:
+            token = self._budget.set(budget)
+            try:
+                yield budget
+            finally:
+                self._budget.reset(token)
 
-    def request(self, method, path, payload=None, *, missing=False):
+    def request(self, method, path, payload=None, *, missing=False, seconds=None):
+        if self._budget.get() is None and current_budget() is None:
+            with self.bounded(name="network.request"):
+                return self._request(method, path, payload, missing=missing, seconds=seconds)
+        return self._request(method, path, payload, missing=missing, seconds=seconds)
+
+    def _request(self, method, path, payload=None, *, missing=False, seconds=None):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         self._check_stop()
-        budget = self._budget.get() or _Budget(time.monotonic() + 20)
-        budget.calls += 1
+        budget = self._budget.get() or current_budget()
+        budget.tighten(self.limits)
+        started = time.monotonic()
+        deadline = budget.request_deadline(seconds)
         left = budget.end - time.monotonic()
-        require(budget.calls <= 128 and left > 0, "Network operation exhausted its fixed budget")
         self._start_request()
         try:
-            response = self.transport.request(method, path, payload, seconds=min(5.0, left))
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, "Network request exhausted its fixed budget")
+            budget.transport_calls += 1
+            with work_span("network.transport"):
+                response = self.transport.request(method, path, payload, seconds=remaining)
         except UnconfirmedValidation as exc:
             raise ADPError("UNKNOWN: unconfirmed network transport stop requires operator reconciliation") from None
         except NetworkTransportError:
@@ -179,7 +193,11 @@ class GitHubCAS:
         except Exception:
             # An arbitrary transport exception does not prove a process stopped.
             raise NetworkUncertain("UNKNOWN: trusted network transport did not confirm a response") from None
+        finally:
+            budget.latencies.append(time.monotonic() - started)
         self._confirmed_stop()
+        require(time.monotonic() < deadline, "Network request exhausted its fixed budget")
+        budget.check()
         require(type(response.status) is int and type(response.body) is bytes and len(response.body) <= 1048576,
                 "UNKNOWN: malformed or oversized network response")
         if missing and response.status == 404:
@@ -189,9 +207,10 @@ class GitHubCAS:
         try:
             wrapped = decode(b'{"value":' + response.body + b'}', 1048600)
             require(set(wrapped) == {"value"}, "Invalid response envelope")
-            return wrapped["value"]
         except ADPError:
             raise NetworkUncertain("UNKNOWN: malformed GitHub JSON response") from None
+        require(time.monotonic() < deadline, "Network request exhausted its fixed budget")
+        return wrapped["value"]
 
     def _repository(self, query, variables):
         raw = self.request("POST", "/graphql", {"query": query, "variables": {"id": self.target.node_id, **variables}})
@@ -204,12 +223,16 @@ class GitHubCAS:
                 "UNKNOWN: canonical GitHub repository binding changed")
         return repo
 
-    def refs(self):
+    def refs(self, *, expected=None):
+        if expected is not None:
+            require(type(expected) is tuple and len(expected) <= 4096 and all(type(r) is Ref for r in expected)
+                    and len({r.name for r in expected}) == len(expected), "UNKNOWN: invalid negative ref envelope")
         result = []
         with self.bounded() if self._budget.get() is None else _unchanged():
             for prefix in ("refs/heads/", "refs/tags/"):
                 after, cursors = None, set()
                 while True:
+                    before = len(result)
                     repo = self._repository(REFS_QUERY, {"prefix": prefix, "after": after})
                     connection = repo.get("refs")
                     require(type(connection) is dict and type(connection.get("nodes")) is list
@@ -219,22 +242,29 @@ class GitHubCAS:
                                 "UNKNOWN: malformed remote ref")
                         name = item.get("name")
                         branch(name)
-                        result.append(Ref(prefix + name, oid(item["target"].get("oid"))))
+                        observed = Ref(prefix + name, oid(item["target"].get("oid")))
+                        require(expected is None or observed in expected, "UNKNOWN: remote ref changed outside exact snapshot")
+                        result.append(observed)
                     require(len(result) <= 4096 and len({r.name for r in result}) == len(result), "UNKNOWN: duplicate/oversized ref inventory")
                     page = connection["pageInfo"]
                     require(type(page.get("hasNextPage")) is bool, "UNKNOWN: incomplete pagination")
                     if page["hasNextPage"] is False:
                         break
+                    require(expected is None or len(result) > before and any(r.name.startswith(prefix) and r not in result for r in expected),
+                            "UNKNOWN: ref paging cannot progress within the approved inventory")
                     after = page.get("endCursor")
                     string(after, 512)
                     require(after not in cursors, "UNKNOWN: repeated pagination cursor")
                     cursors.add(after)
-        return tuple(sorted(result, key=lambda r: r.name))
+        actual = tuple(sorted(result, key=lambda r: r.name))
+        require(expected is None or actual == expected, "UNKNOWN: incomplete or changed exact ref inventory")
+        return actual
 
-    def inspect_ref(self, *, writable=False):
+    @network_operation("network.inspect_ref", service=lambda self, **k: self)
+    def inspect_ref(self, *, writable=False, _bounded_personal=False):
         if self.personal:
             from .personal_rules import inspect_ref
-            return inspect_ref(self, writable=writable)
+            return inspect_ref(self, writable=writable, _bounded=_bounded_personal)
         return self._inspect_ref(writable=writable)
 
     def _inspect_ref(self, *, writable=False):
@@ -269,6 +299,7 @@ class GitHubCAS:
         require(type(result) is dict and result.get("sha") == sha, "UNKNOWN: remote object identity mismatch")
         return True
 
+    @network_operation("network.upload", service=lambda self, *a, **k: self)
     def upload(self, objects):
         for item in objects:
             response = self.request("POST", self.target.api + "/git/" + {"blob": "blobs", "tree": "trees", "commit": "commits"}[item.kind], item.payload)
@@ -299,7 +330,8 @@ class GitHubPolicyAdapter(GitPolicyAdapter):
 
     def _remote_refs(self, config):
         _endpoint(config, self.service.target)
-        return self.service.refs()
+        expected = getattr(self, "_publication_expected_refs", None)
+        return self.service.refs(expected=expected) if expected is not None else self.service.refs()
 
 
 def _endpoint(config, target):
@@ -420,27 +452,31 @@ class GitHubGitExecutionPort(GitExecutionPort):
             pass
         return ExternalObservation("UNKNOWN")
 
-    def submit(self, action, provider, plan, authorization, *, dispatch=None, validate=None):
+    def submit(self, action, provider, plan, authorization, *, dispatch=None, validate=None, admit_objects=None):
         if action["operation"] != Operation.PUSH:
             return super().submit(action, provider, plan, authorization)
         require(dispatch in self._dispatches, "Fresh one-use network dispatch capability required")
         action_id, claim = self._dispatches.pop(dispatch)
         require(claim == self._claim(action_id, action) and load_json(self._claim_path(action_id)) == claim,
                 "Network claim is missing, corrupt or belongs to another intent")
-        with self.service.bounded():
+        with self.service.bounded() as budget:
             require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
             if validate is not None:
                 validate()
-            require(self.service.inspect_ref(writable=True) == action["expected_target"], "Remote changed before immutable object transfer")
+            require(self.service.inspect_ref(writable=True, **({"_bounded_personal": True} if admit_objects is not None else {}))
+                    == action["expected_target"], "Remote changed before immutable object transfer")
             objects = (closure(self.root, action["revision"], self.service.known_commit, git_reader=self._git)
                        if self.bound_git_directory is not None else closure(self.root, action["revision"], self.service.known_commit))
             self._authorize(action, provider, plan, authorization)
+            if admit_objects is not None:
+                admit_objects(objects, budget)
             self.service.upload(objects)
             # Upload latency/source/ownership/policy drift cannot authorize late CAS.
             self._authorize(action, provider, plan, authorization)
             if validate is not None:
                 validate()
-            require(self.service.inspect_ref(writable=True) == action["expected_target"], "Remote changed before atomic CAS")
+            require(self.service.inspect_ref(writable=True, **({"_bounded_personal": True} if admit_objects is not None else {}))
+                    == action["expected_target"], "Remote changed before atomic CAS")
             try:
                 self.service.cas(action["expected_target"], action["revision"], action_id)
             except (ADPError, OSError):
