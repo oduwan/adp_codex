@@ -715,7 +715,9 @@ class PersonalCoordinator:
 
     def check_stage(self):
         row = self.record()
-        attempt = self.source_origin()["label"]
+        # Legacy lost-delivery accounting uses its original durable label,
+        # without introducing a new Worker observation or approval requirement.
+        attempt = self.source_origin(historical=True)["label"] if self.episode else row["developer"]
         if row["phase"] == "CHECKS":
             # Check observation uses a new guarded action at the actual new SHA.
             # It can remain pending without accepting the original requirement.

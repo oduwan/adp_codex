@@ -218,6 +218,8 @@ class Continuation:
         from .personal_track_preparation import unsigned_policy
         c = PersonalCoordinator.__new__(PersonalCoordinator)
         c.personal = temporary
+        from .policy_schema import validate_rules
+        validate_rules(c.rules())  # Existing capability envelope, before B.
         _, snapshot, claims = unsigned_policy(c)
         base["admission"] = {"policy_snapshot": data(snapshot), "policy_sources": [data(claim) for claim in claims], "completions": []}
         # The plan is unchanged by admission; its hash in operator claims must

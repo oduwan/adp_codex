@@ -634,7 +634,8 @@ class PersonalProduct:
         return permit
 
     def charge_ci(self, entry):
-        self.c.charge_check("post-pr:" + digest(entry["view"]))
+        if getattr(self.c, "episode", False):
+            self.c.charge_check("post-pr:" + digest(entry["view"]))
         run = self.c.record()
         reservation = entry["reservation"]
         if "observation_before" not in reservation:

@@ -25,7 +25,7 @@ from .personal_archive import _seals, _stopped, _terminal, proposal
 from .personal_enrollment import governance, selection
 from .personal_storage import (LIMIT, PersonalBlocked, create_private, load_state, read_private)
 from .policy_schema import branch, product_path
-from .schema import bundle, encode, fields, key, require
+from .schema import bundle, encode, fields, key, require, string
 from .storage import atomic, locked, sync_directory
 
 
@@ -179,9 +179,12 @@ class Recovery:
         require(choices["candidate_reviewers"] >= 1 and choices["code_reviewers"] == 2
                 and choices["maximum_check_observations"] >= 2 and choices["worker_seconds"] >= 1,
                 "Fresh staged/code/product review and actual check capacity are mandatory")
-        require(type(choices["commit_message"]) is str and choices["commit_message"].strip()
-                and len(choices["commit_message"]) <= 256 and type(choices["commit_body"]) is str
-                and len(choices["commit_body"]) <= 2048, "Select bounded real project commit operands")
+        string(choices["commit_message"], 256)
+        require(choices["commit_message"].strip() and type(choices["commit_body"]) is str
+                and len(choices["commit_body"]) <= 2048
+                and all(ord(c) >= 32 or c == "\n" for c in choices["commit_body"]), "Select bounded real project commit operands")
+        require("{" not in choices["commit_body"] and "}" not in choices["commit_body"],
+                "Literal commit-body braces are unsupported by the existing M3 template port; do not reinterpret project text")
         from .personal_episode import blueprint_ready
         blueprint_ready(self.c, choices)
         candidate_diff(self.personal)

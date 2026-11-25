@@ -139,7 +139,7 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, pu
     if args.enroll_command not in ARCHIVAL + RECOVERY + ("inspect", "plan", "apply", "capabilities"):
         try:
             port = cli_port(retained(args, resolve=False), publication_transport)
-        except (ADPError, OSError, KeyError, TypeError, ValueError):
+        except (ADPError, OSError, KeyError, TypeError, ValueError, AttributeError):
             pass  # The ordinary closed subject validation below reports it.
     binding = READ_TRANSPORT.set(port) if port is not None else None
     try:
