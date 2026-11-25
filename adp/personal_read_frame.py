@@ -62,12 +62,14 @@ def _inputs(owner, observed, *, product):
             name = digest(row["path"]) + ".json"
             files["adoption-file:" + name] = _private_digest(c.personal.state / "adoption-files" / name)
     root = c.personal.feature
-    return digest({"consent": deepcopy(owner.active) if product else owner.record(_observed=observed), "run": c.record(),
+    consent = deepcopy(owner.active) if product else owner.record(_observed=observed)
+    sealed = digest({"consent": consent, "run": c.record(),
         "workers": workers, "private": files,
         "head": owner.port._value("rev-parse", "HEAD"), "tree": owner.port._value("--no-replace-objects", "rev-parse", "HEAD^{tree}"),
         "ref": owner.port._value("symbolic-ref", "HEAD"), "dirty": owner.port._value("status", "--porcelain", "--untracked-files=all"),
         "physical": administration(root), "admin": admin_seal(root), "governance": governance(root),
         "credential": owner.transport.credential_binding})
+    return sealed, deepcopy(consent)
 
 
 def forbid_writes():
@@ -149,15 +151,19 @@ def _live(owner, *, product=False):
             and closing.archive == first.archive and closing.consent == first.consent,
             "Accounting evidence changed during final publication read")
     closing.closed = True
-    require(_inputs(owner, closing.active[2], product=product) == inputs,
+    final_inputs = _inputs(owner, closing.active[2], product=product)
+    require(final_inputs == inputs,
             "Source, review, receipt, credential or consent changed during observation")
+    actual_consent = final_inputs[1]
+    require(result == (actual_consent["view"] if product else actual_consent),
+            "Semantic result differs from the actual sealed consent")
     # current() normally rejects a closed frame; this last fence is explicitly
     # fresh and does not reopen one or return a cached owner/clock verdict.
     from .personal_episode import same_observation
     same_observation(closing.active[2], c.memory.inspect())
     c.episode_fence()
     now = c.clock()
-    view = result if product else result["view"]
+    view = actual_consent["view"]
     require(type(now) is int and view["issued_at"] <= now < view["expires_at"],
             "Operation consent expired during final observation")
     return result

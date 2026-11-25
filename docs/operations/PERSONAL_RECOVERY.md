@@ -179,6 +179,8 @@ proof with no subsequent semantic body. A protected bounded input seal before
 the body and after closing compares the exact consent, current run/worker rows,
 child runtime/stop/progress/adoption inputs, source/index/ref/admin/governance
 and credentials without repeating authority checks. Changed inputs refuse.
+The semantic result must exactly equal the actual final sealed consent (or its
+product view); the final expiry check uses that matched consent's own window.
 Every nested factual lookup still reads current canonical ownership,
 state/tasks/inbox and checks time/revocation. Defensive copies prevent a reader
 from modifying the retained inputs. The frame is bound to the exact objects,

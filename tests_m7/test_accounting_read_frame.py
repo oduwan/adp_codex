@@ -43,13 +43,15 @@ class AccountingReadFrameTests(unittest.TestCase):
             fence()
             return {"lineage": inputs["raw"]}, {"old-context"}, inspect()
         personal._active_view = full
-        publication = SimpleNamespace(c=c)
-        probe = patch("adp.personal_read_frame._inputs", side_effect=lambda *args, **kwargs: deepcopy(inputs["seal"]))
+        publication = SimpleNamespace(c=c, consent={"view": {"issued_at": 50, "expires_at": 150}})
+        probe = patch("adp.personal_read_frame._inputs", side_effect=lambda owner, *args, **kwargs:
+            (deepcopy(inputs["seal"]), deepcopy(owner.active if kwargs["product"] else owner.consent)))
         probe.start();self.addCleanup(probe.stop)
         return c, publication, observed, inputs
 
     def test_independent_full_boundaries_fresh_nested_reads_and_no_cross_call_cache(self):
         c, p, _, inputs = self.fixture()
+        p.consent["publication"] = "exact"
         def read(**kwargs):
             self.assertEqual(kwargs, {"review": True})
             inputs["events"].append("BODY")
@@ -237,3 +239,9 @@ class AccountingReadFrameTests(unittest.TestCase):
             with self.assertRaises(ADPError):_private_digest(p)
             fifo = Path(temporary) / "fifo";os.mkfifo(fifo, 0o600)
             with self.assertRaises(ADPError):_private_digest(fifo)
+
+    def test_semantic_result_cannot_use_unsealed_replacement_consent(self):
+        c, p, _, _ = self.fixture()
+        p.consent = {"view": {"issued_at": 50, "expires_at": 150}}
+        p._live_current = lambda **kwargs: {"view": {"issued_at": 50, "expires_at": 999}}
+        with self.assertRaises(ADPError):publication_live(p)
