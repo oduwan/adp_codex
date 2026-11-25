@@ -1,6 +1,6 @@
 ---
 name: adp-codex
-description: Guide first-use enrollment and finite ADP operations for an explicitly selected GitHub project. Use for ADP setup, inspection, status, doctor, preview, run, resume, or handoff.
+description: Guide first-use enrollment and finite ADP operations for an explicitly selected GitHub project. Use for ADP setup, inspection, status, doctor, preview, run, resume, handoff, or explicitly requested accounting-expiry observation and recovery.
 ---
 
 # ADP Codex
@@ -13,7 +13,9 @@ and public release are not implemented here.
 ## Start
 
 Use `"$HOME/.local/share/adp-codex-install/current/bin/adp"` for every ADP
-command below. First run `adp codex capabilities`. Require a single JSON result
+command below. For read-only archival observation, first use the static `adp
+personal capabilities` below and do not probe Codex. For other operations first
+run `adp codex capabilities`. Require a single JSON result
 with `interface: "adp-codex"`, `schema_version: 1`, and the requested action in
 `actions`. A missing launcher, incompatible result or failing probe needs the
 paired [managed installation or installer verify](../../docs/operations/INSTALL_ADP.md).
@@ -145,6 +147,29 @@ must still produce an actual TicketPreparer READY packet. Never re-enroll an
 old Issue or reset its counters. Stop for unknown process/effect evidence,
 changed scope, missing authority or M2 refusal. Do not infer pilot, installation,
 release or engineering-merge permission from this development capability.
+
+For a separately requested accounting-expiry disposition, require the recovery
+verbs in capabilities and follow the [explicit recovery protocol](../../docs/operations/PERSONAL_RECOVERY.md).
+Start with `archive-observe`; it is read-only and needs the original trusted
+UID/machine/PID namespace. A sandbox mismatch or inaccessible receipt is BLOCKED.
+If the Codex client exposes a native host shell approval facility, ask separately
+to run **only the exact read-only managed launcher command** there; the command
+must still verify its actual host. Never spoof identity, copy receipts, change
+permissions, use sudo/nsenter or invent a service. An unavailable native route
+stays BLOCKED. Do not retry a write through this observation approval.
+
+Show the permanent UNKNOWN/STOP_UNSAFE overdue-accounting severity and UNKNOWN
+worker timeliness. Guard archival, original M1 UNKNOWN delivery, the one finite
+same-Issue episode, candidate copying and later run each need their own current
+preview and explicit operator reply. Preserve original enrollment, counters,
+evidence and terminal latch; no re-enrollment or general unsafe bypass. Setup
+and adoption dispatch no worker. Retained files remain unaccepted through fresh
+independent scope, staged-diff and committed-SHA reviews, project CI and all
+normal product acceptance/merge gates. Use only the exact recovery verb for a
+known interrupted intent, never a replacement window or blind retry. Existing
+tracks and signed mode do not acquire this exception automatically. Engineering
+qualification grants no live M8 observation, archival, installation, source
+promotion, worker, merge, acceptance or next-Issue authority.
 
 For the existing independently signed backend, keep the following flow:
 

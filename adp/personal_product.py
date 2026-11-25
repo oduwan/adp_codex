@@ -39,6 +39,7 @@ from .project_validation_github import GitHubEvidenceSource
 from .project_validation_types import EvidenceGate, EvidencePolicy, Phase, PullIdentity, RequiredCheck
 from .schema import encode, fields, key, require, string
 from .storage import atomic
+from .runtime_limits import bind_consent, consent_limits, consent_scope, measured, network_operation
 
 TOKEN = re.compile(r"product1\.([0-9]{1,12})\.([0-9]{1,12})\.([0-9a-f]{32})\.([0-9a-f]{64})\Z")
 ASSENT = "I reviewed the current supplied project governance and approve this exact operation without waiving any project requirement."
@@ -111,6 +112,8 @@ class PersonalProduct:
         return row
 
     def save(self, row):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         create_private(self.personal.state)
         atomic(self.path, encode(row, LIMIT))
 
@@ -216,6 +219,7 @@ class PersonalProduct:
                 and str(matches[0]["id"]) == identity["id"], "Alternate or duplicate source PR")
         return item
 
+    @network_operation("product.proposed")
     def proposed(self, operation, *, approved=None, title=None, body=None, method=None, delegate=False):
         require(operation in ("PR", "MERGE"), "Unsupported product operation")
         now = self.clock()
@@ -227,6 +231,7 @@ class PersonalProduct:
             issued, expires, nonce = int(match[1]), int(match[2]), match[3]
         require(0 <= issued <= now < expires and 0 < expires - issued <= 300
                 and expires <= self.personal.plan["window"]["expires_at"], "Original product window expired")
+        bind_consent({"runtime_limits": self.service.limits.values(), "expires_at": expires}, now)
         with self.service.bounded():
             seal = self.local()
             facts = self.facts(merge=operation == "MERGE")
@@ -252,7 +257,8 @@ class PersonalProduct:
                         "Native merge requires observed base ancestry; no fetch or rewrite")
                 if item["draft"] or item.get("mergeable") is not True or item.get("mergeable_state") != "clean":
                     return {"status": "WAITING_HUMAN_APPROVAL", "reason": "PR_READINESS_OR_NATIVE_MERGEABILITY", "approval": None}
-            view = {"operation": operation, "setup": self.personal.intent["approval"], "repository": self.personal.plan["repository"],
+            view = {"operation": operation, "runtime_limits": self.service.limits.values(),
+                "setup": self.personal.intent["approval"], "repository": self.personal.plan["repository"],
                 "issue_id": self.personal.plan["issue_id"], "original_digest": self.personal.plan["original_digest"],
                 "original_observation": original, "revision": self.c.revision(), "source_ref": self.target.ref,
                 "source_tree": self.port._value("rev-parse", "HEAD^{tree}"), "review_binding": seal,
@@ -263,8 +269,12 @@ class PersonalProduct:
                 "validation": self.validation_binding() if operation == "MERGE" else None,
                 "product_review": self.record()["review"] if operation == "MERGE" else None,
                 "policy_assent": ASSENT, "administrative_quiescence_warrant": WARRANT,
-                "merge_envelope": ENVELOPE, "generation": self.c.memory.inspect()["state"]["generation"],
-                "checkpoint": self.c.memory.inspect()["local_head"], "issued_at": issued, "expires_at": expires, "nonce": nonce}
+                "merge_envelope": ENVELOPE}
+            # Observe after all preceding callbacks, at the original first-read
+            # position. Generation and checkpoint belong to this same snapshot.
+            observed = self.c.memory.inspect()
+            view.update(generation=observed["state"]["generation"], checkpoint=observed["local_head"],
+                issued_at=issued, expires_at=expires, nonce=nonce)
             if "availability" in facts["policy"]:
                 view["plan_disabled_rules_assent"] = PLAN_ASSENT
             binding = self.transport.credential_binding
@@ -272,9 +282,19 @@ class PersonalProduct:
         return {"status": "WAITING_HUMAN_APPROVAL" if operation == "MERGE" and not delegate else operation + "_PROPOSED",
             "result": view, "approval": self.token(view, binding), "binding": binding}
 
+    @measured("product.live")
     def live(self, *, genuine=False):
+        if self.c.episode and not genuine:
+            from .personal_read_frame import product_live
+            return product_live(self)
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
+        return self._live_current(genuine=genuine)
+
+    def _live_current(self, *, genuine=False):
         require(self.active is not None, "Exact operation consent required")
         view = self.active["view"]
+        bind_consent(view, self.clock())
         self.local(genuine=genuine)
         require(view["issued_at"] <= self.clock() < view["expires_at"]
                 and view["generation"] == self.c.memory.inspect()["state"]["generation"]
@@ -285,7 +305,9 @@ class PersonalProduct:
         return view
 
     def write_authorized(self):
-        view = self.live()
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
+        view = self._live_current()
         require(self._writing == self.active["action"], "Fresh one-use product dispatch required")
         row = self.journal.inspect()["state"]["execution"]["actions"].get(self._writing)
         require(row is not None and row["status"] == "SUBMITTED" and row["operation"] == view["operation"], "Canonical submitted effect differs")
@@ -324,7 +346,7 @@ class PersonalProduct:
         state = self.c.memory.inspect()
         task = Task(self.personal.repository_id, self.c.task_id, self.target.branch.split("/")[-1], self.c.revision(), self.target.ref,
             permit.decision.baseline.requirement_id, state["state"]["generation"], state["state"]["progress_guard"]["task_epochs"][key(self.c.task_id)],
-            state["tasks"][key(self.c.task_id)]["iteration"], ("worker:" + self.c.record()["developer"],))
+            state["tasks"][key(self.c.task_id)]["iteration"], self.c.source_authors())
         return provider, task
 
     def authorize(self, provider, plan, qualifications=Qualifications()):
@@ -346,6 +368,7 @@ class PersonalProduct:
         require(callable(getattr(self, "_policy_final", None)) and self._policy_final() is True,
                 "Current exact M3 final authorization required")
 
+    @network_operation("product.intent")
     def intent(self, operation, *, reviewed, authorized, authorize_memory, assume_quiescence, confirm_rules,
                title=None, body=None, method=None, delegate=False, accept_envelope=False, accept_plan_unavailable=False):
         require(authorized is True and authorize_memory is True and assume_quiescence is True and confirm_rules is True,
@@ -374,6 +397,7 @@ class PersonalProduct:
                     and body in (None, old["view"]["body"]) and method in (None, old["view"]["method"]),
                     "Resume cannot change approved effect operands")
             self.active = old
+            bind_consent(old["view"])
             with self.service.bounded():
                 self.local(); self.facts(merge=operation == "MERGE")
                 self.live(genuine=True)
@@ -399,7 +423,7 @@ class PersonalProduct:
                         permit = Permit(item["active"]["id"], self.guard.inspect(self.c.task_id, old["requirement"]))
                     else:
                         permit = self.guard.begin(self.c.task_id, old["requirement"], Action("personal:coordinator", ActionKind.CHECK,
-                            old["action"], "One authenticated exact product effect", seconds=min(45, old["view"]["expires_at"] - self.clock())))
+                            old["action"], "One authenticated exact product effect", seconds=min(consent_limits(old["view"]).operation_timeout_seconds, old["view"]["expires_at"] - self.clock())))
                 old["reservation"] = data(permit); self.save_intent(old)
             permit = typed(Permit, old["reservation"])
             if operation == "MERGE":
@@ -498,6 +522,7 @@ class PersonalProduct:
         execution = next((r for r in reversed(row["execution"]) if r["view"]["operation"] == "CI"), None)
         return tuple(typed(RequiredCheck, c) for c in execution["checks"]) if execution is not None else ()
 
+    @network_operation("product.execution_preview")
     def execution_preview(self, operation, *, approved=None, accept_native=False, confirm_no_checks=False):
         require(operation in ("CI", "REVIEW", "CORRECT"), "Unsupported one-issue execution")
         now = self.clock()
@@ -509,6 +534,7 @@ class PersonalProduct:
             issued, expires, nonce = now, min(now + 300, self.personal.plan["window"]["expires_at"]), secrets.token_hex(16)
         require(0 <= issued <= now < expires and 0 < expires - issued <= 300
                 and expires <= self.personal.plan["window"]["expires_at"], "Original execution window expired")
+        bind_consent({"runtime_limits": self.service.limits.values(), "expires_at": expires}, now)
         with self.service.bounded():
             seal = self.local()
             facts = self.facts()
@@ -517,7 +543,8 @@ class PersonalProduct:
                 self.qualified()
             if operation == "CORRECT":
                 require(self.correction_feedback() is not None, "Only actual in-scope failure/rejection permits correction")
-            view = {"operation": operation, "setup": self.personal.intent["approval"], "revision": self.c.revision(),
+            view = {"operation": operation, "runtime_limits": self.service.limits.values(),
+                "setup": self.personal.intent["approval"], "revision": self.c.revision(),
                 "source_tree": self.port._value("rev-parse", "HEAD^{tree}"), "source_ref": self.target.ref,
                 "facts": facts, "review_binding": seal, "generation": self.c.memory.inspect()["state"]["generation"],
                 "administration": digest(administration(self.personal.feature)), "pull": self.record()["pull"],
@@ -530,6 +557,7 @@ class PersonalProduct:
             binding = self.transport.credential_binding
         return {"status": operation + "_PROPOSED", "result": view, "binding": binding, "approval": self.token(view, binding)}
 
+    @network_operation("product.execute_ci", enabled=lambda self, operation, **k: operation == "CI")
     def execute(self, operation, *, reviewed, authorized, accept_native=False, confirm_no_checks=False):
         require(authorized is True, "Separately authorize this finite personal execution")
         with invocation_lock(self.c.memory.control):
@@ -550,40 +578,45 @@ class PersonalProduct:
                     "freshness": "NOT_REOBSERVED", "observed_revision": entry["view"]["revision"],
                     "execution": "NOT_REPEATED"}
             require(entry["view"]["issued_at"] <= self.clock() < entry["view"]["expires_at"], "Original execution consent expired")
-            if operation == "CI":
-                require(entry["view"]["revision"] == self.c.revision(), "Original CI consent source changed")
-                result = self.observe_ci(entry)
-            else:
-                try:
-                    if operation == "REVIEW":
-                        require(entry["view"]["revision"] == self.c.revision(), "Original review consent source changed")
-                        with self.service.bounded():
-                            require(self.facts() == entry["view"]["facts"], "Current product policy or base changed")
-                            self.pull(expected_base=entry["view"]["facts"]["base_sha"])
-                        require(self.validation_binding() == entry["view"]["validation"], "Approved CI binding changed")
-                        worker = self.c.resume_product_review(entry)
-                        if worker is None:
-                            self.local()
-                            context = self.review_context()
-                            worker = self.c.workers.execute("product", context, self.personal.feature)
-                        self.local()  # Normal approval must hold after accounting.
-                        observed = self.c.workers.actual(worker, accounted=True)
-                        row = self.record()
-                        row["review"] = worker["request"]["id"]; self.save(row)
-                        result = {"status": "PRODUCT_REVIEWED" if observed.result.approved else "REQUIRES_CORRECTION", "revision": self.c.revision()}
-                    else:
-                        result = self.correct(entry)
-                finally:
-                    self.c.stop_workers()
-            row = self.record()
-            retained = next(r for r in row["execution"] if r["approval"] == reviewed)
-            retained.update(phase="COMPLETE", result=result); self.save(row)
-            return result
+            with consent_scope(entry["view"]):
+                return self._execute_selected(operation, entry, reviewed)
+
+    def _execute_selected(self, operation, entry, reviewed):
+        if operation == "CI":
+            require(entry["view"]["revision"] == self.c.revision(), "Original CI consent source changed")
+            result = self.observe_ci(entry)
+        else:
+            try:
+                if operation == "REVIEW":
+                    require(entry["view"]["revision"] == self.c.revision(), "Original review consent source changed")
+                    with self.service.bounded():
+                        require(self.facts() == entry["view"]["facts"], "Current product policy or base changed")
+                        self.pull(expected_base=entry["view"]["facts"]["base_sha"])
+                    require(self.validation_binding() == entry["view"]["validation"], "Approved CI binding changed")
+                    worker = self.c.resume_product_review(entry)
+                    if worker is None:
+                        self.local()
+                        context = self.review_context()
+                        worker = self.c.workers.execute("product", context, self.personal.feature)
+                    self.local()  # Normal approval must hold after accounting.
+                    observed = self.c.workers.actual(worker, accounted=True)
+                    row = self.record()
+                    row["review"] = worker["request"]["id"]; self.save(row)
+                    result = {"status": "PRODUCT_REVIEWED" if observed.result.approved else "REQUIRES_CORRECTION", "revision": self.c.revision()}
+                else:
+                    result = self.correct(entry)
+            finally:
+                self.c.stop_workers()
+        row = self.record()
+        retained = next(r for r in row["execution"] if r["approval"] == reviewed)
+        retained.update(phase="COMPLETE", result=result); self.save(row)
+        return result
 
     def validation_context(self, entry, permit):
         # A local observation receives no forge mutation capability. Reuse M3
         # against the exact newly approved current published source and policy.
         v = entry["view"]
+        bind_consent(v, self.clock())
         view = {**v, "operation": "VALIDATE", "method": None}
         self.active = {"view": view, "binding": entry["binding"], "action": None}
         provider, task = self.provider(permit)
@@ -619,7 +652,7 @@ class PersonalProduct:
             else:
                 require(item["sequence"] == reservation["sequence"], "CI guard history changed")
                 permit = self.guard.begin(self.c.task_id, requirement, Action("personal:coordinator", ActionKind.CHECK,
-                    digest(entry["view"]), "One actual project CI disposition", seconds=min(45, entry["view"]["expires_at"] - self.clock())))
+                    digest(entry["view"]), "One actual project CI disposition", seconds=min(consent_limits(entry["view"]).operation_timeout_seconds, entry["view"]["expires_at"] - self.clock())))
             reservation["permit"] = data(permit); self.save_execution(entry)
         permit = typed(Permit, reservation["permit"])
         state, task, current = self.guard._snapshot(self.c.task_id, requirement)
@@ -634,6 +667,8 @@ class PersonalProduct:
         return permit
 
     def charge_ci(self, entry):
+        if getattr(self.c, "episode", False):
+            self.c.charge_check("post-pr:" + digest(entry["view"]))
         run = self.c.record()
         reservation = entry["reservation"]
         if "observation_before" not in reservation:
@@ -663,6 +698,7 @@ class PersonalProduct:
 
     def observe_ci(self, entry):
         v = entry["view"]
+        bind_consent(v)
         permit = self.reserve_ci(entry)
         if entry["phase"] == "SUBMITTED":
             # A consumed observation is never restarted, even when its caller
@@ -915,10 +951,15 @@ class PersonalProduct:
             raise PersonalBlocked("CURRENT_CI_NOT_QUALIFIED", "Use the actual current project result as same-ticket feedback while original budgets remain; no merge was submitted.", status="REQUIRES_CORRECTION" if result["status"] in ("FAIL", "ERROR") else "PENDING_VALIDATION")
         require(self.validation_binding() == v["validation"], "Changed current CI invalidates product review and merge approval")
 
+    @network_operation("product.status")
     def status(self, *, manual_method="merge"):
         row = self.record()
         if row is None:
             return {"status": "NOT_DELEGATED", "merge": "MANUAL", "runtime_qualification": "NOTRUN"}
+        # Resource caps only, before choosing a current native observation.
+        # Do not reinterpret expired historical facts as fresh authorization.
+        for intent in row["intents"]:
+            bind_consent(intent["view"])
         with self.service.bounded():
             self.c.check_administration(self.c.record())
             self.service._check_stop()

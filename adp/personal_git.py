@@ -11,7 +11,7 @@ from .git import value
 from .schema import require
 
 
-def administration(root: Path):
+def administration(root: Path, *, _paths=None):
     def identity(path):
         safe_path(path)
         info = path.lstat()
@@ -23,8 +23,14 @@ def administration(root: Path):
             require(info.st_nlink == 1 and info.st_size <= 4096, "Unsafe product Git indirection")
             row["content"] = hashlib.sha256(path.read_bytes()).hexdigest()
         return row
-    common = safe_path(Path(value(root, "rev-parse", "--path-format=absolute", "--git-common-dir")))
-    directory = safe_path(Path(value(root, "rev-parse", "--absolute-git-dir")))
-    require(common.is_dir() and directory.is_dir() and value(root, "rev-parse", "--show-toplevel") == str(root),
+    if _paths is None:
+        common_path = value(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        directory_path = value(root, "rev-parse", "--absolute-git-dir")
+        top = value(root, "rev-parse", "--show-toplevel")
+    else:
+        top, directory_path, common_path = _paths(root)
+    common = safe_path(Path(common_path))
+    directory = safe_path(Path(directory_path))
+    require(common.is_dir() and directory.is_dir() and top == str(root),
             "Product Git administration is not the selected checkout")
     return {"root": identity(root), "marker": identity(root / ".git"), "common": identity(common), "directory": identity(directory)}

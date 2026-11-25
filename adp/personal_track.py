@@ -23,6 +23,8 @@ from .policy_schema import fingerprint, sha
 from .schema import encode, fields, key, require
 from .storage import atomic, locked
 from .ticket_preparation import TicketArchive
+from .personal_history_track import with_reads
+from .runtime_limits import network_operation, read_operation
 
 LINK = "track-link.json"
 
@@ -50,9 +52,10 @@ class PersonalTrack:
     def __init__(self, coordinator):
         self.c, self.personal = coordinator, coordinator.personal
         self.link = read_private(self.personal.state / LINK)
-        fields(self.link, "schema_version root index identity directory setup snapshot parent")
+        fields(self.link, "schema_version root index identity directory setup snapshot parent" +
+               (" episode original_link" if coordinator.episode else ""))
         fingerprint(self.link["index"]); fingerprint(self.link["snapshot"])
-        require(type(self.link["schema_version"]) is int and self.link["schema_version"] == 1
+        require(type(self.link["schema_version"]) is int and self.link["schema_version"] == (2 if coordinator.episode else 1)
                 and self.link["directory"] == str(self.personal.directory)
                 and self.link["setup"] == self.personal.intent["approval"]
                 and self.link["identity"] == self.personal.intent["original"]["identity"], "Track link identity differs")
@@ -89,6 +92,7 @@ class PersonalTrack:
                 "Retain the exact original track selection/approval evidence")
 
     @staticmethod
+    @read_operation("track.registration", transport=lambda c, numbers: c.transport)
     def registration(c, numbers):
         require(type(numbers) is tuple and 1 <= len(numbers) <= 8 and len(set(numbers)) == len(numbers)
                 and all(type(n) is int and n > 0 for n in numbers), "Select a finite original Issue inventory")
@@ -126,6 +130,7 @@ class PersonalTrack:
         return row["commit"]["sha"]
 
     @classmethod
+    @read_operation("track.register", transport=lambda cls, c, numbers, **k: c.transport)
     def register(cls, c, numbers, *, reviewed, authorized):
         require(authorized is True, "Separately approve original-track evidence writes")
         with invocation_lock(c.memory.control):
@@ -167,16 +172,29 @@ class PersonalTrack:
             return c.track
 
     def links(self):
+        from .personal_read_frame import json_names
         paths = sorted((self.root / "links").glob("*.json"))
+        json_names(self.root / "links", [p.name for p in paths])
         require(1 <= len(paths) <= len(self.originals), "Track links exceed original finite inventory")
         rows = [read_private(p) for p in paths]
+        effective_rows = []
         for p, row in zip(paths, rows):
             personal = load_state(Path(row["directory"]))
             require(p.stem == digest(row["identity"]) and row["index"] == self.link["index"]
                     and read_private(personal.state / LINK) == row and row["setup"] == personal.intent["approval"]
                     and row["identity"] == personal.intent["original"]["identity"], "Retain exact original enrollment links")
+            from .personal_episode import effective
+            current = effective(personal)
+            effective_rows.append(read_private(current.state / LINK))
         require(len({digest(r["identity"]) for r in rows}) == len(rows), "Duplicate original task link")
-        return rows
+        return effective_rows
+
+    def admission_path(self):
+        return (self.personal.state / "episode-admission.json" if self.c.episode else
+                self.root / "admissions" / (digest(self.link["identity"]) + ".json"))
+
+    def admission(self):
+        return read_private(self.admission_path())
 
     def completion_path(self, identity):
         require(identity in self.originals, "Completion outside original track")
@@ -191,8 +209,9 @@ class PersonalTrack:
         require(identity in self.originals and observed.identity == identity, "Wrong original Issue identity")
         expected = self.originals[identity].issue
         pointer = read_private(self.root / "links" / (digest(identity) + ".json"), optional=True)
-        known_report = (read_private(Path(pointer["directory"]) / "private" / "report.json", optional=True)
-            if pointer is not None else None)
+        from .personal_episode import effective
+        pointed = effective(load_state(Path(pointer["directory"]))) if pointer is not None else None
+        known_report = read_private(pointed.state / "report.json", optional=True) if pointed is not None else None
         if observed == expected and (known_report is None or known_report["after"] is None):
             return True
         link = next((r for r in self.links() if r["identity"] == data(identity)), None)
@@ -221,12 +240,16 @@ class PersonalTrack:
 
     def require_attachment(self):
         shared = read_private(self.root / "links" / (digest(self.link["identity"]) + ".json"), optional=True)
-        admission = read_private(self.root / "admissions" / (digest(self.link["identity"]) + ".json"), optional=True)
-        require(shared == self.link and admission is not None,
+        admission = read_private(self.admission_path(), optional=True)
+        require((shared == self.link if not self.c.episode else digest(shared) == self.link["original_link"]
+                 and self.link["episode"] == self.personal.descriptor["episode"]
+                 and admission == self.personal.descriptor["base"]["admission"])
+                and admission is not None,
                 "Complete the original next intent/track attachment before any execution")
         fields(admission, "policy_snapshot policy_sources completions")
         self.seed()  # Existence alone is not a qualified immutable snapshot.
 
+    @with_reads
     def current(self):
         p = self.personal.plan
         observation, owner = selection(Path(p["checkout"]["path"]), p["checkout"]["remote"], self.personal.repository_id, self.c.transport)
@@ -238,13 +261,16 @@ class PersonalTrack:
             self.original_issue(identity, found[identity])
         return observation
 
+    @with_reads
     def accepted(self, identity, *, transport=None, runtime=None):
         """Read historical facts without reviving an expired execution grant."""
         path = self.completion_path(identity)
-        if not path.exists():
+        from .personal_read_frame import present
+        if not present(path):
             return None
         receipt = read_private(path)
-        fields(receipt, "schema_version identity directory setup checkpoint accepted_at original packet source tree merge actor pull merge_payload workers run product ci files acceptance")
+        fields(receipt, "schema_version identity directory setup checkpoint accepted_at original packet source tree merge actor pull merge_payload workers run product ci files acceptance" +
+               (" lineage origin" if receipt["schema_version"] == 2 else ""))
         for field in ("checkpoint", "source", "tree", "merge"):
             sha(receipt[field])
         for field in ("run", "product"):
@@ -253,7 +279,8 @@ class PersonalTrack:
         for identifier, hashed in receipt["workers"].items():
             fingerprint(identifier); fingerprint(hashed)
         personal = load_state(Path(receipt["directory"]))
-        require(receipt["schema_version"] == 1 and receipt["identity"] == data(identity)
+        episode = personal.intent["kind"] == "ACCOUNTING_EPISODE"
+        require(receipt["schema_version"] == (2 if episode else 1) and receipt["identity"] == data(identity)
                 and receipt["setup"] == personal.intent["approval"] and receipt["original"] == data(self.originals[identity])
                 and personal.plan["window"]["issued_at"] <= receipt["accepted_at"] < personal.plan["window"]["expires_at"]
                 and receipt["acceptance"] == "OPERATOR_CONFIRMED_CURRENT_PROJECT_ACCEPTANCE",
@@ -262,10 +289,10 @@ class PersonalTrack:
         now = memory.inspect()
         require(now["health"] == "SYNCED", "Historical M1 state is not synchronized")
         if any(action["operation"] == "REPORT" for action in now["state"]["execution"]["actions"].values()):
-            require((personal.state / "report.json").exists(), "Retain the private receipt for the known canonical report effect")
+            require(present(personal.state / "report.json"), "Retain the private receipt for the known canonical report effect")
         git(memory.config.root, "merge-base", "--is-ancestor", receipt["checkpoint"], now["local_head"])
         state, tasks = memory._read_ref(receipt["checkpoint"])
-        task_id = "personal:" + digest({"repository": personal.repository_id, "issue": personal.plan["issue_id"]})
+        task_id = personal.task_id if episode else "personal:" + digest({"repository": personal.repository_id, "issue": personal.plan["issue_id"]})
         task = tasks[key(task_id)]
         require(state["generation"] == now["state"]["generation"] and task["source_revision"] == receipt["source"]
                 and task == now["tasks"][key(task_id)]
@@ -273,7 +300,8 @@ class PersonalTrack:
                 and now["state"]["progress_guard"]["task_epochs"][key(task_id)] == state["progress_guard"]["task_epochs"][key(task_id)]
                 and all(a["status"] == "accepted" for a in task["assignments"].values()),
                 "Historical source, generation or assignments changed/incomplete")
-        require(all(g["active"] is None and g["mode"] == "normal" for g in state["progress_guard"]["requirements"].values()),
+        from .personal_episode import settled_guards
+        require(settled_guards(personal, state),
                 "Historical M2 has an unfinished/terminal reservation")
         for relative, hashed in receipt["files"].items():
             require(relative.startswith(("evidence/", "product-checks/")) and ".." not in Path(relative).parts
@@ -351,6 +379,11 @@ class PersonalTrack:
         from .personal_product import PersonalProduct
         from .personal_product_review import ProductCoordinator
         coordinator = ProductCoordinator(personal, None, None, runtime=actual_runtime, clock=self.c.clock)
+        if episode:
+            relation, old_contexts = personal.active()
+            require(receipt["lineage"] == {k: v for k, v in relation.items() if k != "usage"}
+                    and receipt["origin"] == coordinator.source_origin(historical=True) and not contexts & old_contexts,
+                    "Qualified terminal lineage, retained source or independent successor evidence differs")
         product = PersonalProduct(coordinator, transport=transport)
         require(product.port._value("rev-parse", "HEAD") == receipt["source"]
                 and product.port._value("rev-parse", "HEAD^{tree}") == receipt["tree"]
@@ -363,6 +396,7 @@ class PersonalTrack:
                     and item.get("merged_by", {}).get("id") == receipt["actor"], "Current exact merged result/actor changed")
         return receipt
 
+    @with_reads
     def prerequisites(self, observation, *, transport=None, runtimes=None):
         require(complete_snapshot(observation.snapshot), "Native dependency coverage is unknown")
         issues = {i.identity: i for i in observation.snapshot.issues}
@@ -427,7 +461,9 @@ class PersonalTrack:
             done.add(identity)
         return tuple(sorted(done - {selected}))
 
+    @network_operation("track.completion_preview", service=lambda self, product, **k: product.service)
     def completion_preview(self, product):
+        from .personal_episode import settled_guards
         c = product.c
         c.live(); c.fresh(); c.workers.fence(); c.original_approval(); c.verify_local_review()
         product.qualified(); product.verify_review()
@@ -439,7 +475,7 @@ class PersonalTrack:
         current = c.memory.inspect()
         require(c.record()["coordination"] is None and all(w["phase"] == "ACCOUNTED" for w in c.workers.records())
                 and all(a["status"] == "OBSERVED" for a in current["state"]["execution"]["actions"].values())
-                and all(g["active"] is None and g["mode"] == "normal" for g in current["state"]["progress_guard"]["requirements"].values())
+                and settled_guards(self.personal, current["state"])
                 and not product.service.unconfirmed_contexts(), "Reconcile all original M1/M2/process/effect evidence")
         item = product.pull(allow_merged=True)
         view = {"repository": self.index["repository"], "identity": self.link["identity"],
@@ -450,6 +486,7 @@ class PersonalTrack:
             "expires_at": self.personal.plan["window"]["expires_at"]}
         return {"status": "COMPLETION_PROPOSED", "result": view, "approval": "personal-completion:" + digest(view)}
 
+    @network_operation("track.complete", service=lambda self, product, **k: product.service)
     def complete(self, product, *, reviewed, authorized, confirm_acceptance):
         require(authorized is True and confirm_acceptance is True, "Separately confirm this original's actual project acceptance")
         identity = typed(Issue, self.personal.intent["original"]).identity
@@ -478,10 +515,17 @@ class PersonalTrack:
                 "merge_payload": payload, "workers": {w["request"]["id"]: digest(w) for w in self.c.workers.records()},
                 "run": digest(self.c.record()), "product": digest(row), "ci": row["gates"][-1],
                 "files": files, "acceptance": "OPERATOR_CONFIRMED_CURRENT_PROJECT_ACCEPTANCE"}
+            if self.c.episode:
+                from .accounting_policy import entry
+                receipt.update(schema_version=2, lineage={k: v for k, v in entry(self.c.memory.inspect()["state"]).items() if k != "usage"},
+                               origin=self.c.source_origin())
             immutable(path, receipt)
             return self.accepted(identity, transport=product.transport, runtime=product.c.runtime)
 
+    @read_operation("track.status", transport=lambda self, **k: k.get("transport") or self.c.transport)
+    @with_reads
     def status(self, *, transport=None, runtimes=None):
+        from .personal_episode import settled_guards
         from .discovery import DependencyPlanner, review_subject
         from .discovery_types import Identity, ReadinessReview, Status
         from .guard_types import Attestation
@@ -496,8 +540,7 @@ class PersonalTrack:
             state = personal.memory().inspect()
             require(state["health"] == "SYNCED", "Track M1 history is not synchronized")
             require(all(a["status"] == "OBSERVED" for a in state["state"]["execution"]["actions"].values())
-                    and all(g["active"] is None and g["mode"] == "normal"
-                        for g in state["state"]["progress_guard"]["requirements"].values())
+                    and settled_guards(personal, state["state"])
                     and not list(personal.memory().control.glob("network-stop-*.json")),
                     "A previous window has an unfinished/uncertain effect or reservation")
             if accepted is not None:
@@ -615,6 +658,8 @@ class PersonalTrack:
             return child, True
         return child, False
 
+    @network_operation("track.next_preview", service=lambda self, product, choices, **k: product.service)
+    @with_reads
     def next_preview(self, product, choices, *, approved=None):
         from .git import SHA
         require(type(choices) is PersonalChoices, "Typed explicit next choices required")
@@ -677,6 +722,8 @@ class PersonalTrack:
         return {"status": "NEXT_PROPOSED", "result": view,
             "approval": "personal-next:" + digest(binding), "setup_approval": approval(plan)}
 
+    @network_operation("track.next", service=lambda self, product, choices, **k: product.service)
+    @with_reads
     def next(self, product, choices, *, reviewed, setup_approval, authorized):
         require(authorized is True and type(choices) is PersonalChoices,
                 "Separately approve exactly this new original task, local setup and finite scope/window")

@@ -281,8 +281,9 @@ def record(value: dict, identifier: str, repository_id: str | None = None) -> No
 
 
 def guard_schema(value: dict, repository_id: str | None = None) -> None:
-    fields(value, "schema_version requirements task_epochs")
-    require(type(value["schema_version"]) is int and value["schema_version"] == 1, "Unsupported guard schema")
+    require(type(value) is dict, "Expected a guard registry object")
+    require(type(value.get("schema_version")) is int and value["schema_version"] in (1, 2), "Unsupported guard schema")
+    fields(value, "schema_version requirements task_epochs" + (" accounting_continuation" if value["schema_version"] == 2 else ""))
     epochs = value["task_epochs"]
     require(type(epochs) is dict and len(epochs) <= 64, "Invalid guard task incarnations")
     for task_key, epoch in epochs.items():
@@ -293,3 +294,6 @@ def guard_schema(value: dict, repository_id: str | None = None) -> None:
     for identifier, requirement in requirements.items():
         require(isinstance(identifier, str) and KEY.fullmatch(identifier), "Invalid requirement ID")
         record(requirement, identifier, repository_id)
+    if value["schema_version"] == 2:
+        from .accounting_policy import validate
+        validate(value, repository_id)

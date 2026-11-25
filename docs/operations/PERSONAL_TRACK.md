@@ -84,7 +84,7 @@ accepted prerequisite verification. Its exact raw observations for every selecte
 original (including native dependency pages) are bound into publication consent.
 Both existing pre-upload/pre-CAS callbacks reobserve those complete targeted maps
 and actual accepted prerequisite receipts. This avoids repeating whole-repository
-inventories inside the unchanged 45-second/128-request batch; the raw-map limit
+inventories inside the bounded [shared operation](RUNTIME_LIMITS.md); the raw-map limit
 also stays81. No stale snapshot is called current and no cached READY grants a
 push. Standalone enrollment keeps its single-original map and prerequisite refusal.
 Each object authorization obtains a fresh actual M1 observation. Its generation

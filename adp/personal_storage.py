@@ -69,8 +69,12 @@ def create_private(path: Path) -> None:
 
 
 def read_private(path: Path, *, optional=False):
+    from .personal_read_frame import private_path
+    private_path(path)
     safe_path(path)
     if not path.exists() and optional:
+        from .personal_read_frame import consumed
+        consumed(path)
         return None
     return load_json(path, LIMIT, protected=True)
 
@@ -238,6 +242,10 @@ class PersonalState:
 
 def load_state(directory: Path) -> PersonalState:
     private_directory(directory)
+    from .personal_read_frame import present
+    if present(directory / "episode.json"):
+        from .personal_episode import load_episode
+        return load_episode(directory)
     row = read_private(directory / INTENT)
     fields(row, "schema_version kind phase plan original governance approval")
     require(type(row["schema_version"]) is int and row["schema_version"] == 1
