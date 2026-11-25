@@ -81,7 +81,14 @@ class EpisodeState(PersonalState):
     def active(self, *, memory=None, runtime=None, allow_expired=True, now=None):
         return self._active_view(memory=memory, runtime=runtime, allow_expired=allow_expired, now=now)[:2]
 
-    def _active_view(self, *, memory=None, runtime=None, allow_expired=True, now=None):
+    def _active_view(self, *, memory=None, runtime=None, allow_expired=True, now=None, _capture=None):
+        from .personal_read_frame import active
+        framed = active(self, memory, runtime) if _capture is None else None
+        if framed is not None:
+            if not allow_expired:
+                require(type(now) is int and self.plan["window"]["issued_at"] <= now < self.plan["window"]["expires_at"],
+                        "Episode window expired")
+            return framed
         # Closed plans were validated on load. Re-read their exact protected
         # identities here; do not recursively reload the same root/plan/track
         # through every nested authority proof. No positive result is cached.
@@ -93,6 +100,8 @@ class EpisodeState(PersonalState):
                     "directory": str(self.root.directory), "approval": self.root.intent["approval"]}, "Episode/original enrollment changed")
         memory = memory or self.memory()
         m, archive, contexts, observed, workers = _archived_view(self.root, memory=memory, runtime=runtime, _child=self)
+        if _capture is not None:
+            _capture["archive"] = (m, archive, contexts, observed, workers)
         relation = entry(observed["state"])
         require(relation is not None and relation == expected_relation(self.root, m, archive, self.descriptor,
                 usage=relation["usage"], _workers=workers), "Exact canonical episode relation is missing")

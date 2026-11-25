@@ -239,6 +239,8 @@ class Memory:
                 "inbox_count": sum(item not in slots for item in self._inbox()), **extra}
 
     def initialize(self, *, authorized: bool = False, initial_only: bool = False) -> dict:
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         if not authorized:
             raise AuthorityError("init --apply requires explicit --authorize-memory-write")
         author(self.config.root)
@@ -295,6 +297,8 @@ class Memory:
             raise Conflict("Local owner credential missing or mismatched; no ownership inferred")
 
     def _start(self, *, owned: bool = True) -> tuple[str, dict, dict[str, dict]]:
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         author(self.config.root)
         if (self.control / "pending.json").exists():
             raise Conflict("An interrupted checkpoint requires explicit recover")
@@ -306,6 +310,8 @@ class Memory:
         return head, copy.deepcopy(state), copy.deepcopy(tasks)
 
     def _write_files(self, state: dict, tasks: dict[str, dict], *, _fence=None) -> None:
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         self._layout()
         directory = self.path / "tasks"
         if _fence is not None:
@@ -326,6 +332,8 @@ class Memory:
         atomic(self.path / "state.json", encode(state))
 
     def _checkpoint(self, head: str, state: dict, tasks: dict[str, dict], *, _fence=None, _purpose=None) -> dict:
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         if _fence is not None:
             _fence()
         previous, _ = self._read_ref(head)
@@ -365,6 +373,8 @@ class Memory:
         return self.inspect()
 
     def _finish(self, pending: dict, *, expected_remote=_UNREVIEWED_REMOTE, _fence=None, _purpose=None) -> None:
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         self._journal_fence(pending, _purpose, _fence)
         base, state, tasks = pending["base"], pending["state"], pending["tasks"]
         if expected_remote is not _UNREVIEWED_REMOTE:
@@ -456,6 +466,8 @@ class Memory:
         A missing owner is never repaired by recovery. Released/foreign owners
         may sync; an owned local checkpoint requires its original credential.
         """
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         author(self.config.root)
         with locked(self.control):
             initial_pending = self._recovery_document(protected=expected_remote is not _UNREVIEWED_REMOTE)
@@ -604,11 +616,15 @@ class Memory:
 
     def deliver(self, envelope: dict) -> Path:
         """Worker-only immutable local delivery; never writes canonical state."""
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         with locked(self.control):
             _, state, tasks = self._local()
             return self._deliver(envelope, state, tasks)
 
     def _deliver(self, envelope, state, tasks):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         self._envelope(envelope, state, tasks)
         inbox = self.path / "inbox"
         inbox.mkdir(exist_ok=True, mode=0o700)
@@ -639,6 +655,8 @@ class Memory:
 
     def cleanup_inbox(self) -> dict:
         """Remove only deliveries already durably accepted with identical content."""
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         with locked(self.control):
             _, state, tasks = self._start()
             for path in self._inbox():
@@ -670,6 +688,8 @@ class Memory:
 
     def discard_inbox(self, assignment_id: str, *, confirmed: bool = False) -> dict:
         """Explicitly acknowledge loss of local delivery, without accepting it."""
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         if not confirmed:
             raise AuthorityError("Discard requires --confirm-incomplete; no result will be accepted")
         with locked(self.control):

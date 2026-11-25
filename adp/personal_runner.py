@@ -127,6 +127,8 @@ class PersonalCoordinator:
             require(reader(self.personal.feature) == row["feature_administration"], "Feature Git administration changed")
 
     def save(self, row):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         self.live()
         create_private(self.personal.state)
         atomic(self.path, encode(row, LIMIT))
@@ -206,10 +208,26 @@ class PersonalCoordinator:
                            (purpose,) if semantic else (self.personal.plan["criterion"],))
 
     def requirement(self, purpose):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         spec = self.specification(purpose)
         proof = self.authority.operator_evidence("admission", self.guard.admission_subject(self.task_id, spec),
             {"task_id": self.task_id, "requirement": data(spec)})
         return self.guard.register(self.task_id, spec, proof)
+
+    def review_requirement(self):
+        """Verification cannot admit/repair a missing episode baseline."""
+        if not self.episode:
+            return self.requirement("develop")
+        from .guard_schema import requirement_id
+        spec = self.specification("develop")
+        identifier = requirement_id(spec.contract, spec.gate)
+        _, task, item = self.guard._snapshot(self.task_id, identifier)
+        expected = data(spec)
+        require(task["key"] in item["tasks"] and all(item[n] == expected[n]
+                for n in ("contract", "gate", "acceptance", "dependencies", "limits")),
+                "The existing exact episode review baseline is required")
+        return identifier
 
     def allowed(self, requirement):
         decision = self.guard.inspect(self.task_id, requirement)
@@ -761,7 +779,7 @@ class PersonalCoordinator:
                 and not value(self.personal.feature, "status", "--porcelain", "--untracked-files=all"),
                 "Local draft or exact-SHA review is stale")
         self.workers.actual(review, approval=True, accounted=True)
-        self.guard.require_approval(self.task_id, self.requirement("develop"))
+        self.guard.require_approval(self.task_id, self.review_requirement())
 
     def invocation(self, operation="run"):
         require(operation in ("run", "resume", "handoff"), "Unsupported personal invocation")

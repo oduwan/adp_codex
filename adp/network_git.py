@@ -161,6 +161,8 @@ class GitHubCAS:
             self._budget.reset(token)
 
     def request(self, method, path, payload=None, *, missing=False):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         self._check_stop()
         budget = self._budget.get() or _Budget(time.monotonic() + 20)
         budget.calls += 1

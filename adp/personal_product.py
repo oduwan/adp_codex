@@ -111,6 +111,8 @@ class PersonalProduct:
         return row
 
     def save(self, row):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         create_private(self.personal.state)
         atomic(self.path, encode(row, LIMIT))
 
@@ -273,6 +275,14 @@ class PersonalProduct:
             "result": view, "approval": self.token(view, binding), "binding": binding}
 
     def live(self, *, genuine=False):
+        if self.c.episode and not genuine:
+            from .personal_read_frame import product_live
+            return product_live(self)
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
+        return self._live_current(genuine=genuine)
+
+    def _live_current(self, *, genuine=False):
         require(self.active is not None, "Exact operation consent required")
         view = self.active["view"]
         self.local(genuine=genuine)
@@ -285,7 +295,9 @@ class PersonalProduct:
         return view
 
     def write_authorized(self):
-        view = self.live()
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
+        view = self._live_current()
         require(self._writing == self.active["action"], "Fresh one-use product dispatch required")
         row = self.journal.inspect()["state"]["execution"]["actions"].get(self._writing)
         require(row is not None and row["status"] == "SUBMITTED" and row["operation"] == view["operation"], "Canonical submitted effect differs")

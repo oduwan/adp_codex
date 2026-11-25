@@ -58,7 +58,7 @@ class ProductCoordinator(PersonalCoordinator):
         return True
 
     def verify_local_review(self):
-        requirement = self.requirement("develop")
+        requirement = self.review_requirement()
         state, task, item = self.guard._snapshot(self.task_id, requirement)
         if item["active"] is None:
             return super().verify_local_review()
@@ -85,7 +85,7 @@ class ProductCoordinator(PersonalCoordinator):
 
     def reserved_code_review(self, permit, *, recovering=False):
         run = self.record()
-        requirement = self.requirement("develop")
+        requirement = self.review_requirement()
         state, task, item = self.guard._snapshot(self.task_id, requirement)
         self.guard._active(state, task, item, permit.token)
         self.check_administration(run)

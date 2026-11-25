@@ -171,6 +171,26 @@ or pending transaction. No positive decision is cached across callbacks. Raw
 receipts, source, administration, host, consent and Git protections remain
 freshly verified; the existing operation deadlines and request caps still apply.
 
+One episode-only `Publication.live(review=True)` computation also uses a private
+synchronous read frame to prevent repeated expansion of that same history
+through nested review/Guard checks. It performs independent complete active
+and archival proofs before and after the read, repeats actual publication,
+raw-review, source, administration and credential checks, and rejects changed
+subjects. Every nested factual lookup still reads current canonical ownership,
+state/tasks/inbox and checks time/revocation. Defensive copies prevent a reader
+from modifying the retained inputs. The frame is bound to the exact objects,
+process and thread, is destroyed on exceptions, and never crosses a callback,
+checkpoint or native effect. Verification resolves an already admitted exact
+episode gate; it cannot mint evidence or create/repair a baseline. Canonical
+mutation/inbox recovery and admission fences refuse while a frame is active.
+Per-object `write_authorized`, ordinary/signed behavior, M3 reauthorization and
+all fixed budgets remain unchanged. No ALLOW or operation authority is cached.
+The same closed pattern applies to one local `Product.live(genuine=False)`
+read, binding the entire active consent, credential binding, action and
+reservation and copying the result to prevent mutable-view aliasing. Its final
+own operation expiry is checked at actual current time. Genuine/native reads
+and product write authorization explicitly use the original unframed checks.
+
 The accounting-only historical Git reader batches each command's actual pin
 queries and may retain bounded decoded immutable commit facts. Every reuse
 rehashes the actual HEAD commit and complete retained tree/blob closure, then

@@ -71,6 +71,8 @@ class PersonalWorkers:
         return rows
 
     def save(self, row):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         create_private(self.directory)
         atomic(self.directory / (row["request"]["id"] + ".json"), encode(row, LIMIT))
 

@@ -164,6 +164,8 @@ class CodexExecRuntime:
         return self._observation(request_id, record)
 
     def dispatch(self, request: WorkerRequest):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         require(type(request) is WorkerRequest and 1 <= request.seconds <= 300, "Invalid bounded worker request")
         require(request.deadline is None or type(request.deadline) is int and request.deadline > time.time(),
                 "Worker reservation deadline is absent or expired")

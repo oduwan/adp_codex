@@ -44,6 +44,10 @@ def _archived_view(personal, *, memory=None, runtime=None, _child=None):
     only for historical observation; callers still need current live authority
     for every future effect.
     """
+    from .personal_read_frame import archive
+    framed = archive(personal, memory, runtime, _child)
+    if framed is not None:
+        return framed
     from .personal_recovery import Recovery, engine_digest, grant, submission_provenance
     if _child is None:
         root = load_state(personal.directory)

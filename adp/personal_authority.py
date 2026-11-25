@@ -40,6 +40,8 @@ class PersonalAuthority:
         return True
 
     def fence_accounting(self):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         if not self.c.episode:
             return False
         _, _, subject = self.c.personal._active_view(memory=self.c.memory, allow_expired=False, now=self.c.clock())
@@ -51,6 +53,8 @@ class PersonalAuthority:
         return True
 
     def _proof(self, purpose, subject, kind, payload, principal):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         self.c.live()
         body = {"schema_version": 1, "purpose": purpose, "subject": subject, "kind": kind,
             "payload": payload, "principal": principal, "approval": self.c.personal.intent["approval"],

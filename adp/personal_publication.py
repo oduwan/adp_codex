@@ -121,6 +121,8 @@ class PersonalPublication:
         return row
 
     def save(self, row):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         create_private(self.personal.state)
         atomic(self.path, encode(row, LIMIT))
 
@@ -278,6 +280,14 @@ class PersonalPublication:
         return {"status": "PUBLICATION_PROPOSED", "result": view, "approval": token}
 
     def live(self, *, review=True):
+        from .personal_read_frame import forbid_writes, publication_live
+        if not review:
+            forbid_writes()  # The per-object mutation fence is never framed.
+        elif self.c.episode:
+            return publication_live(self)
+        return self._live_current(review=review)
+
+    def _live_current(self, *, review=True):
         # One actual fresh observation per call, never retained across objects
         # or callbacks. c.live performs its full current M1/consent checks;
         # generation and review seals refer to that same observed checkpoint.
@@ -343,6 +353,8 @@ class PersonalPublication:
                      checks=tuple(self.personal.plan["required_check_names"]))
 
     def proof(self, purpose, subject, kind, payload):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         row = self.live()
         body = {"purpose": purpose, "subject": subject, "kind": kind, "payload": payload,
             "principal": "personal:operator", "approval": row["approval"], "generation": row["view"]["generation"]}
