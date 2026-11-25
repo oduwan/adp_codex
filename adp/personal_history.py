@@ -5,11 +5,11 @@ from pathlib import Path
 
 from .accounting_policy import POLICY, entry, fingerprint
 from .codex_runtime import CodexExecRuntime
-from .discovery_schema import digest, typed
+from .discovery_schema import digest
 from .errors import ADPError
 from .execution_containment import source_seal
 from .execution_schema import worker_result
-from .execution_types import RuntimeStatus, WorkerRequest
+from .execution_types import RuntimeStatus
 from .git import git, value
 from .guard_types import data
 from .personal_storage import LIMIT, load_state, read_private
@@ -155,8 +155,9 @@ def _archived_view(personal, *, memory=None, runtime=None, _child=None, _capture
     from .personal_history_git import verify
     objects = verify(memory, heads, expected)
     if _capture is not None and anchored is not None:
+        from .personal_history_git import combine
         _capture.update(anchored)
-        _capture["historical_objects"] = (*anchored["historical_objects"], *objects)
+        _capture["historical_objects"] = combine(anchored["historical_objects"], objects)
     require(type(receipt["recovery"]) is dict and len(receipt["recovery"]) <= 6, "Bounded recovery provenance required")
     for relative, hashed in receipt["recovery"].items():
         require(type(relative) is str and ".." not in Path(relative).parts and len(Path(relative).parts) == 2
@@ -218,20 +219,11 @@ def _archived_view(personal, *, memory=None, runtime=None, _child=None, _capture
     contexts = set()
     for label, identifier in (("developer", master["request"]), ("original", run["original_review"])):
         row = worker(identifier)
-        request = typed(WorkerRequest, row["request"])
-        raw = read_private(actual_runtime._path(identifier))
-        stop = read_private(actual_runtime.directory / (identifier + ".stop.json"))
-        actual = actual_runtime.observe(identifier)
-        worker_result(actual.result)
-        require({"worker": digest(row), "runtime": digest(raw), "stop": digest(stop)} == proof[label]
-                and actual.host == row["host"] == actual_runtime.host and actual.request_digest == digest(request)
-                and actual.status == RuntimeStatus.COMPLETED and actual.stopped is True and actual.context_id
-                and actual.context_id not in contexts and row["observation"] == data(actual)
-                and stop["request_digest"] == digest(request) and stop["pid"] == raw["pid"]
-                and stop["stopped"] is True and stop["status"] == "EXITED" and type(stop["cli_exit"]) is int and stop["cli_exit"] == 0,
+        context = row["observation"]["context_id"]
+        require(retained(actual_runtime, row) == proof[label] and context not in contexts,
                 "Original raw runtime/stop/context proof differs")
         Recovery.measurements(row, master["state"]["progress_guard"]["requirements"][row["requirement"]]["active"]["action"] if label == "developer" else None)
-        contexts.add(actual.context_id)
+        contexts.add(context)
     old = now["state"]["progress_guard"]["requirements"][worker(master["request"])["requirement"]]
     require(old == master["guard_state"]["progress_guard"]["requirements"][worker(master["request"])["requirement"]], "Historical STOP_UNSAFE latch changed")
     from .personal_history_product_git import administration

@@ -166,10 +166,12 @@ class AccountingReadFrameTests(unittest.TestCase):
         from adp.personal_runner import PersonalCoordinator
         from adp.personal_workers import PersonalWorkers
         from adp.codex_runtime import CodexExecRuntime
-        from adp.network_git import GitHubCAS
+        from adp.network_git import GitHubCAS, GitHubTarget
         from adp.personal_product import PersonalProduct
         c, p, _, _ = self.fixture()
         memory = Memory.__new__(Memory)
+        network = GitHubCAS(GitHubTarget("opaque:fenced", "R_fenced", 1, "owned", "disposable", "work/original"),
+            SimpleNamespace(bind_repository=lambda *identity: None))
         calls = ((memory.initialize, (), {}), (memory._start, (), {}), (memory._checkpoint, (None, {}, {}), {}),
             (memory._write_files, ({}, {}), {}), (memory._finish, ({},), {}), (memory.recover, (), {}),
             (memory.deliver, ({},), {}), (memory._deliver, ({}, {}, {}), {}), (memory.cleanup_inbox, (), {}),
@@ -181,7 +183,7 @@ class AccountingReadFrameTests(unittest.TestCase):
             (PersonalPublication.save, (object(), {}), {}),
             (PersonalWorkers.save, (object(), {}), {}),
             (CodexExecRuntime.dispatch, (object(), object()), {}),
-            (GitHubCAS.request, (object(), "GET", "/synthetic"), {}),
+            (network.request, ("GET", "/synthetic"), {}),
             (PersonalProduct.save, (object(), {}), {}),
             (PersonalProduct.write_authorized, (object(),), {}),
             (PersonalProduct.live, (SimpleNamespace(c=c),), {"genuine": True}),

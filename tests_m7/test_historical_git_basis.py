@@ -9,7 +9,7 @@ from adp.errors import ADPError
 from adp.git import git, value
 from adp.memory import Memory
 from adp.personal_history import _historical_grant, _reader_binding
-from adp.personal_history_git import storage_context, verify
+from adp.personal_history_git import combine, object_inventory, storage_context, verify
 from adp.personal_recovery import grant
 from personal_fixtures import GitFixture
 
@@ -31,6 +31,25 @@ class HistoricalGitBasisTests(GitFixture):
         observed = self.memory.inspect()
         self.heads.append(observed["local_head"])
         self.expected.append((observed["state"], observed["tasks"]))
+
+    def test_same_observation_union_keeps_actual_replica_bytes_and_bounded_groups(self):
+        first = verify(self.memory, self.heads[:2], self.expected[:2])
+        second = verify(self.memory, self.heads[1:], self.expected[1:])
+        merged = combine(first, second)
+        self.assertEqual([r[0] for r in merged], [False, True])
+        self.assertEqual(combine(second, first), merged)
+        for remote, context, rows in merged:
+            self.assertEqual(storage_context(self.memory, remote=remote), context)
+            self.assertEqual(object_inventory(self.memory, [r[0] for r in rows], remote=remote), rows)
+        for changed in (((not second[0][0], *second[0][1:]), *second[1:]),
+                        ((second[0][0], ("changed",), second[0][2]), *second[1:])):
+            with self.assertRaises(ADPError):combine(first, changed)
+        identifier, kind, size = first[0][2][0]
+        conflict = ((first[0][0], first[0][1], ((identifier, kind, size + 1),)), *first[1:])
+        with self.assertRaises(ADPError):combine(first, conflict)
+        rows = tuple((str(i).zfill(40), "blob", 1) for i in range(33))
+        a, b = ((False, ("same",), rows[:20]),), ((False, ("same",), rows[20:]),)
+        self.assertEqual(combine(a, b), (*a, *b))
 
     def test_actual_stable_objects_both_replicas_and_readonly_concurrent_reads(self):
         before = (git(self.a, "show-ref"), git(self.remote, "show-ref"),

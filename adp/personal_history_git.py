@@ -84,3 +84,15 @@ def verify(memory, heads, expected):
     witnesses = tuple((remote, context, object_inventory(memory, objects, remote=remote)) for remote, context in contexts)
     require(all(storage_context(memory, remote=remote) == context for remote, context in contexts), "Historical Git storage changed during observation")
     return witnesses
+
+
+def combine(first, second):
+    """Deduplicate actual immutable operands within ONE cold observation."""
+    require(tuple(r[0] for r in first) == tuple(r[0] for r in second), "Historical store roles differ")
+    result = []
+    for a, b in zip(first, second):
+        require(a[:2] == b[:2], "Historical storage changed between proof groups")
+        rows = tuple(sorted(set(a[2] + b[2])))
+        require(len({r[0] for r in rows}) == len(rows), "Conflicting immutable object witnesses")
+        result.extend(((a[0], a[1], rows),) if len(rows) <= 32 else (a, b))
+    return tuple(result)

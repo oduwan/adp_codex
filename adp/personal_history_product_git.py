@@ -1,24 +1,18 @@
-"""Private immutable Git facts, never cached permissions or observations.
+"""Stateless native Git observations with actual bounded object integrity.
 
 Every use reads actual refs/context and object bytes. Unsupported optimization
 envelopes use the original M7 observer. Normal and signed ports are unchanged.
 """
-from collections import OrderedDict
 import hashlib
 import os
 from pathlib import Path
 
 from .config import safe_path
 from .errors import ADPError
-from .discovery_schema import digest
 from .execution_ports import GitExecutionPort
-from .execution_types import ExternalObservation
 from .git import git, value
 from .policy_schema import sha
 from .schema import require
-
-_FACTS = OrderedDict()
-
 
 class _Unsupported(Exception):
     pass
@@ -110,70 +104,33 @@ def _context(port):
     return (str(port.root), str(common), port._bound_identities, info.st_uid, info.st_mode, hashlib.sha256(config).hexdigest())
 
 
-def _commit(body):
-    header, separator, message = body.partition(b"\n\n")
-    require(separator and header.startswith(b"tree "), "Malformed immutable product commit")
-    rows = header.splitlines()
-    if any(row.startswith(b"encoding ") and row[9:].lower() not in (b"utf-8", b"utf8") for row in rows):
-        raise _Unsupported()
-    tree = rows[0][5:].decode("ascii", "strict"); sha(tree)
-    parents = [row[7:].decode("ascii", "strict") for row in rows if row.startswith(b"parent ")]
-    for parent in parents: sha(parent)
-    try:
-        text = message.decode("utf-8", "strict").strip()
-    except UnicodeError:
-        raise _Unsupported() from None
-    return tree, parents[0] if parents else None, text
-
-
-def _witness(port, revision):
-    _metadata(port, [revision])
-    kind, raw = _objects(port, [(revision, revision)])[revision]
-    require(kind == "commit", "Product source is not a commit")
-    tree, parent, message = _commit(raw)
-    rows = port._git("ls-tree", "-r", "-t", "-z", revision).split(b"\0")
-    identifiers, index = {revision, tree}, []
-    for row in filter(None, rows):
-        metadata, path = row.split(b"\t", 1)
-        mode, kind, identifier = metadata.split()
-        identifier = identifier.decode("ascii");sha(identifier)
-        if kind not in (b"tree", b"blob"):
-            raise _Unsupported()  # Native gitlink semantics remain unchanged.
-        identifiers.add(identifier)
-        if kind == b"blob":index.append((path, mode + b" " + identifier.encode() + b" 0\t" + path + b"\0"))
-    if len(identifiers) > 32:
-        raise _Unsupported()
-    identifiers = tuple(sorted(identifiers));_metadata(port, identifiers)
-    _objects(port, [(i, i) for i in identifiers])
-    return {"objects": identifiers, "parent": parent, "message": message,
-            "index": hashlib.sha256(b"".join(row for _, row in sorted(index))).hexdigest()}
-
-
 def observe(port, action, revision):
     if action["operation"] != "COMMIT":
         return port.observe(action)
     try:
         context = _context(port)
-        identity = (context, revision, digest(action))
-        fact = _FACTS.get(identity)
-        if fact is None:
-            actual = port.observe(action)
-            if actual.status != "PRESENT" or actual.revision != revision:
-                return actual
-            fact = _witness(port, revision)
-        # HEAD is resolved now, not inferred from the retained fact or a ref.
-        objects = _objects(port, [("HEAD", revision), *((i, i) for i in fact["objects"] if i != revision)])
-        require(objects[revision][0] == "commit", "Current product HEAD is not a commit")
-        _, parent, message = _commit(objects[revision][1])
-        payload = action["payload"]
-        expected = (payload["subject"] + ("\n\n" + payload["body"] if payload["body"] else "")).strip()
-        present = (port._value("symbolic-ref", "HEAD") == action["source_ref"] and parent == action["revision"]
-                   and parent == fact["parent"] and message == fact["message"] == expected
-                   and fact["index"] == payload["index_digest"])
-        if not present:return ExternalObservation("UNKNOWN")
-        _FACTS[identity] = fact
-        _FACTS.move_to_end(identity)
-        while len(_FACTS) > 8:_FACTS.popitem(last=False)
-        return ExternalObservation("PRESENT", "commit:" + revision, revision)
+        actual = port.observe(action)
+        if actual.status != "PRESENT" or actual.revision != revision:
+            require(port._value("rev-parse", "HEAD") == revision, "Current product HEAD differs from its exact intent")
+            return actual
+        identifiers = {revision}
+        for row in filter(None, port._git("ls-tree", "-r", "-t", "-z", revision).split(b"\0")):
+            metadata, path = row.split(b"\t", 1)
+            mode, kind, identifier = metadata.split()
+            if kind not in (b"tree", b"blob"):
+                raise _Unsupported()
+            identifiers.add(identifier.decode("ascii"))
+        identifiers.add(port._value("rev-parse", revision + "^{tree}"))
+        if len(identifiers) > 32:
+            raise _Unsupported()
+        _metadata(port, sorted(identifiers))
+        _objects(port, [("HEAD", revision), *((i, i) for i in sorted(identifiers) if i != revision)])
+        try:
+            closing = _context(port)
+        except _Unsupported:
+            raise ADPError("Product Git context changed during observation") from None
+        require(closing == context and port._value("symbolic-ref", "HEAD") == action["source_ref"],
+                "Product Git observation changed")
+        return actual
     except _Unsupported:
         return port.observe(action)

@@ -10,7 +10,8 @@ from adp.errors import ADPError
 from adp.execution_ports import GitExecutionPort, index_digest
 from adp.git import git, value
 from adp.personal_git import administration as native_admin
-from adp.personal_history_product_git import HistoryReadPort, administration, observe, _FACTS
+from adp.personal_history_product_git import HistoryReadPort, administration, observe
+import adp.personal_history_product_git as history_git
 
 
 class AccountingGitFactTests(unittest.TestCase):
@@ -20,8 +21,6 @@ class AccountingGitFactTests(unittest.TestCase):
         self.root = Path(self.temporary.name) / "product"
         self.root.mkdir()
         self.prepare(self.root)
-        self.addCleanup(_FACTS.clear)
-        _FACTS.clear()
 
     def prepare(self, root):
         git(root, "init", "--initial-branch=trunk")
@@ -125,7 +124,7 @@ class AccountingGitFactTests(unittest.TestCase):
         master["engine"] = "0" * 64
         with self.assertRaisesRegex(ADPError, "recovery source changed"):_legacy_inputs(c, master)
 
-    def test_warm_facts_match_native_reduce_spawns_and_preserve_files_and_refs(self):
+    def test_stateless_native_facts_preserve_files_refs_and_actual_integrity(self):
         expected = self.native.observe(self.action)
         self.assertEqual(observe(self.port, self.action, self.revision), expected)
         calls = []
@@ -140,12 +139,12 @@ class AccountingGitFactTests(unittest.TestCase):
             self.assertEqual(self.native.observe(self.action), expected)
             native_calls = len(calls);calls.clear()
             self.assertEqual(observe(self.port, self.action, self.revision), expected)
-            warm_calls = len(calls)
-        self.assertLess(warm_calls, native_calls)
+            stateless_calls = len(calls)
+        self.assertFalse(hasattr(history_git, "_FACTS"))
         self.assertEqual((value(self.root, "for-each-ref", "--format=%(refname) %(objectname)"),
             (self.root / ".git" / "index").read_bytes(), (self.root / ".git" / "config").read_bytes(),
             (self.root / "product").read_bytes()), before)
-        print("SYNTHETIC_GIT_READ_SPAWNS native=" + str(native_calls) + " warm=" + str(warm_calls), flush=True)
+        print("SYNTHETIC_GIT_READ_SPAWNS native=" + str(native_calls) + " stateless=" + str(stateless_calls), flush=True)
         self.assertEqual(administration(self.root), native_admin(self.root))
         with self.assertRaises(ADPError):self.port.submit({}, None, None, None)
 
@@ -198,6 +197,12 @@ class AccountingGitFactTests(unittest.TestCase):
             path.write_bytes(original);path.chmod(mode)
         self.assertEqual(observe(self.port, self.action, self.revision), expected)
 
+    def test_stateless_closing_observation_refuses_changed_or_unsupported_context(self):
+        opening = history_git._context(self.port)
+        for closing in (("changed",), history_git._Unsupported()):
+            with patch.object(history_git, "_context", side_effect=(opening, closing)):
+                with self.assertRaises(ADPError):observe(self.port, self.action, self.revision)
+
     def test_large_objects_and_newline_path_framing_use_unchanged_native_observation(self):
         base = self.revision
         (self.root / "product").write_bytes(b"x" * 65537)
@@ -207,7 +212,7 @@ class AccountingGitFactTests(unittest.TestCase):
         revision = value(self.root, "rev-parse", "HEAD")
         expected = self.native.observe(action)
         self.assertEqual(observe(self.port, action, revision), expected)
-        self.assertFalse(_FACTS)
+        self.assertFalse(hasattr(history_git, "_FACTS"))
         special = Path(self.temporary.name) / "newline\ncomponent"
         special.mkdir();self.prepare(special)
         self.assertEqual(administration(special), native_admin(special))

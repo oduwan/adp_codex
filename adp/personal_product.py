@@ -306,9 +306,9 @@ class PersonalProduct:
         return view
 
     def write_authorized(self):
-        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: observe original Product effects only")
         from .personal_read_frame import forbid_writes
         forbid_writes()
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: observe original Product effects only")
         view = self._live_current()
         require(self._writing == self.active["action"], "Fresh one-use product dispatch required")
         row = self.journal.inspect()["state"]["execution"]["actions"].get(self._writing)
