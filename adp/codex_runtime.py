@@ -76,6 +76,17 @@ def frontend_environment():
     return {name: os.environ[name] for name in names if name in os.environ}
 
 
+def _host_identity():
+    """Actual existing host fingerprint; observation never launches a worker."""
+    machine = Path("/etc/machine-id")
+    identity = machine.read_bytes() if machine.exists() else platform.node().encode()
+    try:
+        namespace = os.readlink('/proc/self/ns/pid').encode()
+    except OSError:
+        namespace = b'unsupported'
+    return hashlib.sha256(identity + str(getattr(os, 'getuid', lambda: 'unsupported')()).encode() + namespace).hexdigest()
+
+
 class CodexExecRuntime:
     """One foreground CLI process per request. No daemon or blind redispatch.
 
@@ -89,13 +100,7 @@ class CodexExecRuntime:
         self.clock = clock or time.monotonic
         self._live = {}
         self._mutex = threading.RLock()
-        machine = Path("/etc/machine-id")
-        identity = machine.read_bytes() if machine.exists() else platform.node().encode()
-        try:
-            namespace = os.readlink('/proc/self/ns/pid').encode()
-        except OSError:
-            namespace = b'unsupported'
-        self.host = hashlib.sha256(identity + str(getattr(os, 'getuid', lambda: 'unsupported')()).encode() + namespace).hexdigest()
+        self.host = _host_identity()
         self._capabilities = None
         self.supervisor = Path(__file__).with_name("execution_supervisor.py")
 

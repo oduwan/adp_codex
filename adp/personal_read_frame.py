@@ -185,7 +185,7 @@ def _private_digest(path, *, limit=None, exact_mode=None):
 
 def _inputs(owner, observed, *, product):
     """Re-read fixed inputs without admission, authority or native callbacks."""
-    from .execution_containment import admin_seal
+    from .execution_containment import admin_seal, source_seal
     from .personal_enrollment import governance
     from .personal_history_product_git import administration
     from .personal_storage import read_private
@@ -219,6 +219,9 @@ def _inputs(owner, observed, *, product):
     ref = owner.port._value("symbolic-ref", "HEAD")
     dirty = owner.port._value("status", "--porcelain", "--untracked-files=all")
     physical, admin, rules = administration(root), admin_seal(root), governance(root)
+    flags = tuple(owner.port._git("ls-files", option, "-z") for option in ("-v", "-f"))
+    require(all(row.startswith(b"H ") for raw in flags for row in raw.split(b"\0") if row), "Unsupported hidden index flags")
+    source = source_seal(root)
     view = consent["view"]
     require(head == view["revision"] == run["revision"] and tree == view["source_tree" if product else "tree"]
             and ref == view["source_ref"] == "refs/heads/" + c.personal.plan["feature"]["branch"]
@@ -230,7 +233,8 @@ def _inputs(owner, observed, *, product):
     sealed = digest({"consent": consent, "run": run,
         "workers": workers, "private": files,
         "head": head, "tree": tree, "ref": ref, "dirty": dirty,
-        "physical": physical, "admin": admin, "governance": rules,
+        "physical": physical, "admin": admin, "governance": rules, "source": source,
+        "flags": [hashlib.sha256(raw).hexdigest() for raw in flags],
         "credential": owner.transport.credential_binding})
     return sealed, deepcopy(consent), readset, roots
 
@@ -265,6 +269,7 @@ def _legacy_inputs(c, master):
 
 
 def _identity(c):
+    from .codex_runtime import _host_identity
     p, r, m = c.personal, c.runtime, c.memory
     return (os.getpid(), threading.get_ident(), id(c), id(p), id(p.root), id(m), id(r),
             c.task_id, p.repository_id, digest(p.intent), digest(p.descriptor), digest(p.root.intent),
@@ -274,7 +279,7 @@ def _identity(c):
             id(c.track), str(c.track.root) if c.track is not None else None,
             id(c.track.archive) if c.track is not None else None,
             str(c.track.archive.directory) if c.track is not None else None,
-            tuple(sorted(digest(i) for i in c.track.originals)) if c.track is not None else ())
+            tuple(sorted(digest(i) for i in c.track.originals)) if c.track is not None else (), _host_identity())
 
 
 class _Read:
@@ -364,7 +369,7 @@ def archive(personal, memory, runtime, child):
     return master, receipt, contexts, actual, workers
 
 
-def _live(owner, *, product=False):
+def _live(owner, *, product=False, _capture=None):
     c = owner.c
     forbid_writes()
     first = _Read(owner, product=product)
@@ -387,18 +392,22 @@ def _live(owner, *, product=False):
     # current() normally rejects a closed frame; this last fence is explicitly
     # fresh and does not reopen one or return a cached owner/clock verdict.
     from .personal_episode import same_observation
-    same_observation(closing.active[2], c.memory.inspect())
+    actual = c.memory.inspect()
+    same_observation(closing.active[2], actual)
     c.episode_fence()
     now = c.clock()
     view = actual_consent["view"]
     require(type(now) is int and view["issued_at"] <= now < view["expires_at"],
             "Operation consent expired during final observation")
+    if _capture is not None:
+        _capture.update(deepcopy(closing.capture))
+        _capture.update(subject=actual, inputs=final_inputs, identity=closing.identity)
     return result
 
 
-def publication_live(publication):
+def publication_live(publication, *, _capture=None):
     """One publication read, never inherited by a later callback or effect."""
-    return _live(publication)
+    return _live(publication, _capture=_capture)
 
 
 def product_live(product):

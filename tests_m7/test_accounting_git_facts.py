@@ -86,6 +86,11 @@ class AccountingGitFactTests(unittest.TestCase):
         owner.transport.credential_binding = "changed"
         with self.assertRaises(ADPError):_inputs(owner, observed, product=False)
         owner.transport.credential_binding = "synthetic-only"
+        for option, undo in (("--assume-unchanged", "--no-assume-unchanged"), ("--skip-worktree", "--no-skip-worktree")):
+            git(self.root, "update-index", option, "product")
+            try:
+                with self.assertRaisesRegex(ADPError, "hidden index flags"):_inputs(owner, observed, product=False)
+            finally:git(self.root, "update-index", undo, "product")
         raw = (self.root / "product").read_bytes();(self.root / "product").write_bytes(b"Uncommitted source\n")
         with self.assertRaises(ADPError):_inputs(owner, observed, product=False)
         (self.root / "product").write_bytes(raw)
