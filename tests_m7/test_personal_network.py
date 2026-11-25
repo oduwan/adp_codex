@@ -14,6 +14,7 @@ from adp.network_git import GitHubCAS, GitHubTarget, UPDATE_REFS_MUTATION
 from adp.network_http import NetworkTransportError
 from adp.personal_network import PersonalDiscoveryRead, PersonalGitHubTransport
 from adp import personal_network_child as child
+from adp.runtime_limits import DEFAULTS
 
 
 class PersonalNetworkTests(unittest.TestCase):
@@ -34,7 +35,7 @@ class PersonalNetworkTests(unittest.TestCase):
 
     def reply(self, raw, seconds, *, child, environment=None):
         self.assertGreater(seconds, 0)
-        self.assertLessEqual(seconds, 5)
+        self.assertLessEqual(seconds, DEFAULTS.request_timeout_seconds)
         self.assertEqual(child, "personal_network_child.py")
         value = json.loads(raw)
         self.calls.append(value)

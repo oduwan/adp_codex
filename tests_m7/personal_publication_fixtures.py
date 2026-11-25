@@ -25,6 +25,7 @@ class PersonalObjectTransport:
     def __init__(self, fixture, root, target):
         self.f, self.target = fixture, target
         self.server = ObjectServer(root, target)
+        self.runtime_settings = self.server.runtime_settings
         self.server.scope_ids = (target.database_id, target.database_id + 1)
         self.credential_binding = "c" * 64
         self.credential_provenance = {"provider": "SYNTHETIC_GH_FIXTURE", "version": "NOT_GENUINE"}
@@ -35,7 +36,7 @@ class PersonalObjectTransport:
         assert (node_id, database_id) == (self.target.node_id, self.target.database_id)
 
     def request(self, method, path, body, *, seconds):
-        assert 0 < seconds <= 5
+        assert 0 < seconds <= self.runtime_settings.limits.request_timeout_seconds
         mutation = method == "POST" and (path != "/graphql" or "mutation " in body["query"])
         if mutation:
             assert self.authorize_write is not None and self.authorize_write() is True

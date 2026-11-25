@@ -21,6 +21,7 @@ from .policy_schema import fingerprint, fresh, ref, sha
 from .policy_types import Operation
 from .schema import encode, integer, require, string
 from .storage import sync_directory
+from .runtime_limits import network_operation
 
 
 class GitHubForgeHTTPTransport(GitHubHTTPTransport):
@@ -69,6 +70,7 @@ def delegation_subject(profile):
 class _Responses:
     def __init__(self, service):
         self.service = service
+        self.runtime_settings = service.runtime_settings
 
     def request(self, method, path, payload=None):
         try:
@@ -124,6 +126,7 @@ class GitHubProductForge(GitHubForgeBackend):
         self._dispatches[ticket] = (key, claim)
         return ticket
 
+    @network_operation("product_forge.pull")
     def pull(self, identity, *, revision, source_ref, base_ref, expected_base=None):
         """Fresh current PR observation, distinct from historical create intent."""
         require(type(identity) is dict, "Exact PR identity required")
@@ -148,6 +151,7 @@ class GitHubProductForge(GitHubForgeBackend):
             return None
         return item
 
+    @network_operation("product_forge.reviews")
     def reviews(self, identity, revision):
         """Complete review inventory, authenticated by the installed authority.
 
@@ -173,6 +177,7 @@ class GitHubProductForge(GitHubForgeBackend):
                 return tuple(rows[k] for k in sorted(rows))
         return None
 
+    @network_operation("product_forge.observe")
     def observe(self, key, operation, payload, *, attempted=False):
         self.service._check_stop()
         if operation != Operation.MERGE:
@@ -196,6 +201,7 @@ class GitHubProductForge(GitHubForgeBackend):
         except (ADPError, OSError, KeyError, TypeError):
             return ExternalObservation("UNKNOWN")
 
+    @network_operation("product_forge.submit")
     def submit(self, key, operation, payload, *, authorization=None, plan_digest=None, dispatch=None, validate=None):
         require(callable(validate), "Fresh final M1/M2/M3 validation callback required")
         require(dispatch in self._dispatches, "Fresh one-use forge dispatch required")

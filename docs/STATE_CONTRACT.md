@@ -205,3 +205,21 @@ only use the exact separately recorded workspace and Git-visible source for the
 same assignment. Older candidate-algorithm evidence remains historical and must
 be completed with its pinned implementation or explicitly reconciled. It is not
 silently relabeled as a current qualified candidate.
+
+Issue #50's explicitly approved `ACCOUNTING_EXPIRY_CONTINUATION` uses a closed
+**guard-registry v2** extension only after exact guard-first historical
+disposition and a distinct one-use operator episode approval. Outer state v3
+and task v1 stay unchanged. The original terminal task, all its guard records,
+epoch, generation and accepted UNKNOWN assignment are frozen. One explicit
+parent/child relation adds a new task in the same memory namespace, preserving
+global assignment sequence and immutable predecessor checkpoints. Monotonic
+role/check/resource usage cannot be replaced, downgraded or reset. No other
+task, third episode or generation claim is admitted by this policy.
+
+Legacy guard v1 remains the default. Readers never migrate implicitly; old
+readers reject guard v2. Private descriptor/plan/consent and separate exact-H3
+activation authenticate the new task. Neither a hash nor a child-like ID alone
+is authority. Completion receipt v2 additionally binds original archival proof,
+the qualified successor and all normal project acceptance evidence; legacy
+completion v1 and signed-provider behavior are unchanged. See the full
+[operator recovery protocol](operations/PERSONAL_RECOVERY.md).

@@ -132,8 +132,11 @@ unknown mergeability and unsupported protections need a supported alternative
 or human action. A Draft waits for separately authorized external readiness;
 no PR_READY endpoint is added.
 
-Normal-user stored `gh auth`, private pipes, fixed origin, supervised five-second
-requests/45-second dispatch and durable unknown-stop fencing are reused. Product
+Normal-user stored `gh auth`, private pipes, fixed origin, supervised requests
+and durable unknown-stop fencing are reused. The centralized
+[runtime profile](RUNTIME_LIMITS.md) bounds fresh operations; old consent/M2
+reservations retain their original ceilings. Reviewer/Developer execution budgets
+remain separate; these preferences never grant or extend Worker execution. Product
 mutation selection permits only Draft PR POST and exact-head merge PUT, not
 Git uploads, reports or issue writes. The [personal quiescence
 warrant](PERSONAL_PUBLICATION.md) remains conditional; it is not signed-App

@@ -15,6 +15,7 @@ from .config import Config
 from .errors import ADPError
 from .git import value
 from .schema import integer, require, string
+from .runtime_limits import http_request, read_operation, settings_for
 from .discovery_schema import (MAX_ITEMS, NAME, digest, json_value, key, text,
     validate_snapshot)
 from .discovery_types import (Coverage, Identity, Issue, PullRequest, Relation,
@@ -53,20 +54,22 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class GitHubHTTPTransport:
     """Only fixed-origin HTTPS GETs. No redirects, subprocesses or disk cache."""
-    def __init__(self, token: str):
+    def __init__(self, token: str, *, runtime_settings=None):
         require(type(token) is str and 0 < len(token) <= 4096
                 and all(32 < ord(c) < 127 for c in token), "A bounded authentication token is required")
         self._token = token
+        self.runtime_settings = settings_for(settings=runtime_settings)
         self._opener = urllib.request.build_opener(_NoRedirect())
 
-    def get(self, path: str) -> Response:
+    @http_request
+    def get(self, path: str, *, seconds=None) -> Response:
         require(type(path) is str and (PATH.fullmatch(path) or ENROLLMENT_PATH.fullmatch(path)),
                 "Unsupported read-only GitHub path")
         request = urllib.request.Request(API + path, method="GET", headers={
             "Authorization": "Bearer " + self._token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "adp-codex-read-only"})
         try:
-            response = self._opener.open(request, timeout=30)
+            response = self._opener.open(request, timeout=seconds)
         except urllib.error.HTTPError as exc:
             response = exc
         except (OSError, urllib.error.URLError):
@@ -296,6 +299,7 @@ class GitHubDiscoveryAdapter:
         require(match and match[1].lower() == self.name.lower(), "Selected Git remote does not identify the requested GitHub repository")
         return cfg.identity, value(cfg.root, "symbolic-ref", "--quiet", "HEAD"), value(cfg.root, "rev-parse", "HEAD")
 
+    @read_operation("discovery")
     def discover(self) -> Snapshot:
         self._halt, self._requests, self._coverage_items = False, 0, []
         self._now = self.clock()

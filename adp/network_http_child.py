@@ -13,13 +13,19 @@ import math
 import re
 import ssl
 import sys
+from pathlib import Path
 from urllib.parse import quote, unquote
 
 MAX_BODY_BYTES = 2 * 1024 * 1024
 MAX_INPUT_BYTES = MAX_BODY_BYTES + 8192
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
-MAX_SECONDS = 5
+# -I children import only this trusted sibling's pure resource definitions.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from runtime_limits import request_allowance
+else:
+    from .runtime_limits import request_allowance
 UPDATE_REFS_MUTATION = "mutation ADPUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }"
 
 
@@ -37,8 +43,8 @@ def _branch(value: object) -> bool:
 
 def validate_request(method: object, path: object, body: object, seconds: object) -> bytes:
     """Reject unrepresentable routes before looking up a credential or spawning."""
-    if (type(seconds) not in (int, float) or not math.isfinite(seconds)
-            or not 0 < seconds <= MAX_SECONDS or not _text(path, 1024)
+    request_allowance(seconds)
+    if (not _text(path, 1024)
             or any(c in path for c in ("?", "#", "\\", "\x00"))):
         raise ValueError("Invalid bounded HTTP request")
     if type(method) is not str or method not in ("GET", "POST"):

@@ -109,7 +109,7 @@ class NetworkHTTPTests(unittest.TestCase):
             with self.subTest(method=method, path=path), self.assertRaises(NetworkTransportError):
                 transport.request(method, path, body, seconds=1)
         self.assertEqual(authority.calls, before)
-        for seconds in (0, -1, 6, float("inf"), float("nan"), True):
+        for seconds in (0, -1, 31, float("inf"), float("nan"), True):
             with self.subTest(seconds=seconds), self.assertRaises(NetworkTransportError):
                 transport.request("POST", "/graphql", QUERY, seconds=seconds)
         self.assertEqual(authority.calls, before)

@@ -9,6 +9,7 @@ from .discovery_schema import json_value
 from .personal_storage import PersonalBlocked
 from .schema import require
 from .github_rules import retained_error
+from .runtime_limits import http_request
 
 
 class PersonalGitHubRead(GitHubHTTPTransport):
@@ -21,11 +22,15 @@ class PersonalGitHubRead(GitHubHTTPTransport):
     def get(self, path):
         if path != "/user" and not (ENROLLMENT_PATH.fullmatch(path) and "/rules/branches/" in path):
             return super().get(path)
+        return self._extra_get(path)
+
+    @http_request
+    def _extra_get(self, path, *, seconds=None):
         request = urllib.request.Request(API + path, method="GET", headers={
             "Authorization": "Bearer " + self._token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "adp-codex-read-only"})
         try:
-            response = self._opener.open(request, timeout=30)
+            response = self._opener.open(request, timeout=seconds)
         except urllib.error.HTTPError as exc:
             response = exc
         except (OSError, urllib.error.URLError):

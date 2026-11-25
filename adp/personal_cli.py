@@ -19,12 +19,20 @@ from .personal_runner import PersonalCoordinator
 from .personal_storage import PersonalBlocked, approval, assert_public, load_state, read_private
 from .project_validation_github import GitHubValidationHTTP
 from .schema import require
+from .runtime_limits import load_runtime_limits
 
 ACTIONS = ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect", "run", "resume", "handoff")
+
+
+def _read_transports(token):
+    settings = load_runtime_limits()
+    return (PersonalGitHubRead(token, runtime_settings=settings),
+            GitHubValidationHTTP(token, runtime_settings=settings))
 PUBLICATION = ("publication-preview", "publish", "publication-status")
 ARCHIVAL = ("archive-preview",)
 from .personal_product_cli import PRODUCT
 from .personal_track_cli import TRACK, WRITES
+from .personal_recovery_cli import ACTIONS as RECOVERY, WRITES as RECOVERY_WRITES
 
 
 def choices(parser):
@@ -62,6 +70,8 @@ def add_commands(commands):
 
 
 def publication_commands(stages, *, codex=False):
+    from .personal_recovery_cli import commands as recovery_commands
+    recovery_commands(stages, codex=codex)
     for action in ARCHIVAL:
         parser = stages.add_parser(action, help="Read-only expired NOTRUN archival proposal; no mutation authority")
         parser.add_argument("--repo", type=Path, required=True)
@@ -95,7 +105,7 @@ def publication_commands(stages, *, codex=False):
             parser.add_argument("--accept-plan-unavailable", action="store_true", help="Separately accept the exact proposal's private personal plan limitation; waive no project requirement")
 
 
-def retained(args):
+def retained(args, *, resolve=True):
     checkout = local_checkout(args.repo, args.remote)
     directory = args.directory
     if directory is None:
@@ -121,23 +131,46 @@ def retained(args):
             and checkout["repository"] == p["repository"]["name"] and checkout["remote"] == p["checkout"]["remote"]
             and str(args.repo.absolute()) in (p["checkout"]["path"], p["feature"]["workspace"]),
             "Reconnect only to the exact personal repository, issue and selected workspace")
+    if resolve and args.enroll_command not in ARCHIVAL + RECOVERY:
+        from .personal_episode import effective
+        personal = effective(personal)
     return personal
 
 
 def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
+    from .personal_history_track import READ_TRANSPORT, cli_port
+    port = None
+    # Existing ordinary commands already admit native project reads. Resolve
+    # their historical read route before effective() can need it. Archival
+    # observation must never initialize credentials or a network adapter.
+    if args.enroll_command not in ARCHIVAL + RECOVERY + ("inspect", "plan", "apply", "capabilities"):
+        try:
+            port = cli_port(retained(args, resolve=False), publication_transport)
+        except (ADPError, OSError, KeyError, TypeError, ValueError, AttributeError):
+            pass  # The ordinary closed subject validation below reports it.
+    binding = READ_TRANSPORT.set(port) if port is not None else None
+    try:
+        return _run(args, transport=transport, ci_transport=ci_transport, runtime=runtime, clock=clock,
+            publication_transport=publication_transport)
+    finally:
+        if binding is not None:
+            READ_TRANSPORT.reset(binding)
+
+
+def _run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
     action = args.enroll_command
     report = {"schema_version": 1, "backend": "PERSONAL", "command": action,
-        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") + WRITES else "READ_ONLY",
+        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") + WRITES + RECOVERY_WRITES else "READ_ONLY",
         "status": "UNKNOWN", "questions": [], "plan": None, "approval": None, "result": None, "blockers": [],
         "runtime_qualification": "NOTRUN"}
     try:
         if action == "capabilities":
-            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL), "scope": "LOCAL_DRAFT",
+            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY), "scope": "LOCAL_DRAFT",
                 "providers": "NOT_REQUIRED", "external_operations": "NOT_DELEGATED",
                 "publication": {"status": "AVAILABLE_UNDER_SEPARATE_EXACT_APPROVAL", "credential_envelope": "OPERATOR_ADMINISTRATIVE_QUIESCENCE"}})
             assert_public(report)
             return report, 0
-        require(action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL, "Unsupported personal command")
+        require(action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY, "Unsupported personal command")
         require(not any(getattr(args, name, None) for name in ("operator_trust", "operator_socket", "operator_profile")),
                 "Choose personal mode or the unchanged signed-provider mode; never convert an enrollment")
         require(getattr(args, "rounds", 1) == 1 and getattr(args, "maximum_parallel", 1) == 1,
@@ -149,6 +182,15 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, pu
             report.update(status=view["status"], result=view)
             assert_public(report)
             return report, 0
+        if action in RECOVERY:
+            from .personal_recovery_cli import dispatch
+            if transport is None and action not in ("archive-observe", "archive-status", "archive-revoke", "continuation-status"):
+                token = discovery_token("GH_TOKEN")
+                transport, ci_transport = _read_transports(token)
+            result = dispatch(args, retained(args), transport=transport, ci_transport=ci_transport, runtime=runtime, clock=clock)
+            report.update(result)
+            assert_public(report)
+            return report, 4 if report["status"].startswith("BLOCKED") else 0
         if action in TRACK:
             from .personal_track_cli import dispatch
             if transport is None and action in ("track-preview", "track-enroll", "track-status"):
@@ -194,7 +236,7 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, pu
         if transport is None and (action in ("inspect", "plan", "apply", "preview", "run", "resume", "reconnect", "doctor")
                                   or (getattr(args, "for_operation", None) in ("run", "resume"))):
             token = discovery_token(getattr(args, "token_env", "GH_TOKEN"))
-            transport, ci_transport = PersonalGitHubRead(token), GitHubValidationHTTP(token)
+            transport, ci_transport = _read_transports(token)
         if action in ("inspect", "plan", "apply"):
             observation, owner = selection(args.repo, args.remote, args.github_id, transport)
             if action == "inspect":
