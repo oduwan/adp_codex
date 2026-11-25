@@ -269,8 +269,12 @@ class PersonalProduct:
                 "validation": self.validation_binding() if operation == "MERGE" else None,
                 "product_review": self.record()["review"] if operation == "MERGE" else None,
                 "policy_assent": ASSENT, "administrative_quiescence_warrant": WARRANT,
-                "merge_envelope": ENVELOPE, "generation": self.c.memory.inspect()["state"]["generation"],
-                "checkpoint": self.c.memory.inspect()["local_head"], "issued_at": issued, "expires_at": expires, "nonce": nonce}
+                "merge_envelope": ENVELOPE}
+            # Observe after all preceding callbacks, at the original first-read
+            # position. Generation and checkpoint belong to this same snapshot.
+            observed = self.c.memory.inspect()
+            view.update(generation=observed["state"]["generation"], checkpoint=observed["local_head"],
+                issued_at=issued, expires_at=expires, nonce=nonce)
             if "availability" in facts["policy"]:
                 view["plan_disabled_rules_assent"] = PLAN_ASSENT
             binding = self.transport.credential_binding

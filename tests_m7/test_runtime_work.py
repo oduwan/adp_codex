@@ -1,5 +1,7 @@
 """Fresh-read parity, explicit preflight gates and paired disposable costs."""
 from contextlib import contextmanager
+from copy import deepcopy
+from dataclasses import replace
 import fcntl
 import hashlib
 import json
@@ -17,6 +19,7 @@ from adp.git import git, value
 from adp.personal_publication import PersonalPublication
 from adp.personal_recovery import administration_snapshot, _head_ref
 from adp.runtime_limits import DEFAULTS, LEGACY, RuntimeLimits, RuntimeSettings, current_budget, load_runtime_limits
+from adp.schema import key
 from test_config import run, snapshot
 from test_runtime_limits import service
 
@@ -111,6 +114,144 @@ class RuntimeWorkTests(unittest.TestCase):
         pub.service=service(); pub.record=Mock(return_value=None)
         pub.save=Mock(); pub.initialize=Mock(); pub.local=Mock(); pub.remote=Mock()
         return pub
+
+    def policy_projection(self):
+        # Real M3 decisions, with the accepted out-of-band synthetic safety and
+        # signature fixture. No forge, worker, or durable publication effect.
+        from test_policy import PolicyFixture
+        fixture=PolicyFixture(methodName="runTest");fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.adapter.snapshot=replace(fixture.snapshot,documents=())
+        task=fixture.task
+        observed={"state":{"generation":task.generation,"progress_guard":{"task_epochs":{key(task.task_id):task.task_epoch}}},
+                  "tasks":{key(task.task_id):{"iteration":task.iteration}}}
+        pub=PersonalPublication.__new__(PersonalPublication)
+        pub.c=SimpleNamespace(task_id=task.task_id,memory=SimpleNamespace(inspect=Mock(side_effect=lambda:deepcopy(observed))),
+            source_authors=Mock(return_value=task.authors))
+        pub.personal=SimpleNamespace(repository_id=task.repository_id,intent={"governance":[]})
+        pub.target=SimpleNamespace(ref=task.source_ref,branch=task.source_ref.removeprefix("refs/heads/"))
+        pub.cfg=object();pub.service=service();pub.guard=object();pub.clock=lambda:fixture.now
+        pub.live=Mock(return_value={"view":{"expected_old":task.revision,"revision":task.revision,
+            "issued_at":90,"expires_at":200},"requirement":task.requirement_id})
+        pub.remote=Mock(return_value=task.revision);pub.rules=Mock(return_value=fixture.rules)
+        pub.proof=Mock(side_effect=lambda purpose,subject,*a:fixture.authority.sign(subject,purpose.removeprefix("policy/")))
+        pub.verify=fixture.authority.verify
+        return pub,fixture,observed
+
+    def test_publication_task_projection_uses_one_snapshot_and_fresh_m3(self):
+        pub,f,observed=self.policy_projection()
+        with patch("adp.personal_publication.GitHubPolicyAdapter",return_value=f.adapter), \
+                patch("adp.personal_publication.ReservedSafety",return_value=f.safety):
+            provider,plan,authorization=pub.provider(object())
+            self.assertEqual(plan.task,f.task)
+            self.assertEqual(provider.decide(plan,authorization).effect,"ALLOW")
+            pub.c.memory.inspect.assert_called_once_with()
+            previous=f.safety.calls
+            updated,approval=pub.reauthorize(provider,plan)
+            self.assertEqual(updated,plan);self.assertEqual(provider.decide(updated,approval).effect,"ALLOW")
+            self.assertGreater(f.safety.calls,previous)
+            # A new invocation reads another actual snapshot. No result is
+            # retained in the coordinator/provider or reused across calls.
+            pub.provider(object())
+            self.assertEqual(pub.c.memory.inspect.call_count,2)
+
+    def test_publication_projection_refuses_changed_or_missing_canonical_state(self):
+        for field in ("generation","task_epoch","iteration"):
+            pub,f,observed=self.policy_projection()
+            def change(field=field):
+                baseline=replace(f.safety.value.guard.baseline,**{field:getattr(f.safety.value.guard.baseline,field)+1})
+                f.safety.value=replace(f.safety.value,guard=replace(f.safety.value.guard,baseline=baseline),approval=baseline)
+                return f.task.authors
+            pub.c.source_authors.side_effect=change
+            with self.subTest(field=field),patch("adp.personal_publication.GitHubPolicyAdapter",return_value=f.adapter), \
+                    patch("adp.personal_publication.ReservedSafety",return_value=f.safety):
+                with self.assertRaisesRegex(ADPError,"exact admitted task"):pub.provider(object())
+            pub.c.memory.inspect.assert_called_once_with()
+        pub,f,observed=self.policy_projection()
+        observed["tasks"].clear()
+        with patch("adp.personal_publication.GitHubPolicyAdapter",return_value=f.adapter), \
+                patch("adp.personal_publication.ReservedSafety",return_value=f.safety):
+            with self.assertRaises(KeyError):pub.provider(object())
+        self.assertEqual(f.safety.calls,0)
+
+    def product_projection(self):
+        from adp.personal_product import PersonalProduct
+        product=PersonalProduct.__new__(PersonalProduct)
+        product.service=service();product.clock=lambda:100
+        product.personal=SimpleNamespace(plan={"window":{"expires_at":1000},"repository":{"id":17},
+            "issue_id":"opaque","original_digest":"d"*64},intent={"approval":"original"},feature=self.root)
+        observed={"state":{"generation":1},"local_head":"a"*40};events=[]
+        def inspect():events.append("inspect");return deepcopy(observed)
+        product.c=SimpleNamespace(memory=SimpleNamespace(inspect=Mock(side_effect=inspect)),revision=lambda:"b"*40)
+        product.target=SimpleNamespace(ref="refs/heads/work/task",branch="work/task")
+        product.local=Mock(return_value="review-seal")
+        product.facts=Mock(return_value={"policy":{}})
+        product.publication=SimpleNamespace(current_original=lambda:{"verified":"original"})
+        product.record=Mock(return_value=None)
+        product.forge=SimpleNamespace(inventory=Mock(return_value=[]))
+        def value(*a):events.append("source");return "c"*40
+        product.port=SimpleNamespace(_value=value)
+        def token(view,binding):events.append("token");return json.dumps(view,sort_keys=True)+binding
+        product.token=Mock(side_effect=token);product.transport=SimpleNamespace(credential_binding="actual")
+        return product,observed,events
+
+    def test_product_proposal_coheres_generation_checkpoint_without_moving_observation(self):
+        product,observed,events=self.product_projection()
+        def administration(*a):
+            events.append("administration");observed.update(state={"generation":2},local_head="d"*40)
+            return {"fixed":"administration"}
+        with patch("adp.personal_product.administration",side_effect=administration):
+            result=product.proposed("PR",title="Original outcome",body="Refs #1")
+        self.assertEqual((result["result"]["generation"],result["result"]["checkpoint"]),(2,"d"*40))
+        self.assertEqual(events,["source","administration","inspect","token"])
+        product.c.memory.inspect.assert_called_once_with()
+        self.assertEqual(product.forge.inventory.call_count,1)
+
+    def test_product_proposal_reobserves_changes_and_refuses_missing_or_expired_state(self):
+        product,observed,events=self.product_projection()
+        with patch("adp.personal_product.administration",return_value={"fixed":"administration"}), \
+                patch("adp.personal_product.secrets.token_hex",return_value="a"*32):
+            first=product.proposed("PR",title="Original outcome",body="Refs #1")
+            observed.update(state={"generation":2},local_head="d"*40)
+            second=product.proposed("PR",title="Original outcome",body="Refs #1")
+            self.assertNotEqual(first["approval"],second["approval"])
+            self.assertEqual(product.c.memory.inspect.call_count,2)
+            del observed["local_head"]
+            with self.assertRaises(KeyError):product.proposed("PR",title="Original outcome",body="Refs #1")
+            self.assertEqual(product.token.call_count,2)
+            product.clock=lambda:1000
+            before=product.c.memory.inspect.call_count
+            with self.assertRaises(ADPError):product.proposed("PR",title="Original outcome",body="Refs #1")
+            self.assertEqual(product.c.memory.inspect.call_count,before)
+
+    def test_paired_real_memory_projection_costs_preserve_disposable_state(self):
+        from test_memory import MemoryFixture
+        f=MemoryFixture(methodName="runTest");f.setUp();self.addCleanup(f.doCleanups)
+        f.initialize();f.memory.upgrade_guard(authorized=True)
+        identifier="projection:original";f.memory.add_task(identifier,f.sha)
+        memory=f.memory;task_key=key(identifier)
+        def original():
+            state=memory.inspect()["state"]
+            return state["generation"],state["progress_guard"]["task_epochs"][task_key],memory.inspect()["tasks"][task_key]["iteration"]
+        def reused():
+            actual=memory.inspect();state=actual["state"]
+            return state["generation"],state["progress_guard"]["task_epochs"][task_key],actual["tasks"][task_key]["iteration"]
+        before=snapshot(f.base);rows={"baseline":[],"reused":[]};calls={"baseline":[],"reused":[]}
+        for index in range(20):
+            order=("baseline","reused") if index%2==0 else ("reused","baseline")
+            results=[]
+            for name in order:
+                with patch.object(memory,"inspect",wraps=memory.inspect) as inspections:
+                    started=time.perf_counter();results.append((original if name=="baseline" else reused)())
+                    rows[name].append(time.perf_counter()-started);calls[name].append(inspections.call_count)
+            self.assertEqual(results[0],results[1])
+        self.assertEqual(calls,{"baseline":[2]*20,"reused":[1]*20})
+        self.assertEqual(snapshot(f.base),before)
+        def stats(values):
+            return {"n":len(values),"median_seconds":statistics.median(values),
+                    "empirical_p95_seconds":sorted(values)[math.ceil(.95*len(values))-1],"maximum_seconds":max(values)}
+        print("PAIRED_MEMORY_PROJECTION_COSTS "+json.dumps({"scope":"actual Memory.inspect component only; no full publication or runtime proof",
+            "baseline":stats(rows["baseline"]),"reused":stats(rows["reused"]),"samples_seconds":rows,"inspection_counts":calls},sort_keys=True),flush=True)
 
     def test_exact_fresh_proposal_is_computed_once_inside_lock_before_saving(self):
         pub=self.publication(); sentinel=RuntimeError("stop after observed intent")

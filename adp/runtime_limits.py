@@ -26,7 +26,7 @@ class Parameter:
 
 PARAMETERS = MappingProxyType({
     "request_timeout_seconds": Parameter(3, 10, 30),
-    "operation_timeout_seconds": Parameter(40, 120, 300),
+    "operation_timeout_seconds": Parameter(40, 150, 300),
     "request_limit": Parameter(64, 128, 256),
 })
 

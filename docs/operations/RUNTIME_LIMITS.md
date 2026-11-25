@@ -62,7 +62,7 @@ floats are not integers for this contract.
 | JSON key | Minimum | Default | Maximum |
 | --- | ---: | ---: | ---: |
 | `request_timeout_seconds` | 3 | 10 | 30 |
-| `operation_timeout_seconds` | 40 | 120 | 300 |
+| `operation_timeout_seconds` | 40 | 150 | 300 |
 | `request_limit` | 64 | 128 | 256 |
 
 The optional file uses the existing bounded, duplicate-key rejecting JSON reader:
@@ -70,7 +70,7 @@ The optional file uses the existing bounded, duplicate-key rejecting JSON reader
 ```json
 {
   "request_timeout_seconds": 10,
-  "operation_timeout_seconds": 120,
+  "operation_timeout_seconds": 150,
   "request_limit": 128
 }
 ```
@@ -96,6 +96,15 @@ Values are never clamped. Fallback is confined to configuration loading and
 validation, not operation execution. Cancellation and unrelated product errors
 still propagate. Detailed diagnostics remain private, outside portable memory,
 Worker prompts and GitHub product reports.
+
+The operator-approved default is now 150 seconds. A valid configured 120-second
+value remains 120. Previously issued consent, grants, permits and absolute
+deadlines keep their exact original caps; changing a default cannot renew them.
+The failed 120-second capture at `2b0ecd6` remains historical failure evidence.
+Neither the new default nor focused tests qualify complete publication under
+150 seconds. That integration rerun needs separate operator release. See the
+[static publication call graph](PUBLICATION_CALL_GRAPH.md) for freshness classes
+and the two local snapshot reuses.
 
 ## Deadline and measurement semantics
 

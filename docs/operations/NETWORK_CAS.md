@@ -125,7 +125,7 @@ preflight precedes uploads. Bounds: SHA1, at most16 missing commits/two parents,
 noncanonical dates/messages/order and unrepresentable path bytes are unsupported.
 
 An outer operation uses the centralized [runtime profile](RUNTIME_LIMITS.md),
-with defaults of120s/128 requests and10s per request. Nested phases share its
+with defaults of150s/128 requests and10s per request. Nested phases share its
 absolute deadline/counter; no further request launches after exhaustion.
 Existing consent/permits remain literal and can only reduce these allowances.
 The1MiB response cap, supervisor cancellation/reaping and local Git bounds are

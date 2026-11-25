@@ -484,10 +484,13 @@ class PersonalPublication:
         protection = Protection(self.target.ref, old, True, True, False, (), 1, (), (), reference, self.clock(), expires)
         provider.protections = (replace(protection, evidence=self.proof("policy/protection", provider.protection_subject(protection, snapshot),
             "protection", {"protection": data(protection), "snapshot": data(snapshot)})),)
-        state = self.c.memory.inspect()["state"]
+        # These Task fields describe one canonical observation. Later policy
+        # and dispatch fences still make their own independent observations.
+        observed = self.c.memory.inspect()
+        state = observed["state"]
         task = Task(self.personal.repository_id, self.c.task_id, self.target.branch.split("/")[-1], row["view"]["revision"], self.target.ref,
             row["requirement"], state["generation"], state["progress_guard"]["task_epochs"][key(self.c.task_id)],
-            self.c.memory.inspect()["tasks"][key(self.c.task_id)]["iteration"], self.c.source_authors())
+            observed["tasks"][key(self.c.task_id)]["iteration"], self.c.source_authors())
         plan = provider.plan(task, Request(Operation.PUSH))
         authorization = Authorization(self.proof("policy/operation", PolicyProvider.authorization_subject(plan), "operation", data(plan)))
         require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Actual M3 refused publication")

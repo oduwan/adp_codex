@@ -56,6 +56,61 @@ class RuntimeLimitsTests(unittest.TestCase):
                     result = load_runtime_limits(self.write({name: value}))
                     self.assertEqual(result.limits.values(), {**DEFAULTS.values(), name: value})
                     self.assertEqual(result.diagnostics, ())
+
+    def test_default150_keeps_configured120_and_original_bounds(self):
+        self.assertEqual({name:(p.minimum,p.default,p.maximum) for name,p in PARAMETERS.items()},
+            {"request_timeout_seconds":(3,10,30), "operation_timeout_seconds":(40,150,300),
+             "request_limit":(64,128,256)})
+        self.assertEqual(load_runtime_limits(self.path).limits.operation_timeout_seconds,150)
+        retained = load_runtime_limits(self.write({"operation_timeout_seconds":120,"request_limit":256}))
+        self.assertEqual((retained.limits.operation_timeout_seconds,retained.limits.request_limit),(120,256))
+        partial = load_runtime_limits(self.write({"operation_timeout_seconds":120,"request_limit":True}))
+        self.assertEqual((partial.limits.operation_timeout_seconds,partial.limits.request_limit),(120,128))
+        self.assertEqual(partial.diagnostics[0].parameter,"request_limit")
+
+    def test_original120_consent_and_m2_permit_cannot_be_renewed_by_default150(self):
+        from copy import deepcopy
+        from test_guard import GuardFixture
+        from adp.execution_policy import ReservedSafety
+        from adp.guard_types import Action, ActionKind
+        from adp.policy_types import Task
+        from adp.schema import key
+        clock, client = Clock(), service()
+        view={"runtime_limits":{"request_timeout_seconds":10,"operation_timeout_seconds":120,"request_limit":128},
+              "expires_at":2000}
+        original=deepcopy(view)
+        with self.assertRaises(ADPError), patch("time.monotonic",clock), client.bounded() as budget:
+            self.assertEqual(budget.end,clock.now+150)
+            bind_consent(view,1000)
+            end=budget.end
+            clock.advance(1)
+            bind_consent({"runtime_limits":DEFAULTS.values(),"expires_at":2000},1001)
+            self.assertEqual(budget.end,end)
+            self.assertEqual(view,original)
+            clock.advance(119)
+            with self.assertRaises(ADPError):client.request("GET","/not-launched")
+        self.assertEqual(client.transport.calls,[])
+        fixture=GuardFixture(methodName="runTest");fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture.now=1000
+        permit=fixture.guard.begin("task-A",fixture.identifier,
+            Action("original-author",ActionKind.CHECK,"original120","exact stop",seconds=120))
+        raw=fixture.memory.file.read_bytes()
+        observed=fixture.memory.inspect()
+        state, task=observed["state"],observed["tasks"][key("task-A")]
+        claim=Task(fixture.memory.config.identity,"task-A","task-a",task["source_revision"],"refs/heads/work/task-a",
+            fixture.identifier,state["generation"],state["progress_guard"]["task_epochs"][key("task-A")],task["iteration"],("original-author",))
+        inspect=fixture.memory.inspect
+        fixture.memory.inspect=lambda:{**inspect(),"local_owner":True,"local_head":"d"*40}
+        clock,client=Clock(),service()
+        with self.assertRaises(ADPError),patch("time.monotonic",clock),client.bounded() as budget:
+            ReservedSafety(fixture.guard,permit).observe(claim)
+            self.assertEqual(budget.end,1120)
+            clock.advance(10);fixture.now=1010
+            ReservedSafety(fixture.guard,permit).observe(claim)
+            self.assertEqual(budget.end,1120)
+            clock.advance(110);fixture.now=1120
+            with self.assertRaises(ADPError):ReservedSafety(fixture.guard,permit).observe(claim)
+        self.assertEqual(fixture.memory.file.read_bytes(),raw)
         self.assertEqual(len(PARAMETERS), 3)
 
     def test_individual_invalid_values_fall_back_without_losing_valid_parameters(self):
@@ -159,7 +214,7 @@ class RuntimeLimitsTests(unittest.TestCase):
                 self.assertEqual(client.measurements[-1]["transport_calls"], 1)
 
     def test_operation_deadlines_and_short_remainders_are_never_renewed(self):
-        for seconds in (40, 120, 300):
+        for seconds in (40, 120, 150, 300):
             settings = load_runtime_limits(self.write({"operation_timeout_seconds":seconds}))
             one, two, clock = service(settings), service(settings), Clock()
             with self.subTest(seconds=seconds), patch("time.monotonic", clock):
