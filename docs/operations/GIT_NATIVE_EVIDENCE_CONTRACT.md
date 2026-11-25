@@ -112,6 +112,18 @@ operation. They are not a module-global cache or another canonical identity.
 Required current object bytes/presence in the actual selected stores are checked
 again at write admission; missing/corrupt objects do not inherit a prior PASS.
 
+Select the private capture keys historical_basis, historical_engine and
+historical_objects. historical_basis has exactly the three fields in section1;
+historical_objects contains the existing bounded actual-byte witness groups,
+not another identity. For proposal construction, thread an optional private
+_history_capture through PersonalPublication.local → PersonalCoordinator.fresh
+→ its EXISTING final live call → Episode._active_view(_capture=...). Do not
+add another full historical proof solely to retrieve this metadata. Compare
+the captured current subject with the already existing final proposal Memory
+inspection before using it. For dispatch, expose the successful closing proof's
+capture through the existing live/validate_dispatch boundary; no public runtime
+controller or persistent context object is added.
+
 Raw evidence must be read through owned, bounded, protected actual file
 descriptors with exact typed contents and hashes. A later file hash cannot
 authenticate a different transient record previously consumed.
@@ -350,8 +362,11 @@ qualification. Unknown required classes remain a disclosed capability gate.
 
 ## 7. Exact version and legacy cutover
 
-D2 adds the minimal historical identity/current-reader binding to a new explicit
-version of the EXISTING publication view/record and exact approval digest.
+D2 selects accounting-publication record schema_version2 with publish2 approval
+prefix. Its view adds historical_basis (exactly the section1 value),
+historical_engine (bound original master.engine) and reader_engine (actual
+current engine_digest). The EXISTING view/token/action_id digest binds all
+three; no additional approval file is created. Old readers refuse schema2.
 No M1/M2 schema, separate consent journal or additional effect record is added.
 D2 does not shorten the mutation fence; D3 replaces it only after D2 review.
 
