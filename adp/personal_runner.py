@@ -117,11 +117,14 @@ class PersonalCoordinator:
                     and type(row["gates"]) is list and len(row["gates"]) <= 3, "Malformed personal phase or finite accounting")
         return row
 
-    def check_administration(self, row=None):
-        require(administration(Path(self.personal.plan["checkout"]["path"])) == self.personal.plan["administration"],
+    def check_administration(self, row=None, *, _reader=None):
+        reader = _reader or administration
+        if self.episode and _reader is None:
+            from .personal_history_product_git import administration as reader
+        require(reader(Path(self.personal.plan["checkout"]["path"])) == self.personal.plan["administration"],
                 "Original product Git administration changed")
         if row is not None and row["feature_administration"] is not None:
-            require(administration(self.personal.feature) == row["feature_administration"], "Feature Git administration changed")
+            require(reader(self.personal.feature) == row["feature_administration"], "Feature Git administration changed")
 
     def save(self, row):
         self.live()

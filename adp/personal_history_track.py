@@ -155,9 +155,8 @@ def scope_proof(c):
 
 def exact_ref(c, new_refs):
     from .config import Config
-    from .execution_ports import GitExecutionPort
     from .git import value
-    from .personal_git import administration
+    from .personal_history_product_git import HistoryReadPort, administration, observe
     p, run = c.personal.plan, c.record()
     target = "refs/heads/" + p["feature"]["branch"]
     feature = run["actions"].get("feature") if run else None
@@ -167,11 +166,11 @@ def exact_ref(c, new_refs):
         require(feature["status"] != "OBSERVED", "Observed feature disappeared")
         return
     source = Path(p["checkout"]["path"]) if new_refs[target] == p["checkout"]["head"] else c.personal.feature
-    port = GitExecutionPort(Config.discover(source, remote=p["checkout"]["remote"], repository_id=c.personal.repository_id),
+    port = HistoryReadPort(Config.discover(source, remote=p["checkout"]["remote"], repository_id=c.personal.repository_id),
         bound_git_directory=Path(administration(source)["directory"]["path"]))
     candidates = [feature] if new_refs[target] == p["checkout"]["head"] else [a for a in run["actions"].values()
         if a["operation"] == "COMMIT" and a["target"] == a["source_ref"] == target]
-    matches = [a for a in candidates if (result := port.observe(a)).status == "PRESENT" and result.revision == new_refs[target]
+    matches = [a for a in candidates if (result := observe(port, a, new_refs[target])).status == "PRESENT" and result.revision == new_refs[target]
         and (a["observation"] is None or a["observation"] == data(result))]
     require(len(matches) == 1 and value(source, "merge-base", p["checkout"]["head"], new_refs[target]) == p["checkout"]["head"],
             "Current ref is not the exact native M7 effect with original ancestry")

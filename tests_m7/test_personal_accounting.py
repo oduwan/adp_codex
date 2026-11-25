@@ -262,6 +262,16 @@ class AccountingCandidateTests(AccountingFixture):
         atomic(stop, raw)
         self.assertEqual(self.c.memory.inspect(), before)
         self.assertEqual(projection.review_binding(), binding)
+        # A replacement of an ancestry commit lies outside a HEAD/tree fact
+        # witness. The full fresh administration/ref proof must still refuse.
+        from adp.git import git
+        replacement = "refs/replace/" + self.personal.plan["checkout"]["head"]
+        git(self.personal.feature, "update-ref", replacement, self.c.revision(), "0" * 40)
+        try:
+            with self.assertRaises(ADPError):projection.review_binding()
+        finally:git(self.personal.feature, "update-ref", "-d", replacement, self.c.revision())
+        self.assertEqual(self.c.memory.inspect(), before)
+        self.assertEqual(projection.review_binding(), binding)
 
     def test_one_append_only_episode_preserves_parent_and_scope_quota(self):
         result = self.episode()

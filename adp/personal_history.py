@@ -132,7 +132,8 @@ def _archived_view(personal, *, memory=None, runtime=None, _child=None):
         contexts.add(actual.context_id)
     old = now["state"]["progress_guard"]["requirements"][worker(master["request"])["requirement"]]
     require(old == master["guard_state"]["progress_guard"]["requirements"][worker(master["request"])["requirement"]], "Historical STOP_UNSAFE latch changed")
-    PersonalCoordinator.check_administration(c, run)
+    from .personal_history_product_git import administration
+    PersonalCoordinator.check_administration(c, run, _reader=administration)
     require(source_seal(root.feature) == proof["seals"]["feature"]
             and source_seal(root.feature, tuple(root.plan["paths"])) == proof["seals"]["outside"]
             and (now["state"]["owner"] is None or source_seal(Path(root.plan["checkout"]["path"])) == proof["seals"]["outer"]),

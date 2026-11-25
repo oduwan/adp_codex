@@ -171,6 +171,15 @@ or pending transaction. No positive decision is cached across callbacks. Raw
 receipts, source, administration, host, consent and Git protections remain
 freshly verified; the existing operation deadlines and request caps still apply.
 
+The accounting-only historical Git reader batches each command's actual pin
+queries and may retain bounded decoded immutable commit facts. Every reuse
+rehashes the actual HEAD commit and complete retained tree/blob closure, then
+re-evaluates current symbolic source, action and ancestry. Configuration,
+physical administration, replacement refs and all authority stay fresh. It
+caches neither PRESENT nor ALLOW and cannot submit Git effects. Unsupported
+optimization envelopes use the unchanged native observer; missing or corrupt
+objects refuse. Other personal and signed Git execution paths are unchanged.
+
 The engineering tests use synthetic receipts/disposable repositories. Genuine
 M8 execution, live archival application, installation, adoption, acceptance,
 merge and advancement remain **NOT_AUTHORIZED / ON HOLD** pending separate
