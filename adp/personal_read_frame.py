@@ -68,6 +68,8 @@ def consumed(path, raw=None, metadata=None):
         return
     require(stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid()
             and metadata.st_nlink == 1 and not metadata.st_mode & 0o077
+            and (frame.c.track is None or not path.is_relative_to(frame.c.track.root / "archive")
+                 or stat.S_IMODE(metadata.st_mode) == 0o600)
             and len(raw) == metadata.st_size <= _private_limit(frame.c, path) and expected is not None
             and hashlib.sha256(raw).hexdigest() == expected,
             "Actual private proof differs from the sealed protected input")
@@ -92,7 +94,9 @@ def ticket_bytes(path, limit):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         metadata = os.fstat(fd)
-        require(stat.S_ISREG(metadata.st_mode) and metadata.st_size <= limit, "Unsafe bounded ticket proof")
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_size <= limit
+                and metadata.st_uid == os.geteuid() and metadata.st_nlink == 1
+                and stat.S_IMODE(metadata.st_mode) == 0o600, "Unsafe bounded ticket proof")
         raw = os.read(fd, limit + 1)
         consumed(path, raw, metadata)
         return raw
@@ -103,7 +107,10 @@ def ticket_bytes(path, limit):
 def _private_inputs(c):
     """Closed, bounded private JSON inventory, including optional absence."""
     from .config import safe_path
+    from .personal_storage import private_directory
     from .ticket_preparation import MAX_ARCHIVE, MAX_ARTIFACTS
+    for path in (c.personal.root.directory, c.personal.root.state, c.personal.directory, c.personal.state):
+        private_directory(path)
     roots = {c.personal.state, c.personal.root.state, c.personal.directory,
              c.runtime.directory, c.authority.directory}
     if c.track is not None:
@@ -120,6 +127,8 @@ def _private_inputs(c):
         info = safe_path(directory).stat()
         require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
                 and not info.st_mode & 0o022, "Unverified private input directory")
+        if c.track is not None and directory == c.track.root / "archive":
+            require(stat.S_IMODE(info.st_mode) == 0o700, "Private ticket archive requires mode-0700 directory")
         children = []
         with os.scandir(directory) as scan:
             for entry in scan:
@@ -130,8 +139,9 @@ def _private_inputs(c):
                 if stat.S_ISDIR(info.st_mode):
                     children.append((path, depth + 1))
                 elif entry.name.endswith(".json"):
-                    files[str(path)] = _private_digest(path, limit=_private_limit(c, path))
-                    if c.track is not None and path.is_relative_to(c.track.root / "archive"):
+                    ticket = c.track is not None and path.is_relative_to(c.track.root / "archive")
+                    files[str(path)] = _private_digest(path, limit=_private_limit(c, path), exact_mode=0o600 if ticket else None)
+                    if ticket:
                         ticket_total += info.st_size
                         tickets += 1
                     else:
@@ -151,7 +161,7 @@ def _private_inputs(c):
     return files, roots
 
 
-def _private_digest(path, *, limit=None):
+def _private_digest(path, *, limit=None, exact_mode=None):
     """Protected bounded byte observation, including honest absence."""
     from .config import safe_path
     from .personal_storage import LIMIT
@@ -164,7 +174,8 @@ def _private_digest(path, *, limit=None):
     try:
         info = os.fstat(fd)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1
-                and not info.st_mode & 0o077 and info.st_size <= limit, "Unverified private observation input")
+                and not info.st_mode & 0o077 and info.st_size <= limit
+                and (exact_mode is None or stat.S_IMODE(info.st_mode) == exact_mode), "Unverified private observation input")
         raw = os.read(fd, limit + 1)
         require(len(raw) == info.st_size and len(raw) <= limit, "Private observation input was truncated or exceeds bound")
         return hashlib.sha256(raw).hexdigest()
@@ -295,7 +306,7 @@ class _Read:
         with self.binding():
             result = _inputs(self.owner, self.active[2], product=self.product)
             require((result[2], result[3]) == (self.readset, self.roots),
-                    "Private evidence changed after its actual proof")
+                    "Private receipt or evidence changed after its actual proof")
             legacy = _legacy_inputs(self.c, self.archive[0])
             require(legacy["administration"] == self.administration,
                     "Actual historical administration differs from its full proof")

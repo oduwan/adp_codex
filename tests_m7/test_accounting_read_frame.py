@@ -262,6 +262,25 @@ class AccountingReadFrameTests(unittest.TestCase):
                     root=SimpleNamespace(state=root, directory=root), plan={"effects": {"marker": str(root / "marker.json")}})
                 c = SimpleNamespace(personal=personal, track=None, runtime=SimpleNamespace(directory=root), authority=SimpleNamespace(directory=root))
                 with self.assertRaisesRegex(ADPError, "traversal exceeds"):_private_inputs(c)
+        with TemporaryDirectory(prefix="adp-exact-private-metadata-") as temporary:
+            from adp.storage import atomic
+            root = Path(temporary);archive_ = root / "archive";archive_.mkdir(mode=0o700)
+            p = archive_ / "original.json";atomic(p, b"{}\n")
+            personal = SimpleNamespace(state=root, directory=root,
+                root=SimpleNamespace(state=root, directory=root), plan={"effects": {"marker": str(root / "marker.json")}})
+            c = SimpleNamespace(personal=personal, track=SimpleNamespace(root=root, archive=SimpleNamespace(directory=archive_), originals={}),
+                runtime=SimpleNamespace(directory=root), authority=SimpleNamespace(directory=root))
+            expected = _private_inputs(c)
+            archive_.chmod(0o755)
+            with self.assertRaises(ADPError):_private_inputs(c)
+            archive_.chmod(0o700);p.chmod(0o400)
+            with self.assertRaises(ADPError):_private_inputs(c)
+            p.chmod(0o600)
+            self.assertEqual(_private_inputs(c), expected)
+            root.chmod(0o755)
+            try:
+                with self.assertRaises(ADPError):_private_inputs(c)
+            finally:root.chmod(0o700)
 
     def test_semantic_result_cannot_use_unsealed_replacement_consent(self):
         c, p, _, _ = self.fixture()
@@ -383,6 +402,18 @@ class AccountingReadFrameTests(unittest.TestCase):
                     p._live_current = lambda **kwargs: deepcopy(p.consent)
                     with self.assertRaises(ADPError):publication_live(p)
                     self.assertEqual(_private_digest(path), inputs["readset"][str(path)])
+        for stage in (1, 2):
+            with self.subTest(administration_witness_stage=stage):
+                c, p, _, inputs = self.fixture()
+                original = c.personal._active_view
+                def proof(**kwargs):
+                    result = original(**kwargs)
+                    if inputs["full"] == stage:
+                        kwargs["_capture"]["historical_administration"] = {"different_actual_full_snapshot": True}
+                    return result
+                c.personal._active_view = proof
+                p._live_current = lambda **kwargs: deepcopy(p.consent)
+                with self.assertRaises(ADPError):publication_live(p)
 
     def test_ticket_archive_actual_bytes_keep_existing_bounds_and_default_behavior(self):
         from tempfile import TemporaryDirectory
@@ -393,7 +424,7 @@ class AccountingReadFrameTests(unittest.TestCase):
         from adp.discovery_schema import key
         from adp.discovery_types import Identity
         identity = Identity("owned", "original")
-        for change in (False, True, "missing_baseline"):
+        for change in (False, True, "missing_baseline", "metadata_race"):
             with self.subTest(changed=change), TemporaryDirectory(prefix="adp-ticket-proof-fence-") as temporary:
                 c, p, _, inputs = self.fixture()
                 root = Path(temporary)
@@ -409,7 +440,15 @@ class AccountingReadFrameTests(unittest.TestCase):
                     if change is True:atomic(path, b'{"other":"transient"}\n')
                     elif change == "missing_baseline":path.unlink()
                     try:
-                        actual = archive_.frozen_reference(identity) if change == "missing_baseline" else archive_._read(path)
+                        if change == "metadata_race":
+                            import os
+                            native_open = os.open
+                            def changed_mode(*args, **kwargs):
+                                fd = native_open(*args, **kwargs)
+                                path.chmod(0o400)
+                                return fd
+                            with patch("adp.personal_read_frame.os.open", side_effect=changed_mode):actual = archive_._read(path)
+                        else:actual = archive_.frozen_reference(identity) if change == "missing_baseline" else archive_._read(path)
                         if not change:self.assertEqual(actual, raw)
                     finally:
                         if change:atomic(path, raw)
