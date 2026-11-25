@@ -139,6 +139,7 @@ class PersonalTrack:
                 track = cls(c)
                 require(sorted(o.issue.number for o in track.originals.values()) == sorted(numbers), "Original track cannot be replaced")
                 return track
+            require(not c.episode, "Accounting episode must retain its original track attachment")
             view, token = cls.registration(c, numbers)
             require(token == reviewed, "Track original observation changed; review again")
             root = c.personal.state / "track"
@@ -488,6 +489,7 @@ class PersonalTrack:
 
     @network_operation("track.complete", service=lambda self, product, **k: product.service)
     def complete(self, product, *, reviewed, authorized, confirm_acceptance):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: no new accounting acceptance")
         require(authorized is True and confirm_acceptance is True, "Separately confirm this original's actual project acceptance")
         identity = typed(Issue, self.personal.intent["original"]).identity
         with invocation_lock(self.c.memory.control):
@@ -661,6 +663,7 @@ class PersonalTrack:
     @network_operation("track.next_preview", service=lambda self, product, choices, **k: product.service)
     @with_reads
     def next_preview(self, product, choices, *, approved=None):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: NEXT requires historical reader binding")
         from .git import SHA
         require(type(choices) is PersonalChoices, "Typed explicit next choices required")
         retained = self.next_record()
@@ -725,6 +728,7 @@ class PersonalTrack:
     @network_operation("track.next", service=lambda self, product, choices, **k: product.service)
     @with_reads
     def next(self, product, choices, *, reviewed, setup_approval, authorized):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: no accounting-parent handoff or enrollment")
         require(authorized is True and type(choices) is PersonalChoices,
                 "Separately approve exactly this new original task, local setup and finite scope/window")
         path = self.personal.state / "next-intent.json"

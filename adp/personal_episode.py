@@ -87,7 +87,7 @@ class EpisodeState(PersonalState):
 
     def _active_view(self, *, memory=None, runtime=None, allow_expired=True, now=None, _capture=None):
         from .personal_read_frame import active
-        framed = active(self, memory, runtime) if _capture is None else None
+        framed = active(self, memory, runtime, _capture=_capture)
         if framed is not None:
             if not allow_expired:
                 require(type(now) is int and self.plan["window"]["issued_at"] <= now < self.plan["window"]["expires_at"],
@@ -103,8 +103,9 @@ class EpisodeState(PersonalState):
                 and read_private(Path(self.root.plan["effects"]["marker"])) == {"schema_version": 1,
                     "directory": str(self.root.directory), "approval": self.root.intent["approval"]}, "Episode/original enrollment changed")
         memory = memory or self.memory()
+        capture = _capture if _capture is not None else {}
         m, archive, contexts, observed, workers = _archived_view(self.root, memory=memory, runtime=runtime,
-            _child=self, _capture=_capture)
+            _child=self, _capture=capture)
         if _capture is not None:
             _capture["archive"] = (m, archive, contexts, observed, workers)
         relation = entry(observed["state"])
@@ -123,11 +124,8 @@ class EpisodeState(PersonalState):
             "Episode activation is not bound to its exact canonical relation")
         target = episode_intent(self.root, self.descriptor, m, archive, _workers=workers)
         require(read_private(self.directory / "intent.json") == target, "Retain the exact one-use episode intent")
-        from .personal_history_git import verify
-        verify(memory, [archive["result"], activation["checkpoint"]],
-            [(m["result_state"], m["result_tasks"]), (target["state"], target["tasks"])], engine=m["engine"], host=relation["host"])
-        from .git import git
-        git(memory.config.root, "merge-base", "--is-ancestor", activation["checkpoint"], observed["local_head"])
+        require(activation["checkpoint"] == capture["historical_basis"]["checkpoint"]
+                and capture["installed"] == (target["state"], target["tasks"]), "Installed historical basis differs from exact episode intent")
         if not allow_expired:
             from .personal_read_frame import present
             require(not present(self.root.state / "accounting-recovery" / "revoked" / (digest(self.intent["approval"]) + ".json")), "Episode approval revoked")
@@ -152,18 +150,26 @@ def load_episode(directory):
     require(d["schema_version"] == 1 and type(d["schema_version"]) is int and d["kind"] == "ACCOUNTING_EPISODE", "Unsupported episode descriptor")
     require(directory.name == NAME and directory.parent.name == "episodes"
             and d["root"] == str(directory.parent.parent), "Episode must belong to its fixed original ancestor")
+    require(not (directory.parent.parent / FILE).exists(), "Original root cannot recursively select another episode")
     root = load_state(directory.parent.parent)
     base = d["base"]
     fields(base, "schema_version policy root archive blueprint choices window checks discovery_digest snapshot admission engine")
     require(base["schema_version"] == 1 and base["policy"] == POLICY and base["root"] == digest(root.intent)
-            and base["engine"] == engine_digest() and d["episode"] == digest(base)
+            and d["episode"] == digest(base)
             and d["original"] == root.intent["original"] and d["governance"] == root.intent["governance"]
             and d["plan"] == make_plan(root, base), "Episode immutable identity or original scope changed")
     plan_valid(root, d["plan"], directory)
     # Verify the original finite consent at its real issuance time. This is
     # historical authentication only, never a grant to execute after expiry.
-    token, _ = grant("episode", digest(base), base["window"]["issued_at"], d["approval"], window=base["window"])
-    require(token == d["approval"], "Episode consent differs")
+    if (directory / "activation.json").exists():
+        from .personal_history import _anchor, _historical_grant
+        recovery = root.state / "accounting-recovery"
+        proof = _anchor(root, root.memory(), d, read_private(recovery / "intent.json"), read_private(recovery / "archive.json"))
+        _historical_grant("episode", digest(base), base["window"]["issued_at"], d["approval"], proof["historical_engine"])
+    else:
+        require(base["engine"] == engine_digest(), "Unactivated episode requires current-engine consent")
+        token, _ = grant("episode", digest(base), base["window"]["issued_at"], d["approval"], window=base["window"])
+        require(token == d["approval"], "Episode consent differs")
     intent = {"schema_version": 1, "kind": "ACCOUNTING_EPISODE", "phase": "ENROLLED", "plan": d["plan"],
               "original": d["original"], "governance": d["governance"], "approval": d["approval"]}
     return EpisodeState(directory, intent, root, d)

@@ -92,6 +92,7 @@ class PersonalReport(PersonalProduct):
 
     @network_operation("product.report_preview")
     def report_preview(self, *, approved=None):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: REPORT needs the current reader binding")
         now = self.clock()
         if approved is None:
             issued, expires, nonce = now, min(now + 300, self.personal.plan["window"]["expires_at"]), secrets.token_hex(16)
@@ -178,6 +179,7 @@ class PersonalReport(PersonalProduct):
 
     @network_operation("product.report")
     def report(self, *, reviewed, authorized, authorize_memory, assume_quiescence, confirm_rules):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: observe original REPORT only")
         require(authorized is True and authorize_memory is True and assume_quiescence is True and confirm_rules is True,
                 "Separate exact REPORT, memory, rules and administrative-quiescence approvals required")
         self.c.live()

@@ -108,7 +108,7 @@ class AccountingGitFactTests(unittest.TestCase):
         master = {"engine": engine_digest(), "view": {"binding": {"evidence": {"seals": {
             "feature": source_seal(self.root), "outside": source_seal(self.root, ("product",)),
             "outer": source_seal(self.root), "admin": "historical refs may legitimately differ"}}}}}
-        c = SimpleNamespace(personal=SimpleNamespace(root=personal))
+        c = SimpleNamespace(personal=SimpleNamespace(root=personal, descriptor={"base": {"engine": master["engine"]}}))
         expected = _legacy_inputs(c, master)
         raw = (self.root / "product").read_bytes();(self.root / "product").write_bytes(b"Changed old unaccepted candidate\n")
         with self.assertRaisesRegex(ADPError, "unaccepted source changed"):_legacy_inputs(c, master)

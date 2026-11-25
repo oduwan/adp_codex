@@ -230,8 +230,7 @@ class AccountingPolicyContractTests(unittest.TestCase):
                 object_inventory(memory, [identifier])
 
     def test_history_memo_rechecks_closure_and_never_caches_a_missing_object_pass(self):
-        from adp.personal_history_git import verify, _WITNESSES
-        _WITNESSES.clear()
+        from adp.personal_history_git import verify
         heads = [n * 40 for n in ("a", "b", "c")]
         expected = [({"state": i}, {"task": i}) for i in range(3)]
         memory = SimpleNamespace(config=SimpleNamespace(root="offline", identity="fixture"),
@@ -244,13 +243,15 @@ class AccountingPolicyContractTests(unittest.TestCase):
              patch("adp.personal_history_git.value", side_effect=value), \
              patch("adp.personal_history_git.git", return_value=b""), \
              patch("adp.personal_history_git.object_inventory", return_value=objects) as inventory:
-            verify(memory, heads, expected, engine="e" * 64, host="f" * 64)
-            verify(memory, heads, expected, engine="e" * 64, host="f" * 64)
-            self.assertEqual(context.call_count, 2)
+            first = verify(memory, heads, expected)
+            self.assertEqual(verify(memory, heads, expected), first)
+            # The historical test ID is retained. The removed module-global
+            # memo is replaced by caller-local witnesses and actual opening/
+            # closing storage checks on EVERY read, never a remembered PASS.
+            self.assertEqual(context.call_count, 4)
             self.assertEqual(inventory.call_count, 2)
             inventory.side_effect = ADPError("Synthetic missing retained blob")
-            with self.assertRaises(ADPError):verify(memory, heads, expected, engine="e" * 64, host="f" * 64)
-        _WITNESSES.clear()
+            with self.assertRaises(ADPError):verify(memory, heads, expected)
 
     def test_purpose_subject_and_engine_are_not_interchangeable(self):
         token, body = grant("guard", "a" * 64, 1000)

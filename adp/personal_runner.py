@@ -64,14 +64,14 @@ class PersonalCoordinator:
             from .personal_track import PersonalTrack
             self.track = PersonalTrack(self)
 
-    def live(self):
+    def live(self, *, _history_capture=None):
         # Recheck immutable retained consent and the actual owner. Do not rerun
         # Git configuration discovery for every nested evidence verification.
         p = self.personal.plan
         if self.track is not None:
             self.track.require_attachment()
         if self.episode:
-            _, _, subject = self.personal._active_view(memory=self.memory, allow_expired=False, now=self.clock())
+            _, _, subject = self.personal._active_view(memory=self.memory, allow_expired=False, now=self.clock(), _capture=_history_capture)
         else:
             require(read_private(self.personal.directory / INTENT) == self.personal.intent
                     and read_private(Path(p["effects"]["marker"])) == {"schema_version": 1,
@@ -236,7 +236,7 @@ class PersonalCoordinator:
             code = "PERSONAL_FORENSIC_RECOVERY_UNSUPPORTED" if decision.kind == DecisionKind.FORENSIC_REQUIRED else "PROGRESS_GUARD_STOPPED"
             raise PersonalBlocked(code, "Follow the retained M2 disposition; this minimal backend cannot bypass or automatically replace its forensic/terminal recovery boundary.")
 
-    def fresh(self):
+    def fresh(self, *, _history_capture=None):
         self.live()
         plan = self.personal.plan
         observation, owner = selection(Path(plan["checkout"]["path"]), plan["checkout"]["remote"], self.personal.repository_id, self.transport)
@@ -267,7 +267,7 @@ class PersonalCoordinator:
         # Protections and declared requirements may tighten; never discard them.
         current_rules = observation.facts["branch_rules"]
         require(current_rules == plan["branch_rules"], "Branch requirements changed; preserve this enrollment and obtain an operator disposition")
-        self.live()
+        self.live(_history_capture=_history_capture) if _history_capture is not None else self.live()
         return observation
 
     def original_matches(self, issue):

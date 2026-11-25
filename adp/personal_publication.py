@@ -35,7 +35,7 @@ from .personal_rules import enrollment_rules
 
 WARRANT = "No repository rename, transfer, name reuse or credential-scope changes during this finite publication window."
 POLICY_ASSENT = "I reviewed the supplied current project governance: this exact feature publication is permitted and has no unmet or unrepresented prepublication condition."
-TOKEN = re.compile(r"publish1\.([0-9]{1,12})\.([0-9]{1,12})\.([0-9a-f]{32})\.([0-9a-f]{64})\Z")
+TOKEN = re.compile(r"publish[12]\.([0-9]{1,12})\.([0-9]{1,12})\.([0-9a-f]{32})\.([0-9a-f]{64})\Z")
 
 
 class OriginalRead:
@@ -106,7 +106,7 @@ class PersonalPublication:
                 "Missing personal publication history cannot authorize a replacement effect")
             return None
         fields(row, "schema_version view approval credential_binding action_id requirement reservation pending_observation")
-        require(type(row["schema_version"]) is int and row["schema_version"] == 1
+        require(type(row["schema_version"]) is int and row["schema_version"] in ((1, 2) if self.c.episode else (1,))
                 and row["action_id"] == digest({"personal-publication": row["view"]})
                 and row["view"]["setup_approval"] == self.personal.intent["approval"]
                 and row["view"]["generation"] == (_observed if _observed is not None else self.c.memory.inspect())["state"]["generation"],
@@ -116,7 +116,7 @@ class PersonalPublication:
                 "Exact personal plan-disabled publication warrant is missing")
         require(view["administrative_quiescence_warrant"] == WARRANT and view["project_policy_assent"] == POLICY_ASSENT
                 and view["operation"] == "PUSH" and view["force"] is False
-                and row["approval"] == ".".join(("publish1", str(view["issued_at"]), str(view["expires_at"]), view["nonce"],
+                and row["approval"] == ".".join(("publish" + str(row["schema_version"]), str(view["issued_at"]), str(view["expires_at"]), view["nonce"],
                     digest({"view": view, "private_credential": row["credential_binding"]}))),
                 "Retained publication consent was altered")
         return row
@@ -132,12 +132,12 @@ class PersonalPublication:
         require(existing is None or existing == task, "Canonical publication task differs")
         execution["tasks"][task_key] = task
 
-    def local(self):
+    def local(self, *, _history_capture=None):
         bases = self.original_bases()
         capture = OriginalRead(self.read, bases[0], additional=bases[1:])
         self.c.transport = capture
         try:
-            self.c.fresh()
+            self.c.fresh(_history_capture=_history_capture) if _history_capture is not None else self.c.fresh()
         finally:
             self.c.transport = self.read
         self.c.workers.fence()
@@ -244,7 +244,8 @@ class PersonalPublication:
                 and expires <= self.personal.plan["window"]["expires_at"], "Original publication window is expired or invalid")
         bind_consent({"runtime_limits": self.service.limits.values(), "expires_at": expires}, now)
         with self.service.bounded():
-            original_observation, review_binding = self.local()
+            capture = {} if self.c.episode else None
+            original_observation, review_binding = self.local(_history_capture=capture) if capture is not None else self.local()
             old = self.remote()
             if old is not None:
                 require(self.port._value("--no-replace-objects", "merge-base", old, self.c.revision()) == old,
@@ -274,8 +275,13 @@ class PersonalPublication:
                 "nonce": nonce, "product_acceptance": "NOT_ACCEPTED", "other_external_rights": "NOT_DELEGATED"}
             if self.service.personal_policy is not None:
                 view.update(plan_policy=self.service.personal_policy, plan_disabled_rules_assent=PLAN_ASSENT)
+            if capture is not None:
+                from .personal_episode import same_observation
+                from .personal_history import _reader_binding
+                same_observation(capture["subject"], state)
+                view.update(_reader_binding(capture))
             binding = self.transport.credential_binding
-            token = ".".join(("publish1", str(issued), str(expires), nonce, digest({"view": view, "private_credential": binding})))
+            token = ".".join(("publish2" if self.c.episode else "publish1", str(issued), str(expires), nonce, digest({"view": view, "private_credential": binding})))
             require(self.clock() < expires, "Publication window expired during observations")
             return view, token, binding
 
@@ -299,10 +305,15 @@ class PersonalPublication:
         # One actual fresh observation per call, never retained across objects
         # or callbacks. c.live performs its full current M1/consent checks;
         # generation and review seals refer to that same observed checkpoint.
-        observed = self.c.live()
+        capture = {} if self.c.episode else None
+        observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
         row = self.record(_observed=observed)
         require(row is not None, "Exact publication consent is missing")
         view = row["view"]
+        if capture is not None:
+            from .personal_history import _reader_binding
+            require(row["schema_version"] == 2 and all(view.get(k) == v for k, v in _reader_binding(capture).items()),
+                    "Legacy or changed accounting writer; observe original effect only")
         bind_consent(view, self.clock())
         require(view["issued_at"] <= self.clock() < view["expires_at"]
                 and self.port._value("rev-parse", "HEAD") == view["revision"]
@@ -543,7 +554,7 @@ class PersonalPublication:
                 require(token == reviewed, "Publication changed under invocation lock")
                 require("plan_disabled_rules_assent" not in view or accept_plan_unavailable is True,
                         "PLAN_UNAVAILABLE: separately accept this exact publication's plan-disabled rules warrant")
-                self.save({"schema_version": 1, "view": view, "approval": reviewed, "credential_binding": binding,
+                self.save({"schema_version": 2 if self.c.episode else 1, "view": view, "approval": reviewed, "credential_binding": binding,
                     "action_id": digest({"personal-publication": view}), "requirement": None, "reservation": None, "pending_observation": None})
             else:
                 require(reviewed == existing["approval"], "Use the original publication intent; do not renew it")

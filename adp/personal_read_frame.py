@@ -248,7 +248,8 @@ def _legacy_inputs(c, master):
     from .personal_history_product_git import administration
     from .personal_storage import read_private
     root = c.personal.root
-    require(engine_digest() == master["engine"], "Approved recovery source changed during observation")
+    require(master["engine"] == c.personal.descriptor["base"]["engine"], "Historical recovery source changed during observation")
+    reader = engine_digest()
     sources = {"feature": source_seal(root.feature),
         "outside": source_seal(root.feature, tuple(root.plan["paths"])),
         "outer": source_seal(Path(root.plan["checkout"]["path"]))}
@@ -259,7 +260,8 @@ def _legacy_inputs(c, master):
     require(physical["checkout"] == root.plan["administration"]
             and (run["feature_administration"] is None or physical["feature"] == run["feature_administration"]),
             "Original physical administration changed during observation")
-    return {"sources": sources, "physical": physical, "engine": master["engine"], "administration": administration_snapshot(root)}
+    return {"sources": sources, "physical": physical, "engine": master["engine"], "reader_engine": reader,
+        "administration": administration_snapshot(root)}
 
 
 def _identity(c):
@@ -290,6 +292,7 @@ class _Read:
             self.active = deepcopy(c.personal._active_view(memory=c.memory, allow_expired=False,
                 now=c.clock(), _capture=capture))
             self.archive = deepcopy(capture["archive"])
+            self.capture = deepcopy(capture)
             self.administration = deepcopy(capture["historical_administration"])
             self.current()  # Full proof must end at this exact live subject.
 
@@ -339,11 +342,14 @@ class _Read:
             self.closed = True
 
 
-def active(personal, memory, runtime):
+def active(personal, memory, runtime, *, _capture=None):
     frame = _CURRENT.get()
     if frame is None or personal is not frame.c.personal or memory is not frame.c.memory or runtime is not None:
         return None  # Independent/mismatched subjects retain the full proof.
     actual = frame.current()
+    if _capture is not None:
+        _capture.update(deepcopy(frame.capture))
+        _capture["subject"] = actual
     relation, contexts, _ = deepcopy(frame.active)
     return relation, contexts, actual
 

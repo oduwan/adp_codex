@@ -221,6 +221,7 @@ class PersonalProduct:
 
     @network_operation("product.proposed")
     def proposed(self, operation, *, approved=None, title=None, body=None, method=None, delegate=False):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: Product consent requires the D4 reader binding")
         require(operation in ("PR", "MERGE"), "Unsupported product operation")
         now = self.clock()
         if approved is None:
@@ -305,6 +306,7 @@ class PersonalProduct:
         return view
 
     def write_authorized(self):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: observe original Product effects only")
         from .personal_read_frame import forbid_writes
         forbid_writes()
         view = self._live_current()
@@ -371,6 +373,7 @@ class PersonalProduct:
     @network_operation("product.intent")
     def intent(self, operation, *, reviewed, authorized, authorize_memory, assume_quiescence, confirm_rules,
                title=None, body=None, method=None, delegate=False, accept_envelope=False, accept_plan_unavailable=False):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: no Product intent or reservation")
         require(authorized is True and authorize_memory is True and assume_quiescence is True and confirm_rules is True,
                 "Separate exact operator effect, memory migration, project rules and quiescence approvals required")
         require(operation != "MERGE" or delegate is True and accept_envelope is True,
@@ -524,6 +527,7 @@ class PersonalProduct:
 
     @network_operation("product.execution_preview")
     def execution_preview(self, operation, *, approved=None, accept_native=False, confirm_no_checks=False):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: no new execution consent")
         require(operation in ("CI", "REVIEW", "CORRECT"), "Unsupported one-issue execution")
         now = self.clock()
         if approved:
@@ -559,6 +563,7 @@ class PersonalProduct:
 
     @network_operation("product.execute_ci", enabled=lambda self, operation, **k: operation == "CI")
     def execute(self, operation, *, reviewed, authorized, accept_native=False, confirm_no_checks=False):
+        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: no execution or Worker dispatch")
         require(authorized is True, "Separately authorize this finite personal execution")
         with invocation_lock(self.c.memory.control):
             row = self.record()

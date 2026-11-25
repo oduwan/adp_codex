@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .accounting_policy import POLICY, entry
+from .accounting_policy import POLICY, entry, fingerprint
 from .codex_runtime import CodexExecRuntime
 from .discovery_schema import digest, typed
+from .errors import ADPError
 from .execution_containment import source_seal
 from .execution_schema import worker_result
 from .execution_types import RuntimeStatus, WorkerRequest
@@ -13,6 +14,78 @@ from .git import git, value
 from .guard_types import data
 from .personal_storage import LIMIT, load_state, read_private
 from .schema import fields, key, require
+
+
+def _historical_grant(stage, subject, now, token, engine):
+    """Decode an H3-bound original ae1 value; never issue or renew consent."""
+    fingerprint(engine); fingerprint(subject)
+    require(type(token) is str, "Original historical consent is missing")
+    parts = token.split(":")
+    require(stage in ("guard", "result", "episode", "reconcile-guard", "reconcile-result")
+            and len(parts) == 6 and parts[:2] == ["ae1", stage], "Wrong historical consent purpose")
+    try:
+        issued, expires, nonce = int(parts[2]), int(parts[3]), parts[4]
+    except ValueError:
+        raise ADPError("Malformed original consent interval") from None
+    require(type(now) is int and 0 <= issued <= now < expires and 0 < expires - issued <= 3600
+            and len(nonce) == 32 and all(c in "0123456789abcdef" for c in nonce), "Malformed original consent interval")
+    body = {"policy": POLICY, "stage": stage, "subject": subject, "engine": engine,
+        "issued_at": issued, "expires_at": expires, "nonce": nonce}
+    require(token == ":".join(("ae1", stage, str(issued), str(expires), nonce, digest(body))), "Original historical consent differs")
+    return body
+
+
+def _anchor(root, memory, descriptor, master, receipt):
+    """Authenticate the existing H3 before interpreting a historical engine."""
+    from .personal_episode import episode_directory
+    from .personal_history_git import verify
+    from .policy_schema import sha
+    activation = read_private(episode_directory(root) / "activation.json")
+    fields(activation, "schema_version descriptor checkpoint relation")
+    fields(receipt, "schema_version policy master initial guard result consents observations recovery")
+    fields(master, "schema_version policy engine request view blueprint state tasks guard_state result_state result_tasks administration")
+    require(type(activation["schema_version"]) is int and activation["schema_version"] == 1
+            and type(receipt["schema_version"]) is int and receipt["schema_version"] == 1 and receipt["policy"] == POLICY
+            and type(master["schema_version"]) is int and master["schema_version"] == 1 and master["policy"] == POLICY,
+            "Unsupported historical basis encoding")
+    sha(activation["checkpoint"])
+    current = memory.inspect(recovery=True)
+    require(current["health"] in ("SYNCED", "RECOVERY_REQUIRED"), "Historical basis requires an observable canonical checkpoint")
+    installed = memory._read_ref(activation["checkpoint"])
+    relation = entry(installed[0])
+    require(relation is not None and entry(current["state"]) is not None, "Existing canonical historical basis required")
+    fixed = {k: v for k, v in relation.items() if k != "usage"}
+    require(fixed == {k: v for k, v in entry(current["state"]).items() if k != "usage"}
+            and activation == {"schema_version": 1, "descriptor": digest(descriptor),
+                "checkpoint": activation["checkpoint"], "relation": digest(fixed)}
+            and relation["repository_id"] == root.repository_id and relation["issue_id"] == root.plan["issue_id"]
+            and relation["episode"] == descriptor["episode"] == digest(descriptor["base"])
+            and relation["plan"] == digest(descriptor["plan"]) and relation["grant"] == digest(descriptor["approval"])
+            and relation["archive"] == digest(receipt) == descriptor["base"]["archive"]
+            and relation["blueprint"] == digest(master["blueprint"]) == descriptor["base"]["blueprint"]
+            and receipt["master"] == digest(master) and receipt["result"] == relation["checkpoints"]["result"]
+            and current["state"]["generation"] == installed[0]["generation"] == relation["generation"],
+            "Historical Git basis, descriptor or canonical lineage differs")
+    objects = verify(memory, [receipt["result"], activation["checkpoint"]],
+        [(master["result_state"], master["result_tasks"]), installed])
+    for remote, _, _ in objects:
+        git(memory.pinned_local_remote if remote else memory.config.root, "merge-base", "--is-ancestor",
+            activation["checkpoint"], current["remote_head" if remote else "local_head"])
+    fingerprint(master["engine"])
+    require(master["engine"] == descriptor["base"]["engine"], "Original descriptor and archive engines differ")
+    return {"historical_basis": {"schema_version": 1, "checkpoint": activation["checkpoint"], "relation_digest": digest(fixed)},
+        "historical_engine": master["engine"], "historical_objects": objects, "subject": current, "installed": installed}
+
+
+def _reader_binding(capture):
+    """Project a successfully consumed cold proof into an existing consent."""
+    from .personal_recovery import engine_digest
+    from .policy_schema import sha
+    basis = capture["historical_basis"]
+    fields(basis, "schema_version checkpoint relation_digest")
+    require(type(basis["schema_version"]) is int and basis["schema_version"] == 1, "Unsupported historical basis")
+    sha(basis["checkpoint"]); fingerprint(basis["relation_digest"]); fingerprint(capture["historical_engine"])
+    return {"historical_basis": dict(basis), "historical_engine": capture["historical_engine"], "reader_engine": engine_digest()}
 
 
 def retained(runtime, row):
@@ -63,28 +136,49 @@ def _archived_view(personal, *, memory=None, runtime=None, _child=None, _capture
     directory = root.state / "accounting-recovery"
     master = read_private(directory / "intent.json")
     receipt = read_private(directory / "archive.json")
+    anchored = None
+    if _child is not None:
+        anchored = _anchor(root, memory, _child.descriptor, master, receipt)
+    else:
+        from .personal_episode import episode_directory, load_episode
+        from .personal_read_frame import present
+        if present(episode_directory(root) / "activation.json"):
+            _child = load_episode(episode_directory(root))
+            anchored = _anchor(root, memory, _child.descriptor, master, receipt)
     fields(receipt, "schema_version policy master initial guard result consents observations recovery")
     require(receipt["schema_version"] == 1 and receipt["policy"] == POLICY
-            and receipt["master"] == digest(master) and master["engine"] == engine_digest(), "Archived policy/source proof changed")
+            and receipt["master"] == digest(master) and (anchored is not None or master["engine"] == engine_digest()), "Archived policy/source proof changed")
     expected = ((master["state"], master["tasks"]), (master["guard_state"], master["tasks"]),
                 (master["result_state"], master["result_tasks"]))
     heads = [receipt[n] for n in ("initial", "guard", "result")]
     require(heads[0] == master["view"]["checkpoint"], "Original archival checkpoint changed")
     from .personal_history_git import verify
-    verify(memory, heads, expected, engine=master["engine"], host=master["view"]["binding"]["host"])
+    objects = verify(memory, heads, expected)
+    if _capture is not None and anchored is not None:
+        _capture.update(anchored)
+        _capture["historical_objects"] = (*anchored["historical_objects"], *objects)
     require(type(receipt["recovery"]) is dict and len(receipt["recovery"]) <= 6, "Bounded recovery provenance required")
     for relative, hashed in receipt["recovery"].items():
         require(type(relative) is str and ".." not in Path(relative).parts and len(Path(relative).parts) == 2
                 and Path(relative).parts[0] in ("reconciliations", "submission-provenance")
                 and digest(read_private(directory / relative)) == hashed, "Exact historical recovery provenance changed")
     for stage in ("guard", "result"):
-        submission_provenance(directory, stage, read_private(directory / (stage + "-intent.json")), master)
+        original = read_private(directory / (stage + "-intent.json"))
+        if anchored is None:
+            submission_provenance(directory, stage, original, master)
+        else:
+            from .personal_recovery import _submission_record
+            restored = _submission_record(directory, stage, original, master)
+            if restored is not None:
+                marker, record = restored
+                _historical_grant("reconcile-" + stage, digest(record["payload"]), marker["prepared_at"], record["approval"], master["engine"])
     for stage, index in (("guard", 0), ("result", 1)):
         intent = read_private(directory / (stage + "-intent.json"))
         fields(intent, "approval grant submitted_at payload")
         payload = {"policy": POLICY, "stage": stage, "master": digest(master), "head": heads[index],
                    "target": digest(list(expected[index+1]))}
-        token, body = grant(stage, digest(payload), intent["submitted_at"], intent["approval"])
+        body = (_historical_grant(stage, digest(payload), intent["submitted_at"], intent["approval"], master["engine"])
+            if anchored is not None else grant(stage, digest(payload), intent["submitted_at"], intent["approval"])[1])
         require(intent["grant"] == body and intent["payload"] == payload
                 and digest(intent) == receipt["consents"][stage]
                 and read_private(directory / (stage + "-submitted.json")) == {"subject": digest(payload)}, "Original purpose-bound archival consent differs")
@@ -92,6 +186,10 @@ def _archived_view(personal, *, memory=None, runtime=None, _child=None, _capture
         require(observed == {"checkpoint": heads[index+1], "master": digest(master)}
                 and digest(observed) == receipt["observations"][stage], "Archived observed checkpoint differs")
     now = memory.inspect(recovery=True)
+    if anchored is not None:
+        require(all(anchored["subject"][n] == now[n] for n in
+            ("health", "local_head", "remote_head", "state", "tasks", "local_owner", "inbox_count",
+             "recovery_slots", "recovery_journal")), "Canonical historical subject advanced")
     git(memory.config.root, "merge-base", "--is-ancestor", heads[-1], now["local_head"])
     task_key = master["view"]["binding"]["task_key"]
     require(now["state"]["generation"] == master["state"]["generation"]

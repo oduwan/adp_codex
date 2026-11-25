@@ -45,6 +45,16 @@ def journal_purpose(stage, intent):
 
 def submission_provenance(directory, stage, original, master):
     """Authenticate a previously prepared marker restoration, never renew it."""
+    record = _submission_record(directory, stage, original, master)
+    if record is None:
+        return None
+    restored, proof = record
+    grant("reconcile-" + stage, digest(proof["payload"]), restored["prepared_at"], proof["approval"])
+    return restored
+
+
+def _submission_record(directory, stage, original, master):
+    """One protected parser shared by current and H3-bound historical readers."""
     require(stage in ("guard", "result"), "Unsupported archival stage")
     restored = read_private(directory / "submission-provenance" / (stage + ".json"), optional=True)
     if restored is None:
@@ -55,12 +65,11 @@ def submission_provenance(directory, stage, original, master):
     record = read_private(directory / "reconciliations" / (key_ + ".json"))
     fields(record, "approval payload")
     fields(record["payload"], "stage master intent canonical")
-    grant("reconcile-" + stage, digest(record["payload"]), restored["prepared_at"], record["approval"])
     require(restored["stage"] == record["payload"]["stage"] == stage
             and restored["intent"] == record["payload"]["intent"] == digest(original)
             and record["payload"]["master"] == digest(master)
             and digest(record["approval"]) == key_, "Submission restoration authority differs")
-    return restored
+    return restored, record
 
 
 @measured("recovery.engine_digest")
