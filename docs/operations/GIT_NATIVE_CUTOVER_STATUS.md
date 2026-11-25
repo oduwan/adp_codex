@@ -36,6 +36,23 @@ expectation. Route/header/body/credential/redirect/paging and read-barrier
 assertions remain. Earlier errors are historical nonpasses, never relabeled.
 The Product read barrier again precedes its temporary accounting-writer gate.
 
+The first exact partial review rejected a real semantic gap in cache deletion:
+native observation captured a commit ID but read its parent/message through
+mutable HEAD. Disposable same-tree HEAD and replacement-ref controls both
+returned PRESENT for an unauthorized immutable message before correction.
+The failing receipts and rejected revision remain private and in Git history.
+The minimal correction pins the existing native parent/message queries to the
+captured commit and supplies explicit no-replacement interpretation only in the
+historical reader, including framing fallbacks. Actual closing HEAD/ref/context
+checks remain. Stable ordinary/signed behavior is preserved; their default
+reader receives no new interpretation flag. Unsupported contexts are not
+advertised as a newly supported envelope. Both negative variants pass after
+correction; final exact-revision review and focused receipts are still separate
+gates. The full 102-method previous-HEAD selection remains101PASS/1FAIL because
+its old four-group fixture assertion stopped that method before later negatives;
+it is not reclassified. The replacement checks both stores, all four canonical
+checkpoints and actual bytes before continuing those unchanged negatives.
+
 ## Measured source gate
 
 Same counting rule as [the frozen baseline](GIT_NATIVE_BASELINE.json): physical
@@ -45,15 +62,15 @@ over all tracked `adp/*.py`. No import or product execution is used for counts.
 | Measure | Frozen13fd | Reviewed D3 | Bounded D4 | Whole-track delta |
 | --- | ---: | ---: | ---: | ---: |
 | Modules | 100 | 100 | 100 | 0 |
-| Physical lines | 26210 | 26504 | 26465 | +255 |
-| Code lines | 23499 | 23782 | 23748 | +249 |
+| Physical lines | 26210 | 26504 | 26466 | +256 |
+| Code lines | 23499 | 23782 | 23749 | +250 |
 | Function nodes | 1240 | 1246 | 1245 | +5 |
 | Class nodes | 249 | 249 | 249 | 0 |
 | AST statements | 19325 | 19537 | 19503 | +178 |
 
-These deletions reduce D3 by39 physical/34 code lines and one function, but do
-**not** meet D1/D4's actual net-negative product-source gate. At least256 more
-physical/250 more code lines must be removed **plus every still-needed writer
+These deletions reduce D3 by38 physical/33 code lines and one function, but do
+**not** meet D1/D4's actual net-negative product-source gate. At least257 more
+physical/251 more code lines must be removed **plus every still-needed writer
 cutover addition**. Source counts are demonstrated; estimates below are not.
 
 Independent static inspection found only modest further candidates: the second

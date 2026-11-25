@@ -203,6 +203,32 @@ class AccountingGitFactTests(unittest.TestCase):
             with patch.object(history_git, "_context", side_effect=(opening, closing)):
                 with self.assertRaises(ADPError):observe(self.port, self.action, self.revision)
 
+    def test_transient_head_and_replacement_never_mix_commit_semantics(self):
+        good = self.revision
+        tree = value(self.root, "rev-parse", good + "^{tree}")
+        bad = git(self.root, "commit-tree", tree, "-p", self.action["revision"],
+            input=b"Unauthorized actual immutable message\n").decode().strip()
+        ref = self.action["source_ref"]
+        git(self.root, "update-ref", ref, bad, good)
+        original = self.port._value
+        for mode in ("HEAD", "REPLACEMENT"):
+            transitions = []
+            def transient(*args):
+                if args[0] != "log":return original(*args)
+                target = ref if mode == "HEAD" else "refs/replace/" + bad
+                git(self.root, "update-ref", target, good, bad if mode == "HEAD" else "0" * 40)
+                transitions.append(mode)
+                try:
+                    return original(*args)
+                finally:
+                    if mode == "HEAD":git(self.root, "update-ref", target, bad, good)
+                    else:git(self.root, "update-ref", "-d", target, good)
+            with self.subTest(mode=mode), patch.object(self.port, "_value", side_effect=transient):
+                actual = observe(self.port, self.action, bad)
+                self.assertEqual(transitions, [mode])
+                self.assertEqual(value(self.root, "rev-parse", "HEAD"), bad)
+                self.assertNotEqual(actual.status, "PRESENT", "Wrong immutable message must never be accepted")
+
     def test_large_objects_and_newline_path_framing_use_unchanged_native_observation(self):
         base = self.revision
         (self.root / "product").write_bytes(b"x" * 65537)

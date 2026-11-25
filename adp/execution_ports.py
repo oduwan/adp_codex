@@ -153,10 +153,10 @@ class GitExecutionPort:
         if operation == Operation.COMMIT:
             if head == action["revision"]:
                 return ExternalObservation("ABSENT")
-            parent = self._value("rev-parse", "HEAD^")
+            parent = self._value("rev-parse", head + "^")
             message = payload["subject"] + ("\n\n" + payload["body"] if payload["body"] else "")
             if (parent == action["revision"] and tree_index_digest(root, head, git_reader=self._reader) == payload["index_digest"]
-                    and self._value("log", "-1", "--format=%B") == message.strip()):
+                    and self._value("log", "-1", "--format=%B", head) == message.strip()):
                 return ExternalObservation("PRESENT", "commit:" + head, head)
             return ExternalObservation("UNKNOWN")
         if operation == Operation.BRANCH:

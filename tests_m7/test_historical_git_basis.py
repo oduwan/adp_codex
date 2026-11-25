@@ -206,7 +206,11 @@ class HistoricalEpisodeBasisTests(AccountingFixture):
         before = memory.inspect()
         self.assertEqual(basis["checkpoint"], before["local_head"])
         self.assertEqual(capture["historical_engine"], child.descriptor["base"]["engine"])
-        self.assertEqual(len(capture["historical_objects"]), 4)  # Both stores, H2/H3 plus H0/H1/H2.
+        self.assertEqual([r[0] for r in capture["historical_objects"]], [False, True])
+        for remote, context, objects in capture["historical_objects"]:
+            checkpoints = set(capture["archive"][1][n] for n in ("initial", "guard", "result")) | {basis["checkpoint"]}
+            self.assertTrue(checkpoints <= {r[0] for r in objects})
+            self.assertEqual(object_inventory(memory, [r[0] for r in objects], remote=remote), objects)
         consents = {p: p.read_bytes() for p in (root.state / "accounting-recovery").glob("*.json")}
         with patch("adp.personal_recovery.engine_digest", return_value="f" * 64), \
              patch("adp.personal_episode.engine_digest", return_value="f" * 64):

@@ -36,16 +36,16 @@ class HistoryReadPort(GitExecutionPort):
     """Original read grammar, freshly pinned before EVERY actual command."""
     def _git(self, *args, **kwargs):
         if self.bound_git_directory is None:
-            return super()._git(*args, **kwargs)
+            return super()._git("--no-replace-objects", *args, **kwargs)
         require(tuple((safe_path(p).stat().st_dev, p.stat().st_ino) for p in
                     (self.root, self.bound_git_directory, self._bound_common)) == self._bound_identities,
                 "Pinned product Git administration changed")
         expected = (str(self.bound_git_directory), str(self._bound_common))
         raw = git(self.root, "rev-parse", "--absolute-git-dir", "--path-format=absolute", "--git-common-dir")
         if any("\n" in p or "\r" in p or p != p.strip() for p in expected) or len(raw.decode("utf-8", "strict").splitlines()) != 2:
-            return super()._git(*args, **kwargs)  # Original exact framing checks.
+            return super()._git("--no-replace-objects", *args, **kwargs)  # Original exact framing checks.
         require(raw == ("\n".join(expected) + "\n").encode(), "Pinned product Git administration changed")
-        return git(self.root, "--git-dir", str(self.bound_git_directory), "--work-tree", str(self.root), *args, **kwargs)
+        return git(self.root, "--no-replace-objects", "--git-dir", str(self.bound_git_directory), "--work-tree", str(self.root), *args, **kwargs)
 
     def submit(self, *args, **kwargs):
         raise ADPError("Historical product reader permits no Git mutation")
@@ -129,7 +129,8 @@ def observe(port, action, revision):
             closing = _context(port)
         except _Unsupported:
             raise ADPError("Product Git context changed during observation") from None
-        require(closing == context and port._value("symbolic-ref", "HEAD") == action["source_ref"],
+        require(closing == context and port._value("rev-parse", "HEAD") == revision
+                and port._value("symbolic-ref", "HEAD") == action["source_ref"],
                 "Product Git observation changed")
         return actual
     except _Unsupported:
