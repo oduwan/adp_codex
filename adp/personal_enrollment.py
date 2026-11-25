@@ -31,6 +31,7 @@ from .policy_schema import branch, product_path
 from .project_validation_github import GitHubValidationHTTP
 from .schema import encode, fields, require, string
 from .storage import atomic, locked
+from .runtime_limits import measured, operation_scope, settings_for
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class PersonalChoices:
     seconds: int = 1800
 
 
+@measured("project.governance")
 def governance(root):
     """Bounded committed data; no config, workflow or prose is executed."""
     rows = git(root, "ls-tree", "-rz", "HEAD", limit=1048576).split(b"\0")
@@ -67,6 +69,11 @@ def governance(root):
 
 
 def selection(repo, remote, expected_id, transport):
+    with operation_scope(settings_for(transport), name="enrollment.selection"):
+        return _selection(repo, remote, expected_id, transport)
+
+
+def _selection(repo, remote, expected_id, transport):
     checkout = local_checkout(repo, remote)
     owner = owned_repository(transport, checkout["repository"], expected_id)
     observation = inspect_project(checkout, transport, owner["repository_id"], personal_owner=owner)

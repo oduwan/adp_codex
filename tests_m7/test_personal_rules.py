@@ -22,6 +22,7 @@ from adp.personal_publication import PersonalPublication
 from adp.personal_product import PersonalProduct
 from adp.personal_product_policy import observe_policy
 from personal_fixtures import PersonalFixture
+from adp.runtime_limits import DEFAULTS
 
 HEAD = "a" * 40
 BASE = "b" * 40
@@ -66,7 +67,7 @@ class Native:
         return self.entries.get(path, Response(404, None))
 
     def request(self, method, path, body, *, seconds):
-        assert 0 < seconds <= 5
+        assert 0 < seconds <= DEFAULTS.request_timeout_seconds
         if path == "/graphql":
             self.calls.append((method, path))
             item = None if self.current is None else {"name": "work/task", "prefix": "refs/heads/",
@@ -269,13 +270,17 @@ class PersonalRulesTests(unittest.TestCase):
         pub.record = lambda: None
         pub.proposed = lambda _: ({"plan_disabled_rules_assent": PLAN_ASSENT}, "exact", "binding")
         pub.save = Mock()
-        with self.assertRaisesRegex(ADPError, "PLAN_UNAVAILABLE"):
-            pub.publish(reviewed="exact", authorized=True, assume_quiescence=True, confirm_project_rules=True)
+        with TemporaryDirectory() as directory:
+            pub.c = SimpleNamespace(memory=SimpleNamespace(control=Path(directory)))
+            pub.service = Native().service
+            with self.assertRaisesRegex(ADPError, "PLAN_UNAVAILABLE"):
+                pub.publish(reviewed="exact", authorized=True, assume_quiescence=True, confirm_project_rules=True)
         pub.save.assert_not_called()
         with TemporaryDirectory() as directory:
             for operation in ("PR", "MERGE"):
                 f = PersonalProduct.__new__(PersonalProduct)
                 f.c = SimpleNamespace(memory=SimpleNamespace(control=Path(directory)))
+                f.service = Native().service
                 f.record = lambda: None
                 f.proposed = lambda *a, **kw: {"approval": "exact", "result": {"plan_disabled_rules_assent": PLAN_ASSENT}}
                 f.initialize = Mock()
@@ -325,7 +330,7 @@ class PersonalRulesTests(unittest.TestCase):
             with self.assertRaises((ValueError, ADPError)):
                 validator("GET", "/repos/owned/project/branches/work%2ftask/protection", None, 5)
             with self.assertRaises(ValueError):
-                validator("GET", "/repos/owned/project/branches/work%2Ftask/protection", None, 6)
+                validator("GET", "/repos/owned/project/branches/work%2Ftask/protection", None, 31)
         f = Native()
         for budget in (_Budget(time.monotonic() - 1), _Budget(time.monotonic() + 45, 128)):
             token = f.service._budget.set(budget)

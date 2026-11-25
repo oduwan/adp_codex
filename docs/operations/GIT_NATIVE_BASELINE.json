@@ -1,0 +1,834 @@
+{
+  "definitions": {
+    "classes": "all class nodes",
+    "functions": "all nested/sync/async function nodes",
+    "nonblank_noncomment_lines": "nonempty lines whose first nonspace is not #; includes docstrings; same rule for after counts",
+    "physical_lines": "splitlines count, all tracked adp/*.py",
+    "statements": "all ast.stmt nodes"
+  },
+  "files": {
+    "adp/__init__.py": {
+      "classes": 0,
+      "functions": 0,
+      "nonblank_noncomment_lines": 1,
+      "physical_lines": 1,
+      "sha256": "17a21578a3f5bfba24b5c37091717742705be785f5f3fc804a1eb73777c214a3",
+      "statements": 1
+    },
+    "adp/__main__.py": {
+      "classes": 0,
+      "functions": 0,
+      "nonblank_noncomment_lines": 2,
+      "physical_lines": 3,
+      "sha256": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+      "statements": 2
+    },
+    "adp/accounting_policy.py": {
+      "classes": 0,
+      "functions": 7,
+      "nonblank_noncomment_lines": 133,
+      "physical_lines": 151,
+      "sha256": "5a77c323f51f15f22fe248030f332e66b5c8a4986cf253931ac045b75b376d1c",
+      "statements": 100
+    },
+    "adp/autonomous_track.py": {
+      "classes": 5,
+      "functions": 15,
+      "nonblank_noncomment_lines": 355,
+      "physical_lines": 392,
+      "sha256": "22a0c6d38a7f2468872a93850969bd2708c9d758b8d0ddf13d46b767049aafd9",
+      "statements": 303
+    },
+    "adp/cli.py": {
+      "classes": 0,
+      "functions": 4,
+      "nonblank_noncomment_lines": 200,
+      "physical_lines": 213,
+      "sha256": "05322ff295fb02de2d979a596b39ba293e028917e45075a6b21bb8f32d00d71f",
+      "statements": 186
+    },
+    "adp/codex_cli.py": {
+      "classes": 0,
+      "functions": 31,
+      "nonblank_noncomment_lines": 341,
+      "physical_lines": 404,
+      "sha256": "7750d90c92131c9599eb0354ed2c4a95bc31a38b60716befe2769afa59649873",
+      "statements": 235
+    },
+    "adp/codex_runtime.py": {
+      "classes": 1,
+      "functions": 15,
+      "nonblank_noncomment_lines": 326,
+      "physical_lines": 358,
+      "sha256": "cf2b735851b202fdc67358d08e9cd5fe531ae18b5969a662818254206e60d0f4",
+      "statements": 286
+    },
+    "adp/conductor.py": {
+      "classes": 3,
+      "functions": 45,
+      "nonblank_noncomment_lines": 935,
+      "physical_lines": 1005,
+      "sha256": "02e11eab7588d5b9ad48014c5af850605870788c108865f224eb46180bea9c15",
+      "statements": 792
+    },
+    "adp/config.py": {
+      "classes": 1,
+      "functions": 7,
+      "nonblank_noncomment_lines": 150,
+      "physical_lines": 163,
+      "sha256": "883b7b96aa4671a4a5f087a8f38ab5742150c202a5bf97d1c2fea2f267cbadd0",
+      "statements": 139
+    },
+    "adp/discovery.py": {
+      "classes": 2,
+      "functions": 10,
+      "nonblank_noncomment_lines": 286,
+      "physical_lines": 308,
+      "sha256": "46bd55cfb7f2a6e7fd4ee5af445566c597f89caf7f1d45ee5371f1a574a61505",
+      "statements": 263
+    },
+    "adp/discovery_cli.py": {
+      "classes": 0,
+      "functions": 4,
+      "nonblank_noncomment_lines": 76,
+      "physical_lines": 86,
+      "sha256": "4235fa914c07aa279030e312ff48edda62f4fecd0fa7ff45accf159156c18301",
+      "statements": 71
+    },
+    "adp/discovery_github.py": {
+      "classes": 6,
+      "functions": 22,
+      "nonblank_noncomment_lines": 367,
+      "physical_lines": 420,
+      "sha256": "afea56966874200eb6955a2f1e5d997f5890903f2af9d852f75bd178d84182ec",
+      "statements": 319
+    },
+    "adp/discovery_schema.py": {
+      "classes": 0,
+      "functions": 18,
+      "nonblank_noncomment_lines": 242,
+      "physical_lines": 282,
+      "sha256": "000ce4e44d3f2f8cf6f080c66b67fc5ff387c37aa90379d761762e99d99e5c1f",
+      "statements": 230
+    },
+    "adp/discovery_types.py": {
+      "classes": 17,
+      "functions": 2,
+      "nonblank_noncomment_lines": 157,
+      "physical_lines": 194,
+      "sha256": "24a01f61a6e66060a5e7d6ad06a5eada596e4604c78aa9d9f051e2d4161403e6",
+      "statements": 142
+    },
+    "adp/enrollment.py": {
+      "classes": 4,
+      "functions": 35,
+      "nonblank_noncomment_lines": 644,
+      "physical_lines": 717,
+      "sha256": "1415aba7f148d0d36519c83e4afb271631f67d80d501f47996a056c455e4a12e",
+      "statements": 490
+    },
+    "adp/enrollment_cli.py": {
+      "classes": 0,
+      "functions": 7,
+      "nonblank_noncomment_lines": 145,
+      "physical_lines": 164,
+      "sha256": "85b40b84927ae71cf0dbff8e37b05c0bafc6a42412616256c954f03d08797923",
+      "statements": 115
+    },
+    "adp/errors.py": {
+      "classes": 5,
+      "functions": 0,
+      "nonblank_noncomment_lines": 12,
+      "physical_lines": 23,
+      "sha256": "8d7d9130c3c943dbac3980d665b9a914819ac8097faffd21bda5bd8545c0b5a5",
+      "statements": 12
+    },
+    "adp/execution_cli.py": {
+      "classes": 1,
+      "functions": 3,
+      "nonblank_noncomment_lines": 76,
+      "physical_lines": 88,
+      "sha256": "a112e1561127b8ca97d05b73bf88fd32f6af1c9d1425308d2998580e9b20df05",
+      "statements": 71
+    },
+    "adp/execution_containment.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 33,
+      "physical_lines": 39,
+      "sha256": "6a9fe4c118a532c2ba8546745cb5c7eb55773e77c03799dad74007b2a1159b31",
+      "statements": 29
+    },
+    "adp/execution_github.py": {
+      "classes": 2,
+      "functions": 9,
+      "nonblank_noncomment_lines": 137,
+      "physical_lines": 152,
+      "sha256": "9f9269501fdf2af41b2a93791dcb206045fbe84f3b962d3245c0aa1a99df225f",
+      "statements": 113
+    },
+    "adp/execution_memory.py": {
+      "classes": 3,
+      "functions": 11,
+      "nonblank_noncomment_lines": 113,
+      "physical_lines": 131,
+      "sha256": "0b7932ea1e110195ecac0978d18a4f5ae6ac1f7b7919535aa7cf8ab107108328",
+      "statements": 103
+    },
+    "adp/execution_policy.py": {
+      "classes": 2,
+      "functions": 5,
+      "nonblank_noncomment_lines": 58,
+      "physical_lines": 69,
+      "sha256": "4e27360a62e4aec2859db9bf33b2a1c15a6c5a1aa8229569eee25a87eaeb370c",
+      "statements": 45
+    },
+    "adp/execution_ports.py": {
+      "classes": 4,
+      "functions": 21,
+      "nonblank_noncomment_lines": 301,
+      "physical_lines": 335,
+      "sha256": "9b7f0fae4ef265b36cb16c1640457fb504408834eef4688a930c2b9aa888597e",
+      "statements": 261
+    },
+    "adp/execution_privacy.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 26,
+      "physical_lines": 34,
+      "sha256": "5d3f1f767333388e3d5153c33718678478a217f764eea88b1987f67772c90d15",
+      "statements": 15
+    },
+    "adp/execution_schema.py": {
+      "classes": 0,
+      "functions": 6,
+      "nonblank_noncomment_lines": 212,
+      "physical_lines": 226,
+      "sha256": "f54cd580b46ba24feaff4c1f7b58e853b1f29b5d48e75efa58f5da7d6b120357",
+      "statements": 180
+    },
+    "adp/execution_supervisor.py": {
+      "classes": 0,
+      "functions": 6,
+      "nonblank_noncomment_lines": 125,
+      "physical_lines": 142,
+      "sha256": "cb2ffebad491b3e60e24c161f5152168e2387d9b727a1180e05d6baf69ba214c",
+      "statements": 110
+    },
+    "adp/execution_types.py": {
+      "classes": 16,
+      "functions": 13,
+      "nonblank_noncomment_lines": 131,
+      "physical_lines": 167,
+      "sha256": "0fd546ead3d37ee73c710b027ce0533a11a455dc9ac85d6ee37fcb0d162d7952",
+      "statements": 128
+    },
+    "adp/forge_http_child.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 62,
+      "physical_lines": 71,
+      "sha256": "6119a76e1fd392152ac7963c300aa581438042ef3833b778e03bd59b576ff64a",
+      "statements": 51
+    },
+    "adp/git.py": {
+      "classes": 0,
+      "functions": 4,
+      "nonblank_noncomment_lines": 70,
+      "physical_lines": 83,
+      "sha256": "621e9b7241ac4b99625f8d2ab49dd72131710e751f0d83abea01d9447598f05a",
+      "statements": 56
+    },
+    "adp/github_product.py": {
+      "classes": 4,
+      "functions": 12,
+      "nonblank_noncomment_lines": 209,
+      "physical_lines": 234,
+      "sha256": "17aae37c7133fc5f5e2e87362f37f59798cafa511774152b1e66f86b85ef26b7",
+      "statements": 176
+    },
+    "adp/github_rules.py": {
+      "classes": 0,
+      "functions": 3,
+      "nonblank_noncomment_lines": 47,
+      "physical_lines": 58,
+      "sha256": "062462e6569a089c4755d659c8ce10e134623e54cce1c768662433ba09ab1f82",
+      "statements": 38
+    },
+    "adp/guard.py": {
+      "classes": 2,
+      "functions": 46,
+      "nonblank_noncomment_lines": 619,
+      "physical_lines": 670,
+      "sha256": "83b05169cbeb2face776a69fd9d1c6a235b00dcabb77ab301835a4e821aaed2b",
+      "statements": 516
+    },
+    "adp/guard_schema.py": {
+      "classes": 0,
+      "functions": 16,
+      "nonblank_noncomment_lines": 264,
+      "physical_lines": 299,
+      "sha256": "c7e49d25b3020072c66ac2ea69452f1630b5de943f7de85f3a3aba256a6e4b02",
+      "statements": 248
+    },
+    "adp/guard_types.py": {
+      "classes": 20,
+      "functions": 2,
+      "nonblank_noncomment_lines": 166,
+      "physical_lines": 211,
+      "sha256": "ffee69fe9e24bc0142f3eee628775ee9e6975abcbd5af388822ace72e1a0f78d",
+      "statements": 148
+    },
+    "adp/lifecycle.py": {
+      "classes": 1,
+      "functions": 25,
+      "nonblank_noncomment_lines": 408,
+      "physical_lines": 451,
+      "sha256": "7b5c2e16df39fb412df4c9b88a4140ec2587058ce09500cfd88b6ee3ddcf6016",
+      "statements": 315
+    },
+    "adp/memory.py": {
+      "classes": 1,
+      "functions": 43,
+      "nonblank_noncomment_lines": 733,
+      "physical_lines": 793,
+      "sha256": "850c7ffa739c1ad27209f6b86559c14161a44795794268d0505e648b5dd0de52",
+      "statements": 619
+    },
+    "adp/network_git.py": {
+      "classes": 5,
+      "functions": 36,
+      "nonblank_noncomment_lines": 413,
+      "physical_lines": 469,
+      "sha256": "b9eb8f6d66caaed35786d0d77c43f8166036b87cfdf479487c0f962c37c880fa",
+      "statements": 332
+    },
+    "adp/network_http.py": {
+      "classes": 6,
+      "functions": 14,
+      "nonblank_noncomment_lines": 251,
+      "physical_lines": 297,
+      "sha256": "5aa54d303aa8e6cc2391ce88043981f39c86cb27e09d5de1a7d5ddd4cdf50b00",
+      "statements": 175
+    },
+    "adp/network_http_child.py": {
+      "classes": 0,
+      "functions": 5,
+      "nonblank_noncomment_lines": 130,
+      "physical_lines": 147,
+      "sha256": "99f4db8c347d29e028405b1b49b1fa7cc38ae5d78430c45ad52757ee22a3ab62",
+      "statements": 106
+    },
+    "adp/network_objects.py": {
+      "classes": 1,
+      "functions": 9,
+      "nonblank_noncomment_lines": 133,
+      "physical_lines": 151,
+      "sha256": "63c6fb3d622ea82ef60c2441fd19c653096d7ef6c54f518dab2a38b7abd609e9",
+      "statements": 118
+    },
+    "adp/operator_authority.py": {
+      "classes": 1,
+      "functions": 18,
+      "nonblank_noncomment_lines": 304,
+      "physical_lines": 332,
+      "sha256": "7d2236777178493163b1d780feffc2c3481e8578ec82d19ceb9de5dd45e26661",
+      "statements": 266
+    },
+    "adp/operator_cli.py": {
+      "classes": 0,
+      "functions": 5,
+      "nonblank_noncomment_lines": 119,
+      "physical_lines": 132,
+      "sha256": "3ec1cff9c88626946981c8a89f96bc026ddc772f113d3bc8ae4ee146df51a82c",
+      "statements": 95
+    },
+    "adp/operator_controller.py": {
+      "classes": 1,
+      "functions": 11,
+      "nonblank_noncomment_lines": 166,
+      "physical_lines": 176,
+      "sha256": "c58bab73c5d86f967aac91547062a4b0975c3b51c9e8d961bd38528b510fbf64",
+      "statements": 142
+    },
+    "adp/operator_decisions.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 47,
+      "physical_lines": 52,
+      "sha256": "f66ab9715a85c2c5722de8453bc1172ff38cd4ccc8ecde6d03f020a2b607230a",
+      "statements": 43
+    },
+    "adp/operator_evidence.py": {
+      "classes": 1,
+      "functions": 10,
+      "nonblank_noncomment_lines": 110,
+      "physical_lines": 127,
+      "sha256": "c4a46e29ada5cc406af9381a4fb99a1b361217dd7302e6d6cec977a94ad3c5f0",
+      "statements": 98
+    },
+    "adp/operator_profile.py": {
+      "classes": 4,
+      "functions": 24,
+      "nonblank_noncomment_lines": 289,
+      "physical_lines": 322,
+      "sha256": "e02429c9b42d1b80484719a045584e38ec014c5e909acaac1c47c0741862bf17",
+      "statements": 262
+    },
+    "adp/operator_providers.py": {
+      "classes": 1,
+      "functions": 8,
+      "nonblank_noncomment_lines": 160,
+      "physical_lines": 176,
+      "sha256": "b7cd6f0f3901b5b4c20c5cde6c1b13c8ddae4909ba9105278e98b785dfd2578f",
+      "statements": 121
+    },
+    "adp/operator_setup.py": {
+      "classes": 1,
+      "functions": 10,
+      "nonblank_noncomment_lines": 227,
+      "physical_lines": 249,
+      "sha256": "cec9422fdf6e0d9891ab749db807fbbf1e9a08227bc951d28a5c0bc58dac85f8",
+      "statements": 173
+    },
+    "adp/personal_adoption.py": {
+      "classes": 1,
+      "functions": 9,
+      "nonblank_noncomment_lines": 209,
+      "physical_lines": 226,
+      "sha256": "16d14f25c47f2031c16dedb1ce47379268ecc06587cbe1c3bb5cb75b1291c70b",
+      "statements": 169
+    },
+    "adp/personal_archive.py": {
+      "classes": 0,
+      "functions": 5,
+      "nonblank_noncomment_lines": 213,
+      "physical_lines": 228,
+      "sha256": "a2de8bf166abd2e7566e979c8d31074ff65067dbac38b379e7b4a39f2d57db5f",
+      "statements": 124
+    },
+    "adp/personal_authority.py": {
+      "classes": 1,
+      "functions": 12,
+      "nonblank_noncomment_lines": 174,
+      "physical_lines": 190,
+      "sha256": "2e8fe3e76ee5ddfda34477ad4247dfb972a7c926e56cf9b21f1c5c46f8ccdee6",
+      "statements": 125
+    },
+    "adp/personal_ci.py": {
+      "classes": 0,
+      "functions": 3,
+      "nonblank_noncomment_lines": 76,
+      "physical_lines": 87,
+      "sha256": "882390895b9698cfefd89e5394b039e9801069a0dad66dbb3504a32842fc2439",
+      "statements": 58
+    },
+    "adp/personal_cli.py": {
+      "classes": 0,
+      "functions": 7,
+      "nonblank_noncomment_lines": 273,
+      "physical_lines": 297,
+      "sha256": "00c751b6416d456ca140fe0021cb7fab2c6b840c51a12cd8870c2c823371ac30",
+      "statements": 229
+    },
+    "adp/personal_discovery.py": {
+      "classes": 1,
+      "functions": 3,
+      "nonblank_noncomment_lines": 53,
+      "physical_lines": 64,
+      "sha256": "7745359ea878fdca8f4f0a59db35c07bf6e75e2f074d65ba8e80df157f94dcc4",
+      "statements": 46
+    },
+    "adp/personal_enrollment.py": {
+      "classes": 1,
+      "functions": 6,
+      "nonblank_noncomment_lines": 263,
+      "physical_lines": 287,
+      "sha256": "d8cb06f5d2fec30def663bc3dd1928187e33a077dc347bd34ed185fc5cf87c1c",
+      "statements": 193
+    },
+    "adp/personal_episode.py": {
+      "classes": 2,
+      "functions": 32,
+      "nonblank_noncomment_lines": 461,
+      "physical_lines": 531,
+      "sha256": "43c5f6a1d61df7511d991e5c37b82bd3df754c5c2a4d50b4e6cf634445b4b50a",
+      "statements": 372
+    },
+    "adp/personal_git.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 32,
+      "physical_lines": 36,
+      "sha256": "831493745fd780dd3d604f36aabd0e65508c90523d1dda12382a05730d97abf4",
+      "statements": 29
+    },
+    "adp/personal_github.py": {
+      "classes": 1,
+      "functions": 3,
+      "nonblank_noncomment_lines": 57,
+      "physical_lines": 67,
+      "sha256": "ab3e718d709805c0127c5b498f73608e79daafd9aa3b39904034a8fc70f48b9d",
+      "statements": 40
+    },
+    "adp/personal_history.py": {
+      "classes": 0,
+      "functions": 5,
+      "nonblank_noncomment_lines": 195,
+      "physical_lines": 213,
+      "sha256": "931a1a9b3aba0e6c17671dd6a489ecb58a5d0c15969ebd8a071ca05514274d22",
+      "statements": 152
+    },
+    "adp/personal_history_git.py": {
+      "classes": 0,
+      "functions": 3,
+      "nonblank_noncomment_lines": 80,
+      "physical_lines": 92,
+      "sha256": "dd76447df53439394d0a4bceb5c376fc506857f28390c9bc77068779333fa41f",
+      "statements": 75
+    },
+    "adp/personal_history_product_git.py": {
+      "classes": 2,
+      "functions": 10,
+      "nonblank_noncomment_lines": 154,
+      "physical_lines": 179,
+      "sha256": "b763669ca037eefdb043ab88a6375d4703e0bb8cd4dcfdebb27f4bf7844addab",
+      "statements": 148
+    },
+    "adp/personal_history_track.py": {
+      "classes": 1,
+      "functions": 12,
+      "nonblank_noncomment_lines": 172,
+      "physical_lines": 195,
+      "sha256": "72724d0864074f0d824c974fbd6f1c836e54308b50f599a2d1d9bd3b99e7763e",
+      "statements": 132
+    },
+    "adp/personal_network.py": {
+      "classes": 2,
+      "functions": 9,
+      "nonblank_noncomment_lines": 149,
+      "physical_lines": 166,
+      "sha256": "7bb29649c7a303a9bab1b8184298d30f4e6689cb1bdaa28382554ef642762e1a",
+      "statements": 124
+    },
+    "adp/personal_network_child.py": {
+      "classes": 0,
+      "functions": 8,
+      "nonblank_noncomment_lines": 167,
+      "physical_lines": 192,
+      "sha256": "d7a61e03333dd2d7a174f432b78139214d98945e36590701f631ce560af4ae20",
+      "statements": 145
+    },
+    "adp/personal_product.py": {
+      "classes": 1,
+      "functions": 48,
+      "nonblank_noncomment_lines": 937,
+      "physical_lines": 1000,
+      "sha256": "920a8b460e88e9c911cdbf681fc53b3667e808339b4f69a6ca10236162f736e0",
+      "statements": 752
+    },
+    "adp/personal_product_child.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 61,
+      "physical_lines": 73,
+      "sha256": "59e82650b21f6f6f35747503b7ce70f79c612afc006dedd61032eee9c3f7276f",
+      "statements": 58
+    },
+    "adp/personal_product_cli.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 69,
+      "physical_lines": 74,
+      "sha256": "215ad71ae56e0a73a98b4fe8c996bab77d60d07997e6a55c9600e6c01cdc009a",
+      "statements": 61
+    },
+    "adp/personal_product_http.py": {
+      "classes": 2,
+      "functions": 2,
+      "nonblank_noncomment_lines": 62,
+      "physical_lines": 69,
+      "sha256": "03d8d8546a4b20fe8f1b78faa3152d1ef8436762b87bb4b22f8901d42dc25278",
+      "statements": 52
+    },
+    "adp/personal_product_policy.py": {
+      "classes": 0,
+      "functions": 6,
+      "nonblank_noncomment_lines": 153,
+      "physical_lines": 169,
+      "sha256": "8ebbb50a725dc5b6d0ac11dbd79ed419204c0aab992c6802736f1789a278609e",
+      "statements": 134
+    },
+    "adp/personal_product_review.py": {
+      "classes": 2,
+      "functions": 15,
+      "nonblank_noncomment_lines": 354,
+      "physical_lines": 381,
+      "sha256": "9c14fa7e7b45f5856cc4d9739149606ab88365b3e279ed8591511bbb120bdb94",
+      "statements": 260
+    },
+    "adp/personal_publication.py": {
+      "classes": 2,
+      "functions": 30,
+      "nonblank_noncomment_lines": 539,
+      "physical_lines": 603,
+      "sha256": "0a261be8a7f39f03030381c96b3721c87a2ff095441e8653150849f6a8fcfa8f",
+      "statements": 400
+    },
+    "adp/personal_read_frame.py": {
+      "classes": 1,
+      "functions": 24,
+      "nonblank_noncomment_lines": 349,
+      "physical_lines": 400,
+      "sha256": "55bf39799039909d8764412d947cb46556a5b319b7d164efe475aa65910dce1a",
+      "statements": 289
+    },
+    "adp/personal_recovery.py": {
+      "classes": 1,
+      "functions": 31,
+      "nonblank_noncomment_lines": 469,
+      "physical_lines": 515,
+      "sha256": "6465ef00d38b5c8e062a447f33bc9a634976c7cdcdf18f53be7d485b815f95b1",
+      "statements": 389
+    },
+    "adp/personal_recovery_cli.py": {
+      "classes": 0,
+      "functions": 3,
+      "nonblank_noncomment_lines": 133,
+      "physical_lines": 141,
+      "sha256": "ed3d6bfc1438e6de4238f4508cc0a5c8dd57538f3098fe770ecae64a2eab8f84",
+      "statements": 116
+    },
+    "adp/personal_report.py": {
+      "classes": 2,
+      "functions": 9,
+      "nonblank_noncomment_lines": 251,
+      "physical_lines": 268,
+      "sha256": "8f852a8bbdf66c2cc826f9f78ad21b9e7e4b7cb68a9b250739205d8ad20dd1fe",
+      "statements": 183
+    },
+    "adp/personal_report_child.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 31,
+      "physical_lines": 38,
+      "sha256": "0ef30151a174f6d461f75aaacd3b5f11871947ddf07d476c6041caa35fae4010",
+      "statements": 30
+    },
+    "adp/personal_republication.py": {
+      "classes": 1,
+      "functions": 5,
+      "nonblank_noncomment_lines": 47,
+      "physical_lines": 53,
+      "sha256": "ac2af5e5a2c74f5e7fd395dda3b11ae96d44d1f35561ac077934dcc5f10ffa54",
+      "statements": 44
+    },
+    "adp/personal_rules.py": {
+      "classes": 0,
+      "functions": 6,
+      "nonblank_noncomment_lines": 118,
+      "physical_lines": 137,
+      "sha256": "5ea40e9cf35707e40483279aa9726a58302b60c43dd04c22e2c5cdc99d53e30e",
+      "statements": 92
+    },
+    "adp/personal_runner.py": {
+      "classes": 2,
+      "functions": 46,
+      "nonblank_noncomment_lines": 809,
+      "physical_lines": 885,
+      "sha256": "35114bfc33f68654539fc9cea216134616f70019895cf02fb85c4d6dfa36c687",
+      "statements": 665
+    },
+    "adp/personal_storage.py": {
+      "classes": 2,
+      "functions": 19,
+      "nonblank_noncomment_lines": 324,
+      "physical_lines": 365,
+      "sha256": "abf43132cc1af0b8e0877ba5e2cee370fec874427425abeb1a32d5b31b94dc3c",
+      "statements": 252
+    },
+    "adp/personal_track.py": {
+      "classes": 2,
+      "functions": 26,
+      "nonblank_noncomment_lines": 735,
+      "physical_lines": 782,
+      "sha256": "f8a4e1d553dee5d8a3b98c784482d17945754af6290bd2cf590b039026861511",
+      "statements": 530
+    },
+    "adp/personal_track_cli.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 109,
+      "physical_lines": 115,
+      "sha256": "109742b4c4cde8986b1e340bc84183bd3a5019d4b3f3e2ec04e4cc1f21a8fb0b",
+      "statements": 94
+    },
+    "adp/personal_track_preparation.py": {
+      "classes": 2,
+      "functions": 11,
+      "nonblank_noncomment_lines": 239,
+      "physical_lines": 269,
+      "sha256": "16cac0f9bd480c2dd85b01a7e29fd62f7fbf9ce88b098d5eeb31748438807ff0",
+      "statements": 180
+    },
+    "adp/personal_workers.py": {
+      "classes": 1,
+      "functions": 10,
+      "nonblank_noncomment_lines": 339,
+      "physical_lines": 364,
+      "sha256": "99ef43260d9d28a87ef6f9bf8a79a5c11a316319f3d0135cdfb8cdf72378714c",
+      "statements": 242
+    },
+    "adp/policy.py": {
+      "classes": 1,
+      "functions": 24,
+      "nonblank_noncomment_lines": 574,
+      "physical_lines": 605,
+      "sha256": "d056063f586e678a790002f90bfe10b3a98ef64761a830401a82e241aa2e8c01",
+      "statements": 489
+    },
+    "adp/policy_adapters.py": {
+      "classes": 3,
+      "functions": 8,
+      "nonblank_noncomment_lines": 148,
+      "physical_lines": 167,
+      "sha256": "0bd800b7926db3458b9695525f2698b3681da021753c49d02914db9e4a04814e",
+      "statements": 123
+    },
+    "adp/policy_schema.py": {
+      "classes": 0,
+      "functions": 14,
+      "nonblank_noncomment_lines": 164,
+      "physical_lines": 195,
+      "sha256": "d6f589d25ec38e8125d7f19a3dec9d5627169eeba718f12ccaa3da375bc2f419",
+      "statements": 153
+    },
+    "adp/policy_types.py": {
+      "classes": 44,
+      "functions": 6,
+      "nonblank_noncomment_lines": 335,
+      "physical_lines": 429,
+      "sha256": "9625e93ba69a5cc34eced815f6459a828a7727dba78710797947de72bda0c358",
+      "statements": 296
+    },
+    "adp/product_flow.py": {
+      "classes": 2,
+      "functions": 22,
+      "nonblank_noncomment_lines": 523,
+      "physical_lines": 566,
+      "sha256": "36d782b918ff63fbadf0bca14aae0758dc3fb814f880e30f8bef9095d788de36",
+      "statements": 411
+    },
+    "adp/project_validation.py": {
+      "classes": 2,
+      "functions": 29,
+      "nonblank_noncomment_lines": 467,
+      "physical_lines": 518,
+      "sha256": "4051438d93274e78ae19dbfe1d3c558ca2cf78a724e61779d97b98fa9c8357c0",
+      "statements": 395
+    },
+    "adp/project_validation_github.py": {
+      "classes": 3,
+      "functions": 11,
+      "nonblank_noncomment_lines": 252,
+      "physical_lines": 281,
+      "sha256": "0b9627ce6318f26c52c70bc02428bba10408200ad305f40d065bae5d868b615a",
+      "statements": 197
+    },
+    "adp/project_validation_types.py": {
+      "classes": 17,
+      "functions": 3,
+      "nonblank_noncomment_lines": 122,
+      "physical_lines": 159,
+      "sha256": "a7c26c02e1a2a050385ea3a36b928e226a2947679312d40c904cd5ff486aec3d",
+      "statements": 110
+    },
+    "adp/runtime_limits.py": {
+      "classes": 5,
+      "functions": 30,
+      "nonblank_noncomment_lines": 304,
+      "physical_lines": 364,
+      "sha256": "b2d025c5d4b62f8c470e0503cbadae11171c5e23489f6aebc00b98ebcdbe305d",
+      "statements": 261
+    },
+    "adp/schema.py": {
+      "classes": 0,
+      "functions": 10,
+      "nonblank_noncomment_lines": 142,
+      "physical_lines": 163,
+      "sha256": "bf698e5cfb22c957cce33d0e3981a50faea2a0c3e24d2e867c0a323397afbeb5",
+      "statements": 124
+    },
+    "adp/storage.py": {
+      "classes": 0,
+      "functions": 6,
+      "nonblank_noncomment_lines": 71,
+      "physical_lines": 90,
+      "sha256": "e9c35403a4d533f7b914f29daee9f5ceacc718986862ec4518c5aab7b7ae9428",
+      "statements": 65
+    },
+    "adp/ticket_http_child.py": {
+      "classes": 0,
+      "functions": 2,
+      "nonblank_noncomment_lines": 53,
+      "physical_lines": 61,
+      "sha256": "f337a793225d00d959b81d2c6d0895a54db9dd0cd59cd9f7a6b4886dc3440f64",
+      "statements": 49
+    },
+    "adp/ticket_preparation.py": {
+      "classes": 2,
+      "functions": 30,
+      "nonblank_noncomment_lines": 409,
+      "physical_lines": 467,
+      "sha256": "e8fee3da3ddc0e94eb090ebc7e1ef9facd5cca5b7d9dfc76ecf0bd0ab9ee8e03",
+      "statements": 354
+    },
+    "adp/ticket_publication.py": {
+      "classes": 2,
+      "functions": 9,
+      "nonblank_noncomment_lines": 342,
+      "physical_lines": 366,
+      "sha256": "05dfd2830e1556ffc72dbf9d19859eb375af3056654f251d4f698cbe9f2b13ba",
+      "statements": 278
+    },
+    "adp/ticket_types.py": {
+      "classes": 14,
+      "functions": 2,
+      "nonblank_noncomment_lines": 118,
+      "physical_lines": 149,
+      "sha256": "59ca5a1828d5aa64de7b829776f81c1cd58b4a65799f4b93f1b3051abf1b13c2",
+      "statements": 102
+    },
+    "adp/track_schema.py": {
+      "classes": 0,
+      "functions": 1,
+      "nonblank_noncomment_lines": 108,
+      "physical_lines": 112,
+      "sha256": "d5bc8e2583504d6950852d01432311f8c5edd74ce26f3010ca72a8ab72ce15e6",
+      "statements": 95
+    }
+  },
+  "head": "13fd8595e301bfc7e1428a96774ae9663669b716",
+  "measurement": "Static AST/file counts only; no product import/test/runtime",
+  "runtime_baseline": {
+    "Git_helper_calls": 15606,
+    "Memory_inspections": 1003,
+    "durations_overlap": true,
+    "publication_live_invocations": 31,
+    "publication_wall_seconds": 151.03667298797518,
+    "request_attempts": 90,
+    "request_limit": 128,
+    "source": "Issue50 comment7165149157, preserved raw failed CI accounting case; not new execution",
+    "underlying_raw_full_proof_count": "UNKNOWN"
+  },
+  "schema_version": 1,
+  "total": {
+    "classes": 249,
+    "functions": 1240,
+    "modules": 100,
+    "nonblank_noncomment_lines": 23499,
+    "physical_lines": 26210,
+    "statements": 19325
+  },
+  "tree": "1fe94f0a26656325c969cbc04ef8497aca9cafa9"
+}

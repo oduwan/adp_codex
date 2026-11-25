@@ -102,7 +102,8 @@ native rules. Check requirements remain UNKNOWN unless actually prescribed or
 selected; an unenforced workflow is not automatically required. Existing UNKNOWN
 enrollments/receipts are immutable and need explicit operator disposition if fresh
 facts differ; reads never migrate or reset them. Original M1/M2, independent
-exact-SHA review, 45-second/128-request dispatch and uncertainty recovery remain.
+exact-SHA review and uncertainty recovery remain. Network preferences are now
+centralized in the [runtime profile](RUNTIME_LIMITS.md); old grants do not grow.
 
 This compatibility repair is qualified with synthetic responses only. Genuine
 M8 remains NOTRUN; it authorizes no managed upgrade, pilot action or release.
@@ -137,8 +138,12 @@ adp personal publish --repo /owned/project --remote origin --directory PRIVATE_D
 ```
 
 The proposal lasts at most 300 seconds and never extends the original personal
-window. The original 45-second/128-request network dispatch, five-second request
-limit and bounded stop allowances remain. M1/M2 ownership, thresholds and all
+window. Fresh proposals bind the three effective [runtime limits](RUNTIME_LIMITS.md).
+Old proposals retain their original ceilings; all bounded stop allowances remain.
+One complete fresh proposal is checked inside the invocation lock against the
+operator's exact token before durable publication intent, including separate
+plan-disabled assent. No independent review or native CAS gate is removed.
+M1/M2 ownership, thresholds and all
 previous counters are preserved. This slice supports one publication intent;
 unknown or changed evidence cannot silently create another window or intent.
 

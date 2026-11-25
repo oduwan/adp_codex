@@ -11,21 +11,24 @@ from .discovery_schema import NAME, digest, json_value
 from .execution_types import ExternalObservation
 from .policy_types import Operation
 from .schema import encode, require
+from .runtime_limits import http_request, read_operation, settings_for
 
 
 class GitHubMutationTransport:
-    def __init__(self, token):
+    def __init__(self, token, *, runtime_settings=None):
         require(type(token) is str and 0 < len(token) <= 4096 and all(32 < ord(c) < 127 for c in token), "Explicit forge authentication is required")
         self._token = token
+        self.runtime_settings = settings_for(settings=runtime_settings)
         self._opener = urllib.request.build_opener(_NoRedirect())
 
-    def request(self, method, path, payload=None):
+    @http_request
+    def request(self, method, path, payload=None, *, seconds=None):
         require(method in ("GET", "POST") and re.fullmatch(r"/repos/[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*(?:/(?:pulls|issues)(?:/[1-9][0-9]*(?:/comments)?)?)?(?:\?[A-Za-z0-9_=&-]+)?", path), "Unsupported forge request")
         request = urllib.request.Request(API + path, data=encode(payload) if payload is not None else None, method=method,
             headers={"Authorization": "Bearer " + self._token, "Accept": "application/vnd.github+json",
                      "Content-Type": "application/json", "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "adp-conductor"})
         try:
-            response = self._opener.open(request, timeout=30)
+            response = self._opener.open(request, timeout=seconds)
         except urllib.error.HTTPError as exc:
             response = exc
         except (OSError, urllib.error.URLError):
@@ -67,6 +70,7 @@ class GitHubForgeBackend:
         require(match and match[1].lower() == self.repository.lower(), "Product report target is outside the admitted repository")
         return "/repos/" + self.repository + "/issues/" + match[2] + "/comments"
 
+    @read_operation("forge.inventory")
     def inventory(self, operation, payload):
         """One shared bounded native inventory for observation and preflight."""
         if not self._identity():
@@ -87,6 +91,7 @@ class GitHubForgeBackend:
                 return tuple(rows)
         return None
 
+    @read_operation("forge.observe")
     def observe(self, key, operation, payload, *, attempted=False):
         rows = self.inventory(operation, payload)
         if rows is None:
@@ -126,6 +131,7 @@ class GitHubForgeBackend:
             return ExternalObservation("UNKNOWN")
         return ExternalObservation("PRESENT", reference, revision, digest(payload["body"]))
 
+    @read_operation("forge.submit")
     def submit(self, key, operation, payload, *, authorization=None, plan_digest=None, before_mutation=None):
         subject = digest({"id": key, "plan": plan_digest, "payload": payload})
         require(authorization is not None and self.authority is not None

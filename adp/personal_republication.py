@@ -8,6 +8,7 @@ from .schema import key, require
 
 class RevisionPublication(PersonalPublication):
     def __init__(self, product, *, transport=None):
+        require(not product.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: no corrected publication from legacy Product consent")
         super().__init__(product.c, transport=transport)
         self.product = product
         self.path = self.personal.state / "publication-revisions" / (self.c.revision() + ".json")

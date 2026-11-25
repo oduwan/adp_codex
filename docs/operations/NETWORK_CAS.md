@@ -124,11 +124,13 @@ preflight precedes uploads. Bounds: SHA1, at most16 missing commits/two parents,
 512 objects, 32 levels, 1MiB per object and 8MiB total. Submodules, extra headers,
 noncanonical dates/messages/order and unrepresentable path bytes are unsupported.
 
-An operation has a fixed45s dispatch budget and128-call maximum; no further
-request launches after the dispatch budget expires. Each request has at most5s
-plus bounded stop cleanup and a1MiB response cap. Supervisor probing, bounded
-stop/reaping and local journal bookkeeping can extend total wall time beyond45s;
-45s is not an unconditional end-to-end wall-clock guarantee. The trusted HTTP child uses TLS
+An outer operation uses the centralized [runtime profile](RUNTIME_LIMITS.md),
+with defaults of150s/128 requests and10s per request. Nested phases share its
+absolute deadline/counter; no further request launches after exhaustion.
+Existing consent/permits remain literal and can only reduce these allowances.
+The1MiB response cap, supervisor cancellation/reaping and local Git bounds are
+unchanged; cooperative local work and stop cleanup are not an unconditional
+preemptive wall-clock guarantee. The trusted HTTP child uses TLS
 verification, private stdin credentials and a minimal environment. The accepted
 Linux subreaper bounds blocking DNS, TLS and partial responses, then proves stop.
 No token is in command arguments, worker environment/prompts, stop receipts,
