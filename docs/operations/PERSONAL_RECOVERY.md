@@ -5,6 +5,10 @@ qualified original personal/native-track Issue #1 attempt. It is not a general
 `STOP_UNSAFE` bypass. Existing personal enrollments and independently signed
 providers retain their previous rules. Installation grants no recovery rights.
 
+Network resource preferences use the optional [central runtime profile](RUNTIME_LIMITS.md).
+They never replenish historical M1/M2 usage, extend a stored grant or authorize
+archival application, a new window, adoption or a Worker.
+
 All commands use the managed, pinned launcher. Discover the verb in `adp personal
 capabilities` first. The same protocol is available as `adp codex VERB --personal`.
 Pass `--repo`, `--remote`, and the original protected `--directory`. Obtain each

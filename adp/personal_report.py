@@ -27,6 +27,7 @@ from .network_git import GitHubTarget
 from .policy_types import Effect, Operation, Request
 from .schema import encode, fields, key, require
 from .storage import atomic
+from .runtime_limits import network_operation
 
 
 class PersonalReportTransport(PersonalProductTransport):
@@ -89,6 +90,7 @@ class PersonalReport(PersonalProduct):
     def save_report(self, row):
         atomic(self.report_path, encode(row, LIMIT))
 
+    @network_operation("product.report_preview")
     def report_preview(self, *, approved=None):
         now = self.clock()
         if approved is None:
@@ -116,7 +118,8 @@ class PersonalReport(PersonalProduct):
                 + ("\nNext original Issue " + str(current["next_issue"]) + " needs separate scope/window approval."
                     if current["next_issue"] is not None else "\nTrack: " + current["status"] + "."))
             product_text("Product outcome", body)
-            view = {"operation": "REPORT", "setup": self.personal.intent["approval"], "repository": self.personal.plan["repository"],
+            view = {"operation": "REPORT", "runtime_limits": self.service.limits.values(),
+                "setup": self.personal.intent["approval"], "repository": self.personal.plan["repository"],
                 "revision": self.c.revision(), "source_tree": accepted["tree"], "source_ref": self.target.ref,
                 "facts": facts, "method": None, "title": None, "body": body,
                 "target": self.personal.intent["original"]["url"], "completion": digest(accepted),
@@ -170,6 +173,7 @@ class PersonalReport(PersonalProduct):
                 and _author(comment) == _author(before), "Accepted own report identity or metadata changed")
         return observed, comment
 
+    @network_operation("product.report")
     def report(self, *, reviewed, authorized, authorize_memory, assume_quiescence, confirm_rules):
         require(authorized is True and authorize_memory is True and assume_quiescence is True and confirm_rules is True,
                 "Separate exact REPORT, memory, rules and administrative-quiescence approvals required")

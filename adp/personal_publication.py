@@ -29,6 +29,7 @@ from .policy import PolicyProvider
 from .policy_types import Authorization, Effect, Operation, Permission, Plan, Protection, Qualifications, RepositorySnapshot, Request, Rules, SourceClaim, SourceKind, Task
 from .schema import encode, fields, key, require
 from .storage import atomic
+from .runtime_limits import bind_consent, consent_limits, measured, network_operation
 from .github_rules import PLAN_ASSENT
 from .personal_rules import enrollment_rules
 
@@ -198,7 +199,8 @@ class PersonalPublication:
     def current_original(self):
         bases = self.original_bases()
         capture = OriginalRead(self.read, bases[0], additional=bases[1:])
-        observer = GitHubDiscoveryAdapter(self.personal.plan["repository"]["name"], capture, max_requests=128, clock=self.clock)
+        observer = GitHubDiscoveryAdapter(self.personal.plan["repository"]["name"], capture,
+            max_requests=self.service.limits.request_limit, clock=self.clock)
         observer._halt, observer._requests, observer._coverage_items, observer._now = False, 0, [], self.clock()
         for index, base in enumerate(bases):
             observer._one(base, "original-before:" + str(index))
@@ -229,6 +231,7 @@ class PersonalPublication:
             raise PersonalBlocked("FEATURE_POLICY_UNVERIFIED",
                 "Verify current owner/admin access, exact feature ref and protections. A private plan-disabled fallback requires supported unprotected branch evidence, exact classic-plan evidence and separate operation assent. Other unknown or constrained refs remain blocked; never retry an uncertain write.") from None
 
+    @network_operation("publication.proposed")
     def proposed(self, approved=None):
         now = self.clock()
         if approved is None:
@@ -264,7 +267,9 @@ class PersonalPublication:
                 "credential_source": "STORED_GH_GITHUB_COM_NORMAL_OPERATOR", "credential_confinement": "OPERATOR_QUIESCENCE_ASSUMPTION",
                 "credential_provenance": self.transport.credential_provenance,
                 "administrative_quiescence_warrant": WARRANT, "operation": "PUSH", "force": False,
-                "dispatch_seconds": 45, "maximum_requests": 128, "issued_at": issued, "expires_at": expires,
+                "dispatch_seconds": self.service.limits.operation_timeout_seconds,
+                "maximum_requests": self.service.limits.request_limit,
+                "runtime_limits": self.service.limits.values(), "issued_at": issued, "expires_at": expires,
                 "nonce": nonce, "product_acceptance": "NOT_ACCEPTED", "other_external_rights": "NOT_DELEGATED"}
             if self.service.personal_policy is not None:
                 view.update(plan_policy=self.service.personal_policy, plan_disabled_rules_assent=PLAN_ASSENT)
@@ -273,12 +278,14 @@ class PersonalPublication:
             require(self.clock() < expires, "Publication window expired during observations")
             return view, token, binding
 
+    @network_operation("publication.preview")
     def preview(self):
         if self.record() is not None:
             return {"status": "PUBLICATION_INTENT_EXISTS", "result": self.status(), "approval": None}
         view, token, _ = self.proposed()
         return {"status": "PUBLICATION_PROPOSED", "result": view, "approval": token}
 
+    @measured("publication.live")
     def live(self, *, review=True):
         from .personal_read_frame import forbid_writes, publication_live
         if not review:
@@ -295,6 +302,7 @@ class PersonalPublication:
         row = self.record(_observed=observed)
         require(row is not None, "Exact publication consent is missing")
         view = row["view"]
+        bind_consent(view, self.clock())
         require(view["issued_at"] <= self.clock() < view["expires_at"]
                 and self.port._value("rev-parse", "HEAD") == view["revision"]
                 and self.port._value("--no-replace-objects", "rev-parse", "HEAD^{tree}") == view["tree"]
@@ -443,7 +451,7 @@ class PersonalPublication:
         self.save(row)
         state, task, item = self.guard._snapshot(self.c.task_id, requirement)
         if row["reservation"] is None:
-            action = Action("personal:coordinator", ActionKind.CHECK, "Publish the exact independently reviewed feature", "Exact authenticated ref observed", seconds=min(45, row["view"]["expires_at"] - self.clock()))
+            action = Action("personal:coordinator", ActionKind.CHECK, "Publish the exact independently reviewed feature", "Exact authenticated ref observed", seconds=min(consent_limits(row["view"]).operation_timeout_seconds, row["view"]["expires_at"] - self.clock()))
             row["reservation"] = {"context": self.guard._context(state, task), "sequence": item["sequence"], "action": data(action), "permit": None}
             self.save(row)
         reservation = row["reservation"]
@@ -458,6 +466,7 @@ class PersonalPublication:
             self.save(row)
         return typed(Permit, self.record()["reservation"]["permit"])
 
+    @measured("publication.provider")
     def provider(self, permit):
         row = self.live()
         old = self.remote()
@@ -483,6 +492,7 @@ class PersonalPublication:
         require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Actual M3 refused publication")
         return provider, plan, authorization
 
+    @measured("publication.reauthorize")
     def reauthorize(self, provider, plan):
         current = provider.plan(plan.task, plan.request)
         require(replace(current, safety=plan.safety) == plan, "Publication policy, repository, source or exact payload changed after reservation")
@@ -516,25 +526,23 @@ class PersonalPublication:
             "progress_guard": decision.kind, "independent_publication_progress": "NOT_CLAIMED", "repository_id": self.personal.repository_id,
             "ref": self.target.ref, "revision": observation.revision, "product_acceptance": "NOT_ACCEPTED", "other_external_rights": "NOT_DELEGATED"}
 
+    @network_operation("publication.publish")
     def publish(self, *, reviewed, authorized, assume_quiescence, confirm_project_rules, accept_plan_unavailable=False):
         require(authorized is True and assume_quiescence is True and confirm_project_rules is True,
                 "Separately confirm the exact publication, project rules and finite quiescence warrant")
-        existing = self.record()
-        if existing is None:
-            view, token, binding = self.proposed(reviewed)
-            require(reviewed == token, "Publication proposal changed; no mutation authorized")
-            require("plan_disabled_rules_assent" not in view or accept_plan_unavailable is True,
-                    "PLAN_UNAVAILABLE: separately accept this exact publication's plan-disabled rules warrant")
-        else:
-            require(reviewed == existing["approval"], "Use the original publication intent; do not renew it")
         with invocation_lock(self.c.memory.control):
             existing = self.record()
             if existing is None:
-                current, token, current_binding = self.proposed(reviewed)
-                require(current == view and token == reviewed and current_binding == binding, "Publication changed under invocation lock")
+                # The operator token seals this entire fresh view and actual
+                # credential. A second pre-lock full proposal added no gate.
+                view, token, binding = self.proposed(reviewed)
+                require(token == reviewed, "Publication changed under invocation lock")
+                require("plan_disabled_rules_assent" not in view or accept_plan_unavailable is True,
+                        "PLAN_UNAVAILABLE: separately accept this exact publication's plan-disabled rules warrant")
                 self.save({"schema_version": 1, "view": view, "approval": reviewed, "credential_binding": binding,
                     "action_id": digest({"personal-publication": view}), "requirement": None, "reservation": None, "pending_observation": None})
             else:
+                require(reviewed == existing["approval"], "Use the original publication intent; do not renew it")
                 with self.service.bounded():
                     self.local()
                     self.remote()  # Observe current credentials without granting replay.
@@ -556,9 +564,8 @@ class PersonalPublication:
                 dispatch = self.port.prepare_dispatch(row["action_id"], action)
                 self.journal.change(lambda execution, state, tasks: execution["actions"][row["action_id"]].update(status="SUBMITTED"))
                 plan, authorization = self.reauthorize(provider, plan)
-            # The accepted port owns its unchanged 45s/128-call dispatch. Do
-            # not nest it inside a preflight budget which would be restored
-            # already expired afterward. Never renew the original M2 permit.
+            # The native port shares this outer operation's remaining budget.
+            # Internal phases cannot renew it or the original M2 permit.
             self._dispatching = True
             try:
                 result = self.port.submit(action, provider, plan, authorization, dispatch=dispatch, validate=self.validate_dispatch)
@@ -571,6 +578,7 @@ class PersonalPublication:
                     result = self.port.observe(action)
                 return self.settle(result)
 
+    @network_operation("publication.status")
     def status(self):
         row = self.record()
         if row is None:

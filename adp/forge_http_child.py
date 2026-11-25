@@ -10,14 +10,14 @@ import sys
 # This script is launched with -I from the trusted ADP installation.
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from network_http_child import exchange, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES
+    from network_http_child import exchange, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, request_allowance
 else:
-    from .network_http_child import exchange, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES
+    from .network_http_child import exchange, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, request_allowance
 
 
 def validate_request(method, path, body, seconds):
-    if (type(seconds) not in (int, float) or not math.isfinite(seconds) or not 0 < seconds <= 5
-            or type(path) is not str or len(path) > 1024
+    request_allowance(seconds)
+    if (type(path) is not str or len(path) > 1024
             or method not in ("GET", "POST", "PUT")):
         raise ValueError("Unsupported bounded forge request")
     match = re.fullmatch(r"/repos/([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9_.-]{1,100})(.*)", path)

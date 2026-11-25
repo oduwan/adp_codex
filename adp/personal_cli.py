@@ -19,8 +19,15 @@ from .personal_runner import PersonalCoordinator
 from .personal_storage import PersonalBlocked, approval, assert_public, load_state, read_private
 from .project_validation_github import GitHubValidationHTTP
 from .schema import require
+from .runtime_limits import load_runtime_limits
 
 ACTIONS = ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect", "run", "resume", "handoff")
+
+
+def _read_transports(token):
+    settings = load_runtime_limits()
+    return (PersonalGitHubRead(token, runtime_settings=settings),
+            GitHubValidationHTTP(token, runtime_settings=settings))
 PUBLICATION = ("publication-preview", "publish", "publication-status")
 ARCHIVAL = ("archive-preview",)
 from .personal_product_cli import PRODUCT
@@ -179,7 +186,7 @@ def _run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, p
             from .personal_recovery_cli import dispatch
             if transport is None and action not in ("archive-observe", "archive-status", "archive-revoke", "continuation-status"):
                 token = discovery_token("GH_TOKEN")
-                transport, ci_transport = PersonalGitHubRead(token), GitHubValidationHTTP(token)
+                transport, ci_transport = _read_transports(token)
             result = dispatch(args, retained(args), transport=transport, ci_transport=ci_transport, runtime=runtime, clock=clock)
             report.update(result)
             assert_public(report)
@@ -229,7 +236,7 @@ def _run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, p
         if transport is None and (action in ("inspect", "plan", "apply", "preview", "run", "resume", "reconnect", "doctor")
                                   or (getattr(args, "for_operation", None) in ("run", "resume"))):
             token = discovery_token(getattr(args, "token_env", "GH_TOKEN"))
-            transport, ci_transport = PersonalGitHubRead(token), GitHubValidationHTTP(token)
+            transport, ci_transport = _read_transports(token)
         if action in ("inspect", "plan", "apply"):
             observation, owner = selection(args.repo, args.remote, args.github_id, transport)
             if action == "inspect":

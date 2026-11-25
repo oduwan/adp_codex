@@ -39,6 +39,7 @@ from .project_validation_github import GitHubEvidenceSource
 from .project_validation_types import EvidenceGate, EvidencePolicy, Phase, PullIdentity, RequiredCheck
 from .schema import encode, fields, key, require, string
 from .storage import atomic
+from .runtime_limits import bind_consent, consent_limits, measured, network_operation
 
 TOKEN = re.compile(r"product1\.([0-9]{1,12})\.([0-9]{1,12})\.([0-9a-f]{32})\.([0-9a-f]{64})\Z")
 ASSENT = "I reviewed the current supplied project governance and approve this exact operation without waiving any project requirement."
@@ -218,6 +219,7 @@ class PersonalProduct:
                 and str(matches[0]["id"]) == identity["id"], "Alternate or duplicate source PR")
         return item
 
+    @network_operation("product.proposed")
     def proposed(self, operation, *, approved=None, title=None, body=None, method=None, delegate=False):
         require(operation in ("PR", "MERGE"), "Unsupported product operation")
         now = self.clock()
@@ -254,7 +256,8 @@ class PersonalProduct:
                         "Native merge requires observed base ancestry; no fetch or rewrite")
                 if item["draft"] or item.get("mergeable") is not True or item.get("mergeable_state") != "clean":
                     return {"status": "WAITING_HUMAN_APPROVAL", "reason": "PR_READINESS_OR_NATIVE_MERGEABILITY", "approval": None}
-            view = {"operation": operation, "setup": self.personal.intent["approval"], "repository": self.personal.plan["repository"],
+            view = {"operation": operation, "runtime_limits": self.service.limits.values(),
+                "setup": self.personal.intent["approval"], "repository": self.personal.plan["repository"],
                 "issue_id": self.personal.plan["issue_id"], "original_digest": self.personal.plan["original_digest"],
                 "original_observation": original, "revision": self.c.revision(), "source_ref": self.target.ref,
                 "source_tree": self.port._value("rev-parse", "HEAD^{tree}"), "review_binding": seal,
@@ -274,6 +277,7 @@ class PersonalProduct:
         return {"status": "WAITING_HUMAN_APPROVAL" if operation == "MERGE" and not delegate else operation + "_PROPOSED",
             "result": view, "approval": self.token(view, binding), "binding": binding}
 
+    @measured("product.live")
     def live(self, *, genuine=False):
         if self.c.episode and not genuine:
             from .personal_read_frame import product_live
@@ -285,6 +289,7 @@ class PersonalProduct:
     def _live_current(self, *, genuine=False):
         require(self.active is not None, "Exact operation consent required")
         view = self.active["view"]
+        bind_consent(view, self.clock())
         self.local(genuine=genuine)
         require(view["issued_at"] <= self.clock() < view["expires_at"]
                 and view["generation"] == self.c.memory.inspect()["state"]["generation"]
@@ -358,6 +363,7 @@ class PersonalProduct:
         require(callable(getattr(self, "_policy_final", None)) and self._policy_final() is True,
                 "Current exact M3 final authorization required")
 
+    @network_operation("product.intent")
     def intent(self, operation, *, reviewed, authorized, authorize_memory, assume_quiescence, confirm_rules,
                title=None, body=None, method=None, delegate=False, accept_envelope=False, accept_plan_unavailable=False):
         require(authorized is True and authorize_memory is True and assume_quiescence is True and confirm_rules is True,
@@ -411,7 +417,7 @@ class PersonalProduct:
                         permit = Permit(item["active"]["id"], self.guard.inspect(self.c.task_id, old["requirement"]))
                     else:
                         permit = self.guard.begin(self.c.task_id, old["requirement"], Action("personal:coordinator", ActionKind.CHECK,
-                            old["action"], "One authenticated exact product effect", seconds=min(45, old["view"]["expires_at"] - self.clock())))
+                            old["action"], "One authenticated exact product effect", seconds=min(consent_limits(old["view"]).operation_timeout_seconds, old["view"]["expires_at"] - self.clock())))
                 old["reservation"] = data(permit); self.save_intent(old)
             permit = typed(Permit, old["reservation"])
             if operation == "MERGE":
@@ -510,6 +516,7 @@ class PersonalProduct:
         execution = next((r for r in reversed(row["execution"]) if r["view"]["operation"] == "CI"), None)
         return tuple(typed(RequiredCheck, c) for c in execution["checks"]) if execution is not None else ()
 
+    @network_operation("product.execution_preview")
     def execution_preview(self, operation, *, approved=None, accept_native=False, confirm_no_checks=False):
         require(operation in ("CI", "REVIEW", "CORRECT"), "Unsupported one-issue execution")
         now = self.clock()
@@ -529,7 +536,8 @@ class PersonalProduct:
                 self.qualified()
             if operation == "CORRECT":
                 require(self.correction_feedback() is not None, "Only actual in-scope failure/rejection permits correction")
-            view = {"operation": operation, "setup": self.personal.intent["approval"], "revision": self.c.revision(),
+            view = {"operation": operation, "runtime_limits": self.service.limits.values(),
+                "setup": self.personal.intent["approval"], "revision": self.c.revision(),
                 "source_tree": self.port._value("rev-parse", "HEAD^{tree}"), "source_ref": self.target.ref,
                 "facts": facts, "review_binding": seal, "generation": self.c.memory.inspect()["state"]["generation"],
                 "administration": digest(administration(self.personal.feature)), "pull": self.record()["pull"],
@@ -542,6 +550,7 @@ class PersonalProduct:
             binding = self.transport.credential_binding
         return {"status": operation + "_PROPOSED", "result": view, "binding": binding, "approval": self.token(view, binding)}
 
+    @network_operation("product.execute_ci", enabled=lambda self, operation, **k: operation == "CI")
     def execute(self, operation, *, reviewed, authorized, accept_native=False, confirm_no_checks=False):
         require(authorized is True, "Separately authorize this finite personal execution")
         with invocation_lock(self.c.memory.control):
@@ -596,6 +605,7 @@ class PersonalProduct:
         # A local observation receives no forge mutation capability. Reuse M3
         # against the exact newly approved current published source and policy.
         v = entry["view"]
+        bind_consent(v, self.clock())
         view = {**v, "operation": "VALIDATE", "method": None}
         self.active = {"view": view, "binding": entry["binding"], "action": None}
         provider, task = self.provider(permit)
@@ -631,7 +641,7 @@ class PersonalProduct:
             else:
                 require(item["sequence"] == reservation["sequence"], "CI guard history changed")
                 permit = self.guard.begin(self.c.task_id, requirement, Action("personal:coordinator", ActionKind.CHECK,
-                    digest(entry["view"]), "One actual project CI disposition", seconds=min(45, entry["view"]["expires_at"] - self.clock())))
+                    digest(entry["view"]), "One actual project CI disposition", seconds=min(consent_limits(entry["view"]).operation_timeout_seconds, entry["view"]["expires_at"] - self.clock())))
             reservation["permit"] = data(permit); self.save_execution(entry)
         permit = typed(Permit, reservation["permit"])
         state, task, current = self.guard._snapshot(self.c.task_id, requirement)
@@ -929,6 +939,7 @@ class PersonalProduct:
             raise PersonalBlocked("CURRENT_CI_NOT_QUALIFIED", "Use the actual current project result as same-ticket feedback while original budgets remain; no merge was submitted.", status="REQUIRES_CORRECTION" if result["status"] in ("FAIL", "ERROR") else "PENDING_VALIDATION")
         require(self.validation_binding() == v["validation"], "Changed current CI invalidates product review and merge approval")
 
+    @network_operation("product.status")
     def status(self, *, manual_method="merge"):
         row = self.record()
         if row is None:

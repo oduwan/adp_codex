@@ -11,6 +11,8 @@ import time
 import json
 import re
 from urllib.parse import parse_qs, urlsplit
+from dataclasses import replace
+from .runtime_limits import current_budget, operation_scope, request_allowance
 
 
 class PersonalProductTransport(PersonalGitHubTransport):
@@ -63,14 +65,18 @@ class PersonalProductTransport(PersonalGitHubTransport):
 
 
 class PersonalProjectRead(PersonalDiscoveryRead):
-    def get(self, path, *, seconds=5):
-        require(0 < seconds <= 5, "Project reads retain the five-second request bound")
-        outer = self.service._budget.get()
-        budget = _Budget(min(outer.end if outer else float("inf"), time.monotonic() + seconds), outer.calls if outer else 0)
+    def get(self, path, *, seconds=None):
+        seconds = self.service.limits.request_timeout_seconds if seconds is None else request_allowance(seconds)
+        outer = self.service._budget.get() or current_budget()
+        budget = (replace(outer, end=min(outer.end, time.monotonic() + seconds)) if outer is not None else
+                  _Budget(time.monotonic() + seconds, settings=self.service.runtime_settings))
         token = self.service._budget.set(budget)
         try:
-            return super().get(path)
+            with operation_scope(self.service.runtime_settings, budget=budget):
+                return super().get(path)
         finally:
             if outer is not None:
                 outer.calls = budget.calls
+                outer.transport_calls = budget.transport_calls
+                outer.execution_seconds = budget.execution_seconds
             self.service._budget.reset(token)

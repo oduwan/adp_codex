@@ -15,6 +15,7 @@ from .schema import (KEY, MAX_ASSIGNMENTS, MAX_JOURNAL, MAX_JSON, MAX_RESULT,
                      MAX_TASKS, bundle, decode, encode, fields, key, require,
                      result_schema, string)
 from .storage import atomic, clear_slot, interrupted_slot, locked, sync_directory
+from .runtime_limits import measured
 
 IGNORE = b"/inbox/\n"
 _UNREVIEWED_REMOTE = object()
@@ -275,6 +276,7 @@ class Memory:
         return [(self.path / "inbox" / (key(assignment) + ".json"), MAX_RESULT)
                 for task in tasks.values() for assignment in task["assignments"]]
 
+    @measured("memory.inspect")
     def inspect(self, *, recovery=False) -> dict:
         """Observe only: no locks, fetch, token creation, index refresh or refs."""
         remote = self._remote_head()

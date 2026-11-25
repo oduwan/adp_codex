@@ -27,6 +27,7 @@ from .personal_storage import (LIMIT, PersonalBlocked, create_private, load_stat
 from .policy_schema import branch, product_path
 from .schema import bundle, encode, fields, key, require, string
 from .storage import atomic, locked, sync_directory
+from .runtime_limits import measured
 
 
 def immutable(path, body):
@@ -62,6 +63,7 @@ def submission_provenance(directory, stage, original, master):
     return restored
 
 
+@measured("recovery.engine_digest")
 def engine_digest():
     root = Path(__file__).parent
     return digest({p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.glob("*.py"))})
@@ -111,11 +113,27 @@ def material(c):
     return rows
 
 
+def _head_ref(root):
+    # Exact adjacent reads only. Newline framing retains the original reader;
+    # a malformed actual combined response is a refusal, never a fallback.
+    if any(c in str(root) for c in ("\n", "\r")):
+        return value(root, "rev-parse", "HEAD"), value(root, "symbolic-ref", "HEAD")
+    raw = git(root, "rev-parse", "HEAD", "--symbolic-full-name", "HEAD", limit=1024)
+    rows = raw.decode("ascii", "strict").split("\n")
+    from .policy_schema import ref, sha
+    require(len(rows) == 3 and rows[-1] == "", "Malformed current HEAD/ref framing")
+    sha(rows[0]); ref(rows[1])
+    require(rows[1].startswith("refs/heads/"), "Detached or ambiguous current source")
+    return rows[0], rows[1]
+
+
+@measured("recovery.administration_snapshot")
 def administration_snapshot(personal):
     def one(root):
-        return {"config": hashlib.sha256(git(root, "config", "--null", "--list")).hexdigest(),
-                "index": hashlib.sha256(git(root, "ls-files", "--stage", "-z")).hexdigest(),
-                "head": value(root, "rev-parse", "HEAD"), "ref": value(root, "symbolic-ref", "HEAD")}
+        config = hashlib.sha256(git(root, "config", "--null", "--list")).hexdigest()
+        index = hashlib.sha256(git(root, "ls-files", "--stage", "-z")).hexdigest()
+        head, source_ref = _head_ref(root)
+        return {"config": config, "index": index, "head": head, "ref": source_ref}
     refs = dict(line.split(" ", 1) for line in value(personal.feature, "for-each-ref", "--format=%(refname) %(objectname)").splitlines())
     return {"feature": one(personal.feature), "outside": one(Path(personal.plan["checkout"]["path"])), "refs": refs}
 

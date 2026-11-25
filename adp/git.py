@@ -9,10 +9,12 @@ import time
 from pathlib import Path
 
 from .errors import ConfigurationError, GitError
+from .runtime_limits import measured
 
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 
 
+@measured("git.native")
 def git(path: Path, *args: str, input: bytes | None = None,
         limit: int = 8 * 1024 * 1024) -> bytes:
     env = os.environ.copy()

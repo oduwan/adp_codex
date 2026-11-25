@@ -269,13 +269,17 @@ class PersonalRulesTests(unittest.TestCase):
         pub.record = lambda: None
         pub.proposed = lambda _: ({"plan_disabled_rules_assent": PLAN_ASSENT}, "exact", "binding")
         pub.save = Mock()
-        with self.assertRaisesRegex(ADPError, "PLAN_UNAVAILABLE"):
-            pub.publish(reviewed="exact", authorized=True, assume_quiescence=True, confirm_project_rules=True)
+        with TemporaryDirectory() as directory:
+            pub.c = SimpleNamespace(memory=SimpleNamespace(control=Path(directory)))
+            pub.service = Native().service
+            with self.assertRaisesRegex(ADPError, "PLAN_UNAVAILABLE"):
+                pub.publish(reviewed="exact", authorized=True, assume_quiescence=True, confirm_project_rules=True)
         pub.save.assert_not_called()
         with TemporaryDirectory() as directory:
             for operation in ("PR", "MERGE"):
                 f = PersonalProduct.__new__(PersonalProduct)
                 f.c = SimpleNamespace(memory=SimpleNamespace(control=Path(directory)))
+                f.service = Native().service
                 f.record = lambda: None
                 f.proposed = lambda *a, **kw: {"approval": "exact", "result": {"plan_disabled_rules_assent": PLAN_ASSENT}}
                 f.initialize = Mock()

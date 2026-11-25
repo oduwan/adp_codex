@@ -41,6 +41,11 @@ class ReservedSafety:
             active = self.guard._active(state, memory_task, item, self.permit.token)
             require(item["mode"] in ("normal", "running") and active["started"] <= self.guard._now() <= active["deadline"],
                     "Reserved attempt is stopped or outside containment")
+            # Resource preferences never extend this exact existing M2 permit.
+            from .runtime_limits import current_budget
+            budget = current_budget()
+            if budget is not None:
+                budget.tighten(seconds=active["deadline"] - self.guard._now())
         approval = None
         stored = item["approval"]
         if stored is not None and stored["context"] == self.guard._context(state, memory_task):

@@ -24,6 +24,7 @@ from .schema import encode, fields, key, require
 from .storage import atomic, locked
 from .ticket_preparation import TicketArchive
 from .personal_history_track import with_reads
+from .runtime_limits import network_operation, read_operation
 
 LINK = "track-link.json"
 
@@ -91,6 +92,7 @@ class PersonalTrack:
                 "Retain the exact original track selection/approval evidence")
 
     @staticmethod
+    @read_operation("track.registration", transport=lambda c, numbers: c.transport)
     def registration(c, numbers):
         require(type(numbers) is tuple and 1 <= len(numbers) <= 8 and len(set(numbers)) == len(numbers)
                 and all(type(n) is int and n > 0 for n in numbers), "Select a finite original Issue inventory")
@@ -128,6 +130,7 @@ class PersonalTrack:
         return row["commit"]["sha"]
 
     @classmethod
+    @read_operation("track.register", transport=lambda cls, c, numbers, **k: c.transport)
     def register(cls, c, numbers, *, reviewed, authorized):
         require(authorized is True, "Separately approve original-track evidence writes")
         with invocation_lock(c.memory.control):
@@ -458,6 +461,7 @@ class PersonalTrack:
             done.add(identity)
         return tuple(sorted(done - {selected}))
 
+    @network_operation("track.completion_preview", service=lambda self, product, **k: product.service)
     def completion_preview(self, product):
         from .personal_episode import settled_guards
         c = product.c
@@ -482,6 +486,7 @@ class PersonalTrack:
             "expires_at": self.personal.plan["window"]["expires_at"]}
         return {"status": "COMPLETION_PROPOSED", "result": view, "approval": "personal-completion:" + digest(view)}
 
+    @network_operation("track.complete", service=lambda self, product, **k: product.service)
     def complete(self, product, *, reviewed, authorized, confirm_acceptance):
         require(authorized is True and confirm_acceptance is True, "Separately confirm this original's actual project acceptance")
         identity = typed(Issue, self.personal.intent["original"]).identity
@@ -517,6 +522,7 @@ class PersonalTrack:
             immutable(path, receipt)
             return self.accepted(identity, transport=product.transport, runtime=product.c.runtime)
 
+    @read_operation("track.status", transport=lambda self, **k: k.get("transport") or self.c.transport)
     @with_reads
     def status(self, *, transport=None, runtimes=None):
         from .personal_episode import settled_guards
@@ -652,6 +658,7 @@ class PersonalTrack:
             return child, True
         return child, False
 
+    @network_operation("track.next_preview", service=lambda self, product, choices, **k: product.service)
     @with_reads
     def next_preview(self, product, choices, *, approved=None):
         from .git import SHA
@@ -715,6 +722,7 @@ class PersonalTrack:
         return {"status": "NEXT_PROPOSED", "result": view,
             "approval": "personal-next:" + digest(binding), "setup_approval": approval(plan)}
 
+    @network_operation("track.next", service=lambda self, product, choices, **k: product.service)
     @with_reads
     def next(self, product, choices, *, reviewed, setup_approval, authorized):
         require(authorized is True and type(choices) is PersonalChoices,
