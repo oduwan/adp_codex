@@ -415,6 +415,10 @@ incomplete successor. A changed reader requires explicit disposition, not silent
 new consent over the same pending intent. Ordinary completion/NEXT formats stay
 unchanged. Existing accepted() receipts remain valid historical observations;
 reading them grants no permission and does not require a fresh-reader token.
+NEXT derives its H3 binding through that authenticated historical acceptance/
+cold path, including after parent expiry or owner release; it does not demand
+an unexpired parent Product grant. The new ordinary successor plan/window/setup
+approval remains independently literal and finite.
 An active accounting episode already requires its original track attachment;
 new registration cannot replace it and must refuse rather than invent a link.
 
