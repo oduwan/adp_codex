@@ -46,24 +46,29 @@ def _private_inputs(c):
     roots = {safe_path(p) for p in roots}
     roots = tuple(sorted((p for p in roots if not any(p != other and p.is_relative_to(other)
                           for other in roots)), key=str))
-    files, total = {}, 0
-    for root in roots:
-        def unreadable(error):
-            require(False, "Private observation directory is unavailable")
-        for directory, names, leaves in os.walk(root, followlinks=False, onerror=unreadable):
-            info = safe_path(Path(directory)).stat()
-            require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
-                    and not info.st_mode & 0o022, "Unverified private input directory")
-            for name in names:
-                safe_path(Path(directory) / name)
-            names.sort()
-            for name in sorted(leaves):
-                if name.endswith(".json"):
-                    path = Path(directory) / name
+    files, total, entries = {}, 0, 0
+    pending = [(root, 0) for root in reversed(roots)]
+    while pending:
+        directory, depth = pending.pop()
+        require(depth <= 16, "Private observation traversal exceeds depth bound")
+        info = safe_path(directory).stat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
+                and not info.st_mode & 0o022, "Unverified private input directory")
+        children = []
+        with os.scandir(directory) as scan:
+            for entry in scan:
+                entries += 1
+                require(entries <= 4096, "Private observation traversal exceeds entry bound")
+                path = safe_path(Path(entry.path))
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    children.append((path, depth + 1))
+                elif entry.name.endswith(".json"):
                     files[str(path)] = _private_digest(path)
-                    total += path.stat().st_size
+                    total += info.st_size
                     require(len(files) <= 1024 and total <= 8 * 1024 * 1024,
                             "Private observation inventory exceeds bound")
+        pending.extend(sorted(children, key=lambda row: str(row[0]), reverse=True))
     for path in (c.personal.root.directory / "personal.json", Path(c.personal.plan["effects"]["marker"])):
         files[str(safe_path(path))] = _private_digest(path)
     return files, roots
@@ -149,7 +154,10 @@ def _identity(c):
     p, r, m = c.personal, c.runtime, c.memory
     return (os.getpid(), threading.get_ident(), id(c), id(p), id(p.root), id(m), id(r),
             c.task_id, p.repository_id, digest(p.intent), digest(p.descriptor), digest(p.root.intent),
-            str(m.config.root), str(m.common), str(m.control), r.host, str(r.directory))
+            str(m.config.root), str(m.common), str(m.control), r.host, str(r.directory),
+            str(p.directory), str(p.state), str(p.root.directory), str(p.root.state),
+            id(c.authority), str(c.authority.directory), id(c.workers), str(c.workers.directory),
+            id(c.track), str(c.track.root) if c.track is not None else None)
 
 
 class _Read:

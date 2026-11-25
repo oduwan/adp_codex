@@ -23,12 +23,15 @@ class AccountingReadFrameTests(unittest.TestCase):
             return deepcopy(observed)
         def fence():
             require(inputs["now"] < inputs["expires"] and not inputs["revoked"], "Consent expired or revoked")
-        personal = SimpleNamespace(root=SimpleNamespace(intent={"original": 1}), intent={"episode": 1},
+        personal = SimpleNamespace(root=SimpleNamespace(intent={"original": 1}, directory=Path("/synthetic/original"), state=Path("/synthetic/original/private")),
+            intent={"episode": 1}, directory=Path("/synthetic/episode"), state=Path("/synthetic/episode/private"),
             descriptor={"binding": 1}, repository_id="opaque:owned")
         c = SimpleNamespace(personal=personal, task_id="personal:original", episode=True,
             memory=SimpleNamespace(config=SimpleNamespace(root=Path("/synthetic/memory")), common=Path("/synthetic/common"),
                 control=Path("/synthetic/control"), inspect=inspect),
             runtime=SimpleNamespace(host="exact-host", directory=Path("/synthetic/runtime")),
+            authority=SimpleNamespace(directory=Path("/synthetic/evidence")), workers=SimpleNamespace(directory=Path("/synthetic/workers")),
+            track=SimpleNamespace(root=Path("/synthetic/track")),
             clock=lambda: inputs["now"], episode_fence=fence)
         def full(**kwargs):
             self.assertIsNone(_CURRENT.get(), "Closing proof must not validate itself from a frame")
@@ -239,6 +242,19 @@ class AccountingReadFrameTests(unittest.TestCase):
             with self.assertRaises(ADPError):_private_digest(p)
             fifo = Path(temporary) / "fifo";os.mkfifo(fifo, 0o600)
             with self.assertRaises(ADPError):_private_digest(fifo)
+        from adp.personal_read_frame import _private_inputs
+        for shape in ("non_json_entries", "deep_directories"):
+            with self.subTest(shape=shape), TemporaryDirectory(prefix="adp-bounded-private-inventory-") as temporary:
+                root = Path(temporary)
+                if shape == "non_json_entries":
+                    for index in range(4097):(root / (str(index) + ".txt")).touch()
+                else:
+                    current = root
+                    for _ in range(17):current = current / "nested";current.mkdir(mode=0o700)
+                personal = SimpleNamespace(state=root, directory=root,
+                    root=SimpleNamespace(state=root, directory=root), plan={"effects": {"marker": str(root / "marker.json")}})
+                c = SimpleNamespace(personal=personal, track=None, runtime=SimpleNamespace(directory=root), authority=SimpleNamespace(directory=root))
+                with self.assertRaisesRegex(ADPError, "traversal exceeds"):_private_inputs(c)
 
     def test_semantic_result_cannot_use_unsealed_replacement_consent(self):
         c, p, _, _ = self.fixture()
@@ -276,7 +292,7 @@ class AccountingReadFrameTests(unittest.TestCase):
         from adp.personal_storage import read_private
         from adp.personal_read_frame import _private_digest
         from adp.storage import atomic
-        for change in ("unchanged", "optional_absent", "runtime_absent", "stop_absent", "new_path", "mode", "hardlink", "short_read"):
+        for change in ("unchanged", "optional_absent", "runtime_absent", "stop_absent", "new_path", "mode", "hardlink", "short_read", "authority_root", "worker_root", "track_root"):
             with self.subTest(change=change), TemporaryDirectory(prefix="adp-proof-consumption-") as temporary:
                 c, p, _, inputs = self.fixture()
                 root = Path(temporary);identifier = "a" * 64
@@ -291,6 +307,9 @@ class AccountingReadFrameTests(unittest.TestCase):
                     if change.endswith("absent"):path.unlink()
                     elif change == "mode":path.chmod(0o644)
                     elif change == "hardlink":(root / "alias").hardlink_to(path)
+                    elif change == "authority_root":c.authority.directory = root
+                    elif change == "worker_root":c.workers.directory = root
+                    elif change == "track_root":c.track.root = root
                     try:
                         if change == "optional_absent":read_private(path, optional=True)
                         elif change == "runtime_absent":runtime._read(identifier)

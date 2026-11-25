@@ -272,7 +272,11 @@ class AccountingCandidateTests(AccountingFixture):
         from adp.personal_history_product_git import administration
         port = GitExecutionPort(Config.discover(self.personal.feature, remote="forge", repository_id=self.personal.repository_id),
             bound_git_directory=Path(administration(self.personal.feature)["directory"]["path"]))
-        consent = {"view": {"issued_at": self.now - 1, "expires_at": self.now + 1}}
+        consent = {"view": {"issued_at": self.now - 1, "expires_at": self.now + 1,
+            "revision": self.c.revision(), "tree": port._value("rev-parse", "HEAD^{tree}"),
+            "source_ref": port._value("symbolic-ref", "HEAD"),
+            "administration": digest(administration(self.personal.feature))},
+            "credential_binding": "synthetic-private-not-a-credential"}
         observer = SimpleNamespace(c=self.c, record=lambda **kwargs: consent, port=port,
             transport=SimpleNamespace(credential_binding="synthetic-private-not-a-credential"))
         old_stop = self.original_c.runtime.directory / (self.recovery.master()["request"] + ".stop.json")
