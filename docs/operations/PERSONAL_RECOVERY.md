@@ -232,3 +232,23 @@ HEAD/tree/ref, clean status, administration, governance and credentials must
 already match the approved consent at both seals. Independent full historical
 proof follows the single semantic body; no later body can replace a proof only
 during validation. Native/write/reauthorization gates remain unframed.
+
+Both full historical proofs use a separate deny-only actual-byte binding, with
+factual shortcuts disabled. Each proof's private inputs are frozen before that
+proof, including the selected immutable ticket archive. Artifact reads retain
+the archive's existing 1 MiB/64-file/16 MiB bounds; other private proof bytes
+have a separate 8 MiB envelope, with bounded entry/depth traversal. Original
+full/outside/checkout source must still equal the historical master seals; old
+physical identities remain bound to the original plan/run. Each input seal
+compares the exact actual mutable Git-administration snapshot already validated
+by its full proof, preserving the existing allowed-ref rules. The engine source
+is rechecked too. These are finite read-consistency checks, not an atomic
+filesystem snapshot; all later current authority/effect fences still apply.
+
+Private proof readers refuse undeclared pointers while this binding is active.
+The closed input set includes the exact per-original enrollment marker paths.
+Actual optional presence and selected JSON name sets are compared as well as
+bytes, so hiding a file cannot bypass its parser. Later completion observations
+bind directory/setup to the already qualified deterministic coordinator before
+following receipts. Direct current-M1 reads and ordinary/signed paths retain
+their existing native checks; no remembered filesystem answer is returned.

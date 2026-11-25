@@ -93,10 +93,11 @@ class PersonalCoordinator:
     def episode_fence(self):
         """Final nonblocking consent/owner check after full evidence validation."""
         from .accounting_policy import entry
+        from .personal_read_frame import present
         window = self.personal.plan["window"]
         require(window["issued_at"] <= self.clock() < window["expires_at"]
-                and not (self.personal.root.state / "accounting-recovery" / "revoked" /
-                         (digest(self.personal.intent["approval"]) + ".json")).exists(), "Episode consent expired or revoked")
+                and not present(self.personal.root.state / "accounting-recovery" / "revoked" /
+                         (digest(self.personal.intent["approval"]) + ".json")), "Episode consent expired or revoked")
 
     def seconds_left(self):
         self.live()

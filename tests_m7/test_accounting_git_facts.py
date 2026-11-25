@@ -93,6 +93,33 @@ class AccountingGitFactTests(unittest.TestCase):
         expected = _inputs(owner, observed, product=True);owner.active["action"] = "other"
         self.assertNotEqual(_inputs(owner, observed, product=True), expected)
 
+    def test_original_source_engine_and_physical_administration_remain_fixed(self):
+        from types import SimpleNamespace
+        from adp.personal_read_frame import _legacy_inputs
+        from adp.execution_containment import source_seal
+        from adp.personal_recovery import engine_digest
+        from adp.schema import encode
+        from adp.storage import atomic
+        state = self.root.parent / "historical-private";state.mkdir(mode=0o700)
+        physical = administration(self.root)
+        personal = SimpleNamespace(feature=self.root, state=state, plan={"paths": ["product"],
+            "checkout": {"path": str(self.root)}, "administration": deepcopy(physical)})
+        atomic(state / "run.json", encode({"feature_administration": physical}))
+        master = {"engine": engine_digest(), "view": {"binding": {"evidence": {"seals": {
+            "feature": source_seal(self.root), "outside": source_seal(self.root, ("product",)),
+            "outer": source_seal(self.root), "admin": "historical refs may legitimately differ"}}}}}
+        c = SimpleNamespace(personal=SimpleNamespace(root=personal))
+        expected = _legacy_inputs(c, master)
+        raw = (self.root / "product").read_bytes();(self.root / "product").write_bytes(b"Changed old unaccepted candidate\n")
+        with self.assertRaisesRegex(ADPError, "unaccepted source changed"):_legacy_inputs(c, master)
+        (self.root / "product").write_bytes(raw)
+        self.assertEqual(_legacy_inputs(c, master), expected)
+        personal.plan["administration"]["root"]["inode"] += 1
+        with self.assertRaisesRegex(ADPError, "physical administration changed"):_legacy_inputs(c, master)
+        personal.plan["administration"] = deepcopy(physical)
+        master["engine"] = "0" * 64
+        with self.assertRaisesRegex(ADPError, "recovery source changed"):_legacy_inputs(c, master)
+
     def test_warm_facts_match_native_reduce_spawns_and_preserve_files_and_refs(self):
         expected = self.native.observe(self.action)
         self.assertEqual(observe(self.port, self.action, self.revision), expected)

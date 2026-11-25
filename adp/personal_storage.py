@@ -69,6 +69,8 @@ def create_private(path: Path) -> None:
 
 
 def read_private(path: Path, *, optional=False):
+    from .personal_read_frame import private_path
+    private_path(path)
     safe_path(path)
     if not path.exists() and optional:
         from .personal_read_frame import consumed
@@ -240,7 +242,8 @@ class PersonalState:
 
 def load_state(directory: Path) -> PersonalState:
     private_directory(directory)
-    if (directory / "episode.json").exists():
+    from .personal_read_frame import present
+    if present(directory / "episode.json"):
         from .personal_episode import load_episode
         return load_episode(directory)
     row = read_private(directory / INTENT)

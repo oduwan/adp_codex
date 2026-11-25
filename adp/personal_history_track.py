@@ -86,8 +86,11 @@ def later_windows(first):
     """Closed native 1→2→3 attachment/consent proof, without links/effective."""
     from .personal_runner import PersonalCoordinator
     from .personal_track import LINK
+    from .personal_read_frame import json_names, present
     link_root = Path(read_private(first.state / LINK)["root"])
-    if len(list((link_root / "links").glob("*.json"))) <= 1:
+    paths = list((link_root / "links").glob("*.json"))
+    json_names(link_root / "links", [p.name for p in paths])
+    if len(paths) <= 1:
         return []  # No later ref can be authorized by this empty projection.
     coordinator = PersonalCoordinator(first, None, None)
     track = coordinator.track
@@ -100,7 +103,7 @@ def later_windows(first):
         identity = by_number[number]
         link = read_private(track.root / "links" / (digest(identity) + ".json"), optional=True)
         if link is None:
-            require(number == 3 or not (track.root / "links" / (digest(by_number[3]) + ".json")).exists(),
+            require(number == 3 or not present(track.root / "links" / (digest(by_number[3]) + ".json")),
                     "Later Issue has no admitted predecessor")
             break
         directory = track.root / "windows" / digest(identity)
@@ -183,6 +186,8 @@ def accepted_merge(c, identity):
         raise PersonalBlocked("HISTORICAL_NATIVE_READ_REQUIRED", "Use the enrolled read-only track status with an explicitly selected native read adapter; host-only archival observation cannot qualify a later merged base.")
     receipt = read_private(c.track.completion_path(identity))
     require(receipt["schema_version"] == 1 and c.personal.intent["kind"] == "PERSONAL"
+            and receipt["directory"] == str(c.personal.directory) and receipt["setup"] == c.personal.intent["approval"]
+            and receipt["identity"] == data(identity) == c.personal.intent["original"]["identity"]
             and c.memory.inspect()["state"]["progress_guard"]["schema_version"] == 1,
             "Later historical acceptance must retain the existing v1 rules")
     actual = c.track.accepted(identity, transport=transport, runtime=c.runtime)

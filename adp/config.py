@@ -98,7 +98,12 @@ class Config:
                  storage: Path | None = None, config: Path | None = None) -> Config:
         root = Path(value(repo, "rev-parse", "--show-toplevel"))
         config_path = config if config is not None else root / ".adp.json"
-        data = load_json(config_path) if config_path.exists() or config_path.is_symlink() else {}
+        if config_path.exists() or config_path.is_symlink():
+            data = load_json(config_path)
+        else:
+            from .personal_read_frame import consumed
+            consumed(config_path)
+            data = {}
         if config is not None and not config_path.exists():
             raise ConfigurationError("Explicit configuration file does not exist")
         if set(data) - {"schema_version", "remote", "repository_id", "memory_branch", "storage"}:

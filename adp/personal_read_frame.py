@@ -1,5 +1,6 @@
 """Private synchronous publication/product reads; never an authority cache."""
 from contextvars import ContextVar
+from contextlib import contextmanager
 from copy import deepcopy
 import os
 import hashlib
@@ -12,41 +13,106 @@ from .discovery_schema import digest
 from .schema import require
 
 _CURRENT = ContextVar("accounting_publication_read", default=None)
+_BOUND_BYTES = ContextVar("accounting_actual_private_inputs", default=None)
+
+
+def _monitored(frame, path):
+    return str(path) in frame.readset or any(path.is_relative_to(root) for root in frame.roots)
+
+
+def private_path(path):
+    """Private-proof callers cannot silently follow an undeclared pointer."""
+    frame = _BOUND_BYTES.get()
+    if frame is not None:
+        frame.context()
+        require(_monitored(frame, Path(os.path.abspath(path))), "Private proof is outside the sealed inputs")
+
+
+def present(path):
+    """Compare the caller's actual existence observation, never synthesize it."""
+    actual = path.exists()
+    frame = _BOUND_BYTES.get()
+    if frame is not None:
+        frame.context()
+        path = Path(os.path.abspath(path))
+        if _monitored(frame, path):
+            require(actual == (frame.readset.get(str(path)) is not None), "Private proof presence changed during observation")
+    return actual
+
+
+def json_names(directory, names):
+    """Constrain actual selector names without returning remembered entries."""
+    frame = _BOUND_BYTES.get()
+    if frame is not None:
+        frame.context()
+        directory = Path(os.path.abspath(directory))
+        if any(directory.is_relative_to(root) for root in frame.roots):
+            expected = sorted(Path(p).name for p, value in frame.readset.items()
+                if value is not None and Path(p).parent == directory and p.endswith(".json"))
+            require(sorted(names) == expected, "Private proof inventory changed during observation")
 
 
 def consumed(path, raw=None, metadata=None):
     """Deny changed actual inputs; never return remembered bytes or authority."""
-    frame = _CURRENT.get()
+    frame = _BOUND_BYTES.get()
     if frame is None:
         return
     frame.context()
     path = Path(os.path.abspath(path))
     name = str(path)
-    if name not in frame.readset and not any(path.is_relative_to(root) for root in frame.roots):
+    if not _monitored(frame, path):
         return  # Current M1/control reads remain actual, outside private proofs.
     expected = frame.readset.get(name)  # Closed inventory proves omitted paths absent.
     if metadata is None:
         require(raw is None and expected is None, "Private proof presence changed during observation")
         return
-    from .personal_storage import LIMIT
     require(stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid()
             and metadata.st_nlink == 1 and not metadata.st_mode & 0o077
-            and len(raw) == metadata.st_size <= LIMIT and expected is not None
+            and len(raw) == metadata.st_size <= _private_limit(frame.c, path) and expected is not None
             and hashlib.sha256(raw).hexdigest() == expected,
             "Actual private proof differs from the sealed protected input")
+
+
+def _private_limit(c, path):
+    from .personal_storage import LIMIT
+    from .ticket_preparation import MAX_ARTIFACT
+    return MAX_ARTIFACT if c.track is not None and path.is_relative_to(c.track.root / "archive") else LIMIT
+
+
+def ticket_bytes(path, limit):
+    """Frame-only opened-byte fence for the existing immutable ticket reader."""
+    frame = _BOUND_BYTES.get()
+    if frame is None:
+        return None
+    from .config import safe_path
+    frame.context()
+    path = safe_path(path)
+    require(str(path) in frame.readset or any(path.is_relative_to(root) for root in frame.roots),
+            "Ticket proof is outside the sealed private inputs")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        metadata = os.fstat(fd)
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_size <= limit, "Unsafe bounded ticket proof")
+        raw = os.read(fd, limit + 1)
+        consumed(path, raw, metadata)
+        return raw
+    finally:
+        os.close(fd)
 
 
 def _private_inputs(c):
     """Closed, bounded private JSON inventory, including optional absence."""
     from .config import safe_path
+    from .ticket_preparation import MAX_ARCHIVE, MAX_ARTIFACTS
     roots = {c.personal.state, c.personal.root.state, c.personal.directory,
              c.runtime.directory, c.authority.directory}
     if c.track is not None:
+        require(c.track.archive.directory == c.track.root / "archive", "Selected ticket archive identity changed")
         roots.add(c.track.root)
     roots = {safe_path(p) for p in roots}
     roots = tuple(sorted((p for p in roots if not any(p != other and p.is_relative_to(other)
                           for other in roots)), key=str))
-    files, total, entries = {}, 0, 0
+    files, total, entries, ticket_total, tickets = {}, 0, 0, 0, 0
     pending = [(root, 0) for root in reversed(roots)]
     while pending:
         directory, depth = pending.pop()
@@ -64,20 +130,32 @@ def _private_inputs(c):
                 if stat.S_ISDIR(info.st_mode):
                     children.append((path, depth + 1))
                 elif entry.name.endswith(".json"):
-                    files[str(path)] = _private_digest(path)
-                    total += info.st_size
-                    require(len(files) <= 1024 and total <= 8 * 1024 * 1024,
+                    files[str(path)] = _private_digest(path, limit=_private_limit(c, path))
+                    if c.track is not None and path.is_relative_to(c.track.root / "archive"):
+                        ticket_total += info.st_size
+                        tickets += 1
+                    else:
+                        total += info.st_size
+                    require(len(files) <= 1024 and total <= 8 * 1024 * 1024
+                            and ticket_total <= MAX_ARCHIVE and tickets <= MAX_ARTIFACTS,
                             "Private observation inventory exceeds bound")
         pending.extend(sorted(children, key=lambda row: str(row[0]), reverse=True))
     for path in (c.personal.root.directory / "personal.json", Path(c.personal.plan["effects"]["marker"])):
         files[str(safe_path(path))] = _private_digest(path)
+    if c.track is not None:
+        from .personal_enrollment import marker
+        require(len(c.track.originals) <= 8, "Bounded original marker inventory required")
+        for identity in c.track.originals:
+            path = marker(c.personal.root.plan["checkout"], c.personal.repository_id, identity.issue_id)
+            files[str(safe_path(path))] = _private_digest(path)
     return files, roots
 
 
-def _private_digest(path):
+def _private_digest(path, *, limit=None):
     """Protected bounded byte observation, including honest absence."""
     from .config import safe_path
     from .personal_storage import LIMIT
+    limit = LIMIT if limit is None else limit
     safe_path(path)
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -86,9 +164,9 @@ def _private_digest(path):
     try:
         info = os.fstat(fd)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1
-                and not info.st_mode & 0o077 and info.st_size <= LIMIT, "Unverified private observation input")
-        raw = os.read(fd, LIMIT + 1)
-        require(len(raw) == info.st_size and len(raw) <= LIMIT, "Private observation input was truncated or exceeds bound")
+                and not info.st_mode & 0o077 and info.st_size <= limit, "Unverified private observation input")
+        raw = os.read(fd, limit + 1)
+        require(len(raw) == info.st_size and len(raw) <= limit, "Private observation input was truncated or exceeds bound")
         return hashlib.sha256(raw).hexdigest()
     finally:
         os.close(fd)
@@ -147,7 +225,30 @@ def _inputs(owner, observed, *, product):
 
 
 def forbid_writes():
-    require(_CURRENT.get() is None, "Accounting publication observation cannot admit, write or execute effects")
+    require(_CURRENT.get() is None and _BOUND_BYTES.get() is None,
+            "Accounting publication observation cannot admit, write or execute effects")
+
+
+def _legacy_inputs(c, master):
+    """Actual old source and administration; no duplicated admission rules."""
+    from .execution_containment import source_seal
+    from .personal_recovery import administration_snapshot
+    from .personal_recovery import engine_digest
+    from .personal_history_product_git import administration
+    from .personal_storage import read_private
+    root = c.personal.root
+    require(engine_digest() == master["engine"], "Approved recovery source changed during observation")
+    sources = {"feature": source_seal(root.feature),
+        "outside": source_seal(root.feature, tuple(root.plan["paths"])),
+        "outer": source_seal(Path(root.plan["checkout"]["path"]))}
+    require(sources == {name: master["view"]["binding"]["evidence"]["seals"][name] for name in sources},
+            "Original unaccepted source changed during observation")
+    physical = {"feature": administration(root.feature), "checkout": administration(Path(root.plan["checkout"]["path"]))}
+    run = read_private(root.state / "run.json")
+    require(physical["checkout"] == root.plan["administration"]
+            and (run["feature_administration"] is None or physical["feature"] == run["feature_administration"]),
+            "Original physical administration changed during observation")
+    return {"sources": sources, "physical": physical, "engine": master["engine"], "administration": administration_snapshot(root)}
 
 
 def _identity(c):
@@ -157,7 +258,10 @@ def _identity(c):
             str(m.config.root), str(m.common), str(m.control), r.host, str(r.directory),
             str(p.directory), str(p.state), str(p.root.directory), str(p.root.state),
             id(c.authority), str(c.authority.directory), id(c.workers), str(c.workers.directory),
-            id(c.track), str(c.track.root) if c.track is not None else None)
+            id(c.track), str(c.track.root) if c.track is not None else None,
+            id(c.track.archive) if c.track is not None else None,
+            str(c.track.archive.directory) if c.track is not None else None,
+            tuple(sorted(digest(i) for i in c.track.originals)) if c.track is not None else ())
 
 
 class _Read:
@@ -167,11 +271,35 @@ class _Read:
         self.owner, self.product = owner, product
         self.consent = deepcopy(owner.active) if product else None
         self.c, self.identity, self.closed = c, _identity(c), False
+        self.readset, self.roots = _private_inputs(c)
         capture = {}
-        self.active = deepcopy(c.personal._active_view(memory=c.memory, allow_expired=False,
-            now=c.clock(), _capture=capture))
-        self.archive = deepcopy(capture["archive"])
-        self.current()  # Full proof must end at this exact live subject.
+        with self.binding():
+            # Actual proof executes without factual shortcuts. Only its real
+            # consumed bytes are bound to the pre-observed protected inputs.
+            self.active = deepcopy(c.personal._active_view(memory=c.memory, allow_expired=False,
+                now=c.clock(), _capture=capture))
+            self.archive = deepcopy(capture["archive"])
+            self.administration = deepcopy(capture["historical_administration"])
+            self.current()  # Full proof must end at this exact live subject.
+
+    @contextmanager
+    def binding(self):
+        token = _BOUND_BYTES.set(self)
+        try:
+            self.context()
+            yield
+        finally:
+            _BOUND_BYTES.reset(token)
+
+    def inputs(self):
+        with self.binding():
+            result = _inputs(self.owner, self.active[2], product=self.product)
+            require((result[2], result[3]) == (self.readset, self.roots),
+                    "Private evidence changed after its actual proof")
+            legacy = _legacy_inputs(self.c, self.archive[0])
+            require(legacy["administration"] == self.administration,
+                    "Actual historical administration differs from its full proof")
+            return (*result, legacy)
 
     def context(self):
         require(not self.closed and self.owner.c is self.c and _identity(self.c) == self.identity
@@ -190,10 +318,11 @@ class _Read:
         forbid_writes()
         token = _CURRENT.set(self)
         try:
-            self.current()
-            result = self.owner._live_current(**({"genuine": False} if self.product else {"review": True}))
-            self.current()
-            return deepcopy(result)  # Product.active['view'] is otherwise a mutable alias.
+            with self.binding():
+                self.current()
+                result = self.owner._live_current(**({"genuine": False} if self.product else {"review": True}))
+                self.current()
+                return deepcopy(result)  # Product.active['view'] is otherwise a mutable alias.
         finally:
             _CURRENT.reset(token)
             self.closed = True
@@ -222,17 +351,17 @@ def _live(owner, *, product=False):
     c = owner.c
     forbid_writes()
     first = _Read(owner, product=product)
-    inputs = _inputs(owner, first.active[2], product=product)
-    first.readset, first.roots = deepcopy(inputs[2]), inputs[3]
+    inputs = first.inputs()
     result = first.run()  # Every original semantic predicate executes once.
     # The shortcut is unavailable here. No semantic body follows this truly
     # closing full raw/host/source/lineage proof.
     closing = _Read(owner, product=product)
     require(closing.identity == first.identity and closing.active == first.active
-            and closing.archive == first.archive and closing.consent == first.consent,
+            and closing.archive == first.archive and closing.consent == first.consent
+            and closing.administration == first.administration,
             "Accounting evidence changed during final publication read")
+    final_inputs = closing.inputs()
     closing.closed = True
-    final_inputs = _inputs(owner, closing.active[2], product=product)
     require(final_inputs == inputs,
             "Source, review, receipt, credential or consent changed during observation")
     actual_consent = final_inputs[1]

@@ -103,7 +103,8 @@ class EpisodeState(PersonalState):
                 and read_private(Path(self.root.plan["effects"]["marker"])) == {"schema_version": 1,
                     "directory": str(self.root.directory), "approval": self.root.intent["approval"]}, "Episode/original enrollment changed")
         memory = memory or self.memory()
-        m, archive, contexts, observed, workers = _archived_view(self.root, memory=memory, runtime=runtime, _child=self)
+        m, archive, contexts, observed, workers = _archived_view(self.root, memory=memory, runtime=runtime,
+            _child=self, _capture=_capture)
         if _capture is not None:
             _capture["archive"] = (m, archive, contexts, observed, workers)
         relation = entry(observed["state"])
@@ -128,7 +129,8 @@ class EpisodeState(PersonalState):
         from .git import git
         git(memory.config.root, "merge-base", "--is-ancestor", activation["checkpoint"], observed["local_head"])
         if not allow_expired:
-            require(not (self.root.state / "accounting-recovery" / "revoked" / (digest(self.intent["approval"]) + ".json")).exists(), "Episode approval revoked")
+            from .personal_read_frame import present
+            require(not present(self.root.state / "accounting-recovery" / "revoked" / (digest(self.intent["approval"]) + ".json")), "Episode approval revoked")
             require(type(now) is int and self.plan["window"]["issued_at"] <= now < self.plan["window"]["expires_at"], "Episode window expired")
             require(all(identifier == relation["parent_requirement"] or item["mode"] == "normal"
                         for identifier, item in observed["state"]["progress_guard"]["requirements"].items()),

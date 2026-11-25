@@ -169,7 +169,9 @@ class PersonalTrack:
             return c.track
 
     def links(self):
+        from .personal_read_frame import json_names
         paths = sorted((self.root / "links").glob("*.json"))
+        json_names(self.root / "links", [p.name for p in paths])
         require(1 <= len(paths) <= len(self.originals), "Track links exceed original finite inventory")
         rows = [read_private(p) for p in paths]
         effective_rows = []
@@ -260,7 +262,8 @@ class PersonalTrack:
     def accepted(self, identity, *, transport=None, runtime=None):
         """Read historical facts without reviving an expired execution grant."""
         path = self.completion_path(identity)
-        if not path.exists():
+        from .personal_read_frame import present
+        if not present(path):
             return None
         receipt = read_private(path)
         fields(receipt, "schema_version identity directory setup checkpoint accepted_at original packet source tree merge actor pull merge_payload workers run product ci files acceptance" +
@@ -283,7 +286,7 @@ class PersonalTrack:
         now = memory.inspect()
         require(now["health"] == "SYNCED", "Historical M1 state is not synchronized")
         if any(action["operation"] == "REPORT" for action in now["state"]["execution"]["actions"].values()):
-            require((personal.state / "report.json").exists(), "Retain the private receipt for the known canonical report effect")
+            require(present(personal.state / "report.json"), "Retain the private receipt for the known canonical report effect")
         git(memory.config.root, "merge-base", "--is-ancestor", receipt["checkpoint"], now["local_head"])
         state, tasks = memory._read_ref(receipt["checkpoint"])
         task_id = personal.task_id if episode else "personal:" + digest({"repository": personal.repository_id, "issue": personal.plan["issue_id"]})
