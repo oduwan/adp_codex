@@ -269,21 +269,22 @@ class AccountingCandidateTests(AccountingFixture):
         from adp.personal_read_frame import publication_live
         old_stop = self.original_c.runtime.directory / (self.recovery.master()["request"] + ".stop.json")
         original_stop = old_stop.read_bytes()
-        read_calls, returned = [], []
-        def interrupted_read(**kwargs):
-            read_calls.append(True)
-            if len(read_calls) == 1:
-                old_stop.unlink()
-            self.c.live()
-            returned.append(True)
-            return {"unaccepted": True, "view": {"issued_at": self.now - 1, "expires_at": self.now + 1}}
-        try:
-            with self.assertRaises((ADPError, OSError)):
-                publication_live(SimpleNamespace(c=self.c, _live_current=interrupted_read))
-        finally:
-            atomic(old_stop, original_stop)
-        self.assertEqual(len(read_calls), 1)
-        self.assertEqual(len(returned), 1)  # Refusal came from the independent closing proof.
+        for lose_on in (1, 2):
+            read_calls, returned = [], []
+            def interrupted_read(**kwargs):
+                read_calls.append(True)
+                if len(read_calls) == lose_on:
+                    old_stop.unlink()
+                self.c.live()
+                returned.append(True)
+                return {"unaccepted": True, "view": {"issued_at": self.now - 1, "expires_at": self.now + 1}}
+            try:
+                with self.assertRaises((ADPError, OSError)):
+                    publication_live(SimpleNamespace(c=self.c, _live_current=interrupted_read))
+            finally:
+                atomic(old_stop, original_stop)
+            self.assertEqual(len(read_calls), lose_on)
+            self.assertEqual(len(returned), lose_on)  # Refusal came after the completed body.
         self.assertEqual(self.c.memory.inspect(), before)
         self.assertEqual(projection.review_binding(), binding)
         # A replacement of an ancestry commit lies outside a HEAD/tree fact

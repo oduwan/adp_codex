@@ -173,8 +173,9 @@ freshly verified; the existing operation deadlines and request caps still apply.
 
 One episode-only `Publication.live(review=True)` computation also uses a private
 synchronous read frame to prevent repeated expansion of that same history
-through nested review/Guard checks. It performs independent complete active
-and archival proofs before and after the read, repeats actual publication,
+through nested review/Guard checks. It performs three independent complete
+active/archival proofs: before either local pass, between the two passes, and
+after both passes with no subsequent framed body. It repeats actual publication,
 raw-review, source, administration and credential checks, and rejects changed
 subjects. Every nested factual lookup still reads current canonical ownership,
 state/tasks/inbox and checks time/revocation. Defensive copies prevent a reader

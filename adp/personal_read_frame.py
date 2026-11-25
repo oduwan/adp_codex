@@ -89,10 +89,18 @@ def _live(owner, *, product=False):
             "Accounting evidence changed during publication observation")
     after = final.run()  # Re-read actual publication/review/credential inputs too.
     require(after == before, "Publication subject changed during read-only observation")
+    # The second local pass can itself race a retained-evidence change. Its
+    # input proof is not a closing proof: independently authenticate AGAIN
+    # after every framed body, with no body following this final capture.
+    closing = _Read(owner, product=product)
+    require(closing.identity == final.identity and closing.active == final.active
+            and closing.archive == final.archive and closing.consent == final.consent,
+            "Accounting evidence changed during final publication read")
+    closing.closed = True
     # current() normally rejects a closed frame; this last fence is explicitly
     # fresh and does not reopen one or return a cached owner/clock verdict.
     from .personal_episode import same_observation
-    same_observation(final.active[2], c.memory.inspect())
+    same_observation(closing.active[2], c.memory.inspect())
     c.episode_fence()
     now = c.clock()
     view = after if product else after["view"]

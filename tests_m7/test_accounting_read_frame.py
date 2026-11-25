@@ -53,11 +53,11 @@ class AccountingReadFrameTests(unittest.TestCase):
             return {"publication": "exact", "view": {"issued_at": 50, "expires_at": 150}}
         p._live_current = read
         self.assertEqual(publication_live(p), {"publication": "exact", "view": {"issued_at": 50, "expires_at": 150}})
-        self.assertEqual(inputs["full"], 2)
+        self.assertEqual(inputs["full"], 3)
         self.assertGreaterEqual(inputs["reads"], 45)  # Actual nested reads, not a saved owner verdict.
         self.assertIsNone(_CURRENT.get())
         publication_live(p)
-        self.assertEqual(inputs["full"], 4)
+        self.assertEqual(inputs["full"], 6)
         inputs["valid"] = False
         with self.assertRaises(ADPError):publication_live(p)
         self.assertIsNone(_CURRENT.get())
@@ -73,10 +73,10 @@ class AccountingReadFrameTests(unittest.TestCase):
         self.assertIsNot(result, p.active["view"])
         result["expires_at"] = 1000
         self.assertEqual(p.active["view"]["expires_at"], 150)
-        self.assertEqual(inputs["full"], 2)
+        self.assertEqual(inputs["full"], 3)
 
     def test_changed_raw_source_identity_canonical_or_final_review_never_returns_success(self):
-        for change in ("raw", "missing", "host", "descriptor", "coordinator", "head", "owner", "task", "inbox", "guard", "expiry", "revoked", "review", "publication_expiry"):
+        for change in ("raw", "missing", "raw_second", "missing_second", "host", "descriptor", "coordinator", "head", "owner", "task", "inbox", "guard", "expiry", "revoked", "review", "publication_expiry"):
             with self.subTest(change=change):
                 c, p, observed, inputs = self.fixture()
                 calls = []
@@ -95,7 +95,9 @@ class AccountingReadFrameTests(unittest.TestCase):
                         elif change == "guard":observed["state"]["guard"] = "changed"
                         elif change == "expiry":inputs["now"] = 200
                         elif change == "revoked":inputs["revoked"] = True
-                    if change not in ("raw", "missing", "review"):
+                    if len(calls) == 2 and change == "raw_second":inputs["raw"] = "changed-second-body"
+                    if len(calls) == 2 and change == "missing_second":inputs["valid"] = False
+                    if change not in ("raw", "missing", "raw_second", "missing_second", "review"):
                         active(c.personal, c.memory, None)  # Drift rejects within the nested check.
                     if change == "publication_expiry" and len(calls) == 2:
                         inputs["now"] = 150  # Episode remains live; the shorter publication grant expired.
@@ -105,6 +107,8 @@ class AccountingReadFrameTests(unittest.TestCase):
                 with self.assertRaises(ADPError):publication_live(p)
                 if change in ("raw", "missing"):
                     self.assertEqual(len(calls), 1)  # Closing proof refused before another body.
+                if change in ("raw_second", "missing_second"):
+                    self.assertEqual(len(calls), 2)  # A genuinely closing proof follows both bodies.
                 self.assertIsNone(_CURRENT.get())
         for field in ("view", "binding", "action", "reservation"):
             with self.subTest(product_context=field):
