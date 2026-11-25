@@ -16,7 +16,7 @@ from adp.errors import ADPError
 from adp.git import git, value
 from adp.personal_publication import PersonalPublication
 from adp.personal_recovery import administration_snapshot, _head_ref
-from adp.runtime_limits import DEFAULTS
+from adp.runtime_limits import DEFAULTS, LEGACY, RuntimeLimits, RuntimeSettings, current_budget, load_runtime_limits
 from test_config import run, snapshot
 from test_runtime_limits import service
 
@@ -82,6 +82,8 @@ class RuntimeWorkTests(unittest.TestCase):
 
     def test_paired_actual_costs_under_identical_defaults(self):
         personal=self.project(); rows={"baseline":[],"optimized":[]}; client=service()
+        profile=self.root/"runtime.json"; profile.write_text(json.dumps(DEFAULTS.values())); profile.chmod(0o600)
+        configuration_costs=[]
         before=snapshot(self.root)
         for index in range(20):
             order=("baseline","optimized") if index%2==0 else ("optimized","baseline")
@@ -91,12 +93,17 @@ class RuntimeWorkTests(unittest.TestCase):
                 with client.bounded(name="paired.administration"):
                     started=time.perf_counter(); results.append(function(personal)); rows[name].append(time.perf_counter()-started)
             self.assertEqual(results[0],results[1])
+            settings=load_runtime_limits(profile)
+            self.assertEqual(settings.limits,DEFAULTS); self.assertEqual(settings.diagnostics,())
+            configuration_costs.append(settings.loading_seconds)
         self.assertEqual(snapshot(self.root),before)
         def stats(values):
             return {"n":len(values),"median_seconds":statistics.median(values),
                     "empirical_p95_seconds":sorted(values)[math.ceil(.95*len(values))-1],"maximum_seconds":max(values)}
         print("PAIRED_DISPOSABLE_COSTS "+json.dumps({"limits":DEFAULTS.values(),"scope":"same two disposable roots; alternating order; actual native Git; no HTTP/Workers",
-            "baseline":stats(rows["baseline"]),"optimized":stats(rows["optimized"]),"samples_seconds":rows},sort_keys=True),flush=True)
+            "baseline":stats(rows["baseline"]),"optimized":stats(rows["optimized"]),
+            "configuration_loading":stats(configuration_costs),"configuration_samples_seconds":configuration_costs,
+            "samples_seconds":rows},sort_keys=True),flush=True)
 
     def publication(self):
         pub=PersonalPublication.__new__(PersonalPublication)
@@ -144,3 +151,59 @@ class RuntimeWorkTests(unittest.TestCase):
             arguments=dict(reviewed="exact",authorized=True,assume_quiescence=True,confirm_project_rules=True); arguments[flag]=False
             with self.subTest(flag=flag),self.assertRaises(ADPError): pub.publish(**arguments)
             pub.record.assert_not_called(); pub.proposed.assert_not_called(); pub.save.assert_not_called()
+
+    def test_selected_legacy_caps_apply_before_first_actual_resumed_observation(self):
+        from adp.personal_product import PersonalProduct
+        from adp.personal_report import PersonalReport
+        for kind in ("publication","product","report"):
+            with self.subTest(kind=kind):
+                client=service(RuntimeSettings(RuntimeLimits(30,300,256)))
+                view={"operation":"PR","title":None,"body":None,"method":None,"expires_at":1}
+                stopped=RuntimeError("stop after first actual read")
+                def first_read(*a,**k):
+                    budget=current_budget()
+                    client.request("GET","/repos/owned/disposable")
+                    self.assertEqual((budget.request_seconds,budget.maximum_calls),(LEGACY.request_timeout_seconds,LEGACY.request_limit))
+                    self.assertLessEqual(budget.end-budget.started,LEGACY.operation_timeout_seconds)
+                    raise stopped
+                if kind=="publication":
+                    obj=self.publication(); obj.service=client
+                    obj.record.return_value={"approval":"exact","view":view}; obj.local.side_effect=first_read
+                    call=lambda:obj.publish(reviewed="exact",authorized=True,assume_quiescence=True,confirm_project_rules=True)
+                elif kind=="product":
+                    obj=PersonalProduct.__new__(PersonalProduct); obj.service=client
+                    obj.c=SimpleNamespace(memory=SimpleNamespace(control=self.root))
+                    obj.record=Mock(return_value={"intents":[{"approval":"exact","view":view}]})
+                    obj.local=Mock(side_effect=first_read)
+                    call=lambda:obj.intent("PR",reviewed="exact",authorized=True,authorize_memory=True,assume_quiescence=True,confirm_rules=True)
+                else:
+                    obj=PersonalReport.__new__(PersonalReport); obj.service=client
+                    obj.c=SimpleNamespace(memory=SimpleNamespace(control=self.root),live=Mock())
+                    obj.report_record=Mock(return_value={"approval":"exact","view":view,"action":"retained"})
+                    obj.journal=SimpleNamespace(inspect=lambda:{"state":{"execution":{"actions":{"retained":{}}}}})
+                    obj.observed_report=Mock(side_effect=first_read)
+                    call=lambda:obj.report(reviewed="exact",authorized=True,authorize_memory=True,assume_quiescence=True,confirm_rules=True)
+                with self.assertRaises(RuntimeError) as raised: call()
+                self.assertIs(raised.exception,stopped)
+
+    def test_recorded_review_and_correction_inherit_resource_caps_without_a_worker_deadline(self):
+        from adp.personal_product import PersonalProduct
+        for operation in ("REVIEW","CORRECT"):
+            obj=PersonalProduct.__new__(PersonalProduct)
+            obj.service=service(RuntimeSettings(RuntimeLimits(30,300,256)))
+            obj.c=SimpleNamespace(memory=SimpleNamespace(control=self.root)); obj.clock=lambda:1000
+            view={"operation":operation,"issued_at":999,"expires_at":2000}
+            entry={"view":view,"approval":"exact","binding":"retained","phase":"PREPARED"}
+            obj.record=Mock(return_value={"pull":{},"execution":[entry]}); obj.token=Mock(return_value="exact")
+            def native_phase(*a):
+                self.assertIsNone(current_budget())
+                with obj.service.bounded() as budget:
+                    obj.service.request("GET","/repos/owned/disposable")
+                    self.assertEqual((budget.request_seconds,budget.maximum_calls),(5,128))
+                    self.assertLessEqual(budget.end-budget.started,45)
+                return {"status":"UNIT_SCOPE_ONLY_NO_WORKER"}
+            obj._execute_selected=Mock(side_effect=native_phase)
+            with self.subTest(operation=operation):
+                result=obj.execute(operation,reviewed="exact",authorized=True)
+                self.assertEqual(result["status"],"UNIT_SCOPE_ONLY_NO_WORKER")
+                obj._execute_selected.assert_called_once_with(operation,entry,"exact")

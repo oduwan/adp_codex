@@ -11,7 +11,7 @@ from .discovery_schema import NAME, digest, json_value
 from .execution_types import ExternalObservation
 from .policy_types import Operation
 from .schema import encode, require
-from .runtime_limits import http_request, settings_for
+from .runtime_limits import http_request, read_operation, settings_for
 
 
 class GitHubMutationTransport:
@@ -70,6 +70,7 @@ class GitHubForgeBackend:
         require(match and match[1].lower() == self.repository.lower(), "Product report target is outside the admitted repository")
         return "/repos/" + self.repository + "/issues/" + match[2] + "/comments"
 
+    @read_operation("forge.inventory")
     def inventory(self, operation, payload):
         """One shared bounded native inventory for observation and preflight."""
         if not self._identity():
@@ -90,6 +91,7 @@ class GitHubForgeBackend:
                 return tuple(rows)
         return None
 
+    @read_operation("forge.observe")
     def observe(self, key, operation, payload, *, attempted=False):
         rows = self.inventory(operation, payload)
         if rows is None:
@@ -129,6 +131,7 @@ class GitHubForgeBackend:
             return ExternalObservation("UNKNOWN")
         return ExternalObservation("PRESENT", reference, revision, digest(payload["body"]))
 
+    @read_operation("forge.submit")
     def submit(self, key, operation, payload, *, authorization=None, plan_digest=None, before_mutation=None):
         subject = digest({"id": key, "plan": plan_digest, "payload": payload})
         require(authorization is not None and self.authority is not None

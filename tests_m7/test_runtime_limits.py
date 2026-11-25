@@ -13,7 +13,7 @@ from adp.network_git import GitHubCAS, GitHubTarget
 from adp.network_http import Response
 from adp.runtime_limits import (DEFAULTS, LEGACY, PARAMETERS, RuntimeLimits, RuntimeSettings,
     bind_consent, current_budget, load_runtime_limits, network_operation, operation_scope,
-    request_allowance, work_span)
+    request_allowance, work_span, consent_scope)
 
 
 class Clock:
@@ -96,6 +96,15 @@ class RuntimeLimitsTests(unittest.TestCase):
         self.assertEqual(load_runtime_limits(self.path).diagnostics[0].kind, "CONFIGURATION_FAILURE")
         self.path.unlink(); self.path.symlink_to(self.root / "other")
         self.assertEqual(load_runtime_limits(self.path).diagnostics[0].kind, "CONFIGURATION_FAILURE")
+        import builtins
+        original=builtins.__import__
+        def unavailable(name,*a,**k):
+            if name=="pwd": raise ImportError("fixture account resolver unavailable")
+            return original(name,*a,**k)
+        with patch.dict(os.environ,{},clear=True),patch("builtins.__import__",side_effect=unavailable):
+            result=load_runtime_limits()
+        self.assertEqual(result.limits,DEFAULTS)
+        self.assertEqual(result.diagnostics[0].error_type,"ImportError")
 
     def test_selection_precedence_and_immutable_client_lifetime(self):
         directory = self.root / "adp-codex"; directory.mkdir()
@@ -283,3 +292,73 @@ class RuntimeLimitsTests(unittest.TestCase):
         self.assertFalse(errors); self.assertTrue(all(not w.is_alive() for w in workers))
         self.assertEqual(len(records),2); self.assertNotEqual(records[0][0],records[1][0])
         self.assertEqual([v for _,v in records],[1,1])
+
+    def test_tighter_project_read_profile_persists_without_extending_aggregate_budget(self):
+        from adp.personal_product_http import PersonalProjectRead
+        clock=Clock(); outer_client=service(RuntimeSettings(RuntimeLimits(30,300,256)))
+        inner=service(RuntimeSettings(RuntimeLimits(3,40,64)))
+        def observed(_): inner.transport.last_response=(200,b'{"actual":"fixture"}',())
+        inner.transport.action=observed
+        with patch("time.monotonic",clock),outer_client.bounded() as outer:
+            self.assertEqual(PersonalProjectRead(inner).get("/repos/owned/disposable",seconds=.1).status,200)
+            self.assertEqual((outer.request_seconds,outer.maximum_calls,outer.end),(3,64,clock.now+40))
+            self.assertEqual(outer.calls,1)
+            def shorter(_):
+                observed(None)
+                bind_consent({"runtime_limits":DEFAULTS.values(),"expires_at":1002},1000)
+            inner.transport.action=shorter
+            PersonalProjectRead(inner).get("/repos/owned/disposable",seconds=.1)
+            self.assertEqual((outer.request_seconds,outer.maximum_calls,outer.end),(3,64,clock.now+2))
+
+    def test_resource_caps_do_not_start_a_worker_timer_or_leak_to_later_operations(self):
+        clock=Clock(); client=service(RuntimeSettings(RuntimeLimits(30,300,256)))
+        with patch("time.monotonic",clock):
+            with consent_scope({}):
+                self.assertIsNone(current_budget())
+                clock.advance(600)  # No Worker is executed; unrelated lifetime is not charged.
+                with client.bounded() as budget:
+                    self.assertEqual((budget.request_seconds,budget.maximum_calls,budget.end),(5,128,clock.now+45))
+                    client.request("GET","/fixture")
+            with client.bounded() as independent:
+                self.assertEqual((independent.request_seconds,independent.maximum_calls,independent.end),(30,256,clock.now+300))
+
+    def test_standalone_upload_has_one_operation_budget_for_all_objects(self):
+        clock=Clock(); client=service(RuntimeSettings(RuntimeLimits(10,40,64)))
+        def native(method,path,body,*,seconds):
+            client.transport.calls.append(seconds); clock.advance(9)
+            return Response(200,b'{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}')
+        client.transport.request=native
+        objects=[SimpleNamespace(kind="blob",oid="a"*40,payload={"fixture":True}) for _ in range(5)]
+        with patch("time.monotonic",clock),self.assertRaises(ADPError): client.upload(objects)
+        self.assertEqual(len(client.transport.calls),5)
+        self.assertEqual(client.transport.calls[-1],4)
+        self.assertEqual(len(client.measurements),1)
+
+    def test_standalone_legacy_forge_observation_cannot_renew_its_budget_per_request(self):
+        from adp.execution_github import GitHubMutationTransport,GitHubForgeBackend
+        from adp.policy_types import Operation
+        clock=Clock(); settings=RuntimeSettings(RuntimeLimits(10,40,64))
+        transport=GitHubMutationTransport("synthetic",runtime_settings=settings)
+        key="a"*64; body="Product\n\n"+GitHubForgeBackend.marker(key)
+        item={"body":body,"number":10,"html_url":"https://github.com/owned/disposable/pull/10"}
+        detail={**item,"title":"Product","draft":True,
+            "head":{"sha":"b"*40,"ref":"work/task","repo":{"id":17,"full_name":"owned/disposable"}},
+            "base":{"ref":"trunk","repo":{"id":17,"full_name":"owned/disposable"}}}
+        replies=[{"id":17,"full_name":"owned/disposable"},[{}]*100,[{}]*100,[item],detail]
+        class Reply:
+            code=200;headers={}
+            def __init__(self,payload):self.payload=payload
+            def __enter__(self):return self
+            def __exit__(self,*a):pass
+            def read(self,_):return json.dumps(self.payload).encode()
+        def respond(*a,**k):
+            clock.advance(9);return Reply(replies.pop(0))
+        forge=GitHubForgeBackend("owned/disposable","17",transport,None)
+        payload={"body":"Product","revision":"b"*40,"title":"Product","draft":True,
+                 "base_ref":"refs/heads/trunk","head_ref":"refs/heads/work/task"}
+        with patch("time.monotonic",clock),patch.object(transport._opener,"open",side_effect=respond) as requests:
+            with self.assertRaises(ADPError): forge.observe(key,Operation.PR,payload)
+        self.assertEqual(requests.call_count,5)
+        self.assertEqual(requests.call_args.kwargs["timeout"],4)
+        self.assertEqual(forge.runtime_measurements[-1]["transport_calls"],5)
+        self.assertEqual(forge.runtime_measurements[-1]["wall_seconds"],45)

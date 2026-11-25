@@ -3,16 +3,13 @@ from .personal_network import PersonalDiscoveryRead, PersonalGitHubTransport
 from .personal_product_child import validate_product
 from .errors import ADPError
 from .schema import require
-from .network_git import _Budget
 from .network_http import NetworkTransportError
 from .discovery_github import GitHubDiscoveryAdapter, Response
 from types import SimpleNamespace
-import time
 import json
 import re
 from urllib.parse import parse_qs, urlsplit
-from dataclasses import replace
-from .runtime_limits import current_budget, operation_scope, request_allowance
+from .runtime_limits import request_allowance
 
 
 class PersonalProductTransport(PersonalGitHubTransport):
@@ -67,16 +64,6 @@ class PersonalProductTransport(PersonalGitHubTransport):
 class PersonalProjectRead(PersonalDiscoveryRead):
     def get(self, path, *, seconds=None):
         seconds = self.service.limits.request_timeout_seconds if seconds is None else request_allowance(seconds)
-        outer = self.service._budget.get() or current_budget()
-        budget = (replace(outer, end=min(outer.end, time.monotonic() + seconds)) if outer is not None else
-                  _Budget(time.monotonic() + seconds, settings=self.service.runtime_settings))
-        token = self.service._budget.set(budget)
-        try:
-            with operation_scope(self.service.runtime_settings, budget=budget):
-                return super().get(path)
-        finally:
-            if outer is not None:
-                outer.calls = budget.calls
-                outer.transport_calls = budget.transport_calls
-                outer.execution_seconds = budget.execution_seconds
-            self.service._budget.reset(token)
+        # One shared operation budget. Only this request's allowance is shorter;
+        # every persistent profile/M2/count tightening stays on the same object.
+        return super().get(path, seconds=seconds)

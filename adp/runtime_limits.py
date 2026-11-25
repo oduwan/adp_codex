@@ -5,6 +5,7 @@ cancellation are never caught by the execution scopes below.
 """
 from __future__ import annotations
 
+from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
@@ -12,7 +13,6 @@ from functools import wraps
 import math
 import os
 from pathlib import Path
-import pwd
 import time
 from types import MappingProxyType
 
@@ -107,6 +107,7 @@ def load_runtime_limits(path=None):
         if path is None:
             selected = os.environ.get("ADP_RUNTIME_LIMITS_FILE")
             if selected is None:
+                import pwd  # Resolution failure belongs to configuration fallback.
                 directory = os.environ.get("XDG_CONFIG_HOME") or str(Path(pwd.getpwuid(os.getuid()).pw_dir) / ".config")
                 selected = str(Path(directory) / "adp-codex" / "runtime-limits.json")
             path = Path(selected)
@@ -143,6 +144,7 @@ def request_allowance(seconds):
 
 
 _CURRENT = ContextVar("adp_runtime_operation", default=None)
+_CONSENT_CAPS = ContextVar("adp_runtime_consent_caps", default=())
 
 
 def settings_for(owner=None, settings=None):
@@ -218,6 +220,15 @@ def current_budget():
     return _CURRENT.get()
 
 
+def measurements_for(owner):
+    """Private per-client bounded evidence, never source/authority state."""
+    history = getattr(owner, "runtime_measurements", None)
+    if history is None:
+        history = deque(maxlen=64)
+        owner.runtime_measurements = history
+    return history
+
+
 @contextmanager
 def operation_scope(settings, *, name="network", seconds=None, budget=None, measurements=None):
     parent = _CURRENT.get()
@@ -228,6 +239,8 @@ def operation_scope(settings, *, name="network", seconds=None, budget=None, meas
         current = Budget(started + settings.limits.operation_timeout_seconds,
                          settings=settings, started=started, name=name)
     current.tighten(settings.limits, seconds)
+    for profile in _CONSENT_CAPS.get():
+        current.tighten(profile)
     token = _CURRENT.set(current)
     outcome = "ERROR"
     try:
@@ -260,7 +273,8 @@ def read_operation(name, *, transport=lambda self, *a, **k: self.transport):
     def decorate(function):
         @wraps(function)
         def wrapped(self, *args, **kwargs):
-            with operation_scope(settings_for(transport(self, *args, **kwargs)), name=name):
+            with operation_scope(settings_for(transport(self, *args, **kwargs)), name=name,
+                                 measurements=measurements_for(self)):
                 return function(self, *args, **kwargs)
         return wrapped
     return decorate
@@ -270,7 +284,7 @@ def http_request(function):
     """Existing urllib ports share resource accounting, never route authority."""
     @wraps(function)
     def wrapped(self, *args, seconds=None, **kwargs):
-        with operation_scope(self.runtime_settings, name="http.request") as budget:
+        with operation_scope(self.runtime_settings, name="http.request", measurements=measurements_for(self)) as budget:
             deadline = budget.request_deadline(seconds)
             started = time.monotonic()
             budget.transport_calls += 1
@@ -295,12 +309,24 @@ def consent_limits(view):
     return RuntimeLimits(**raw)
 
 
-def bind_consent(view, now):
+def bind_consent(view, now=None):
     profile = consent_limits(view)
     current = current_budget()
     if current is not None:
-        current.tighten(profile, view["expires_at"] - now)
+        current.tighten(profile, view["expires_at"] - now if now is not None else None)
     return profile
+
+
+@contextmanager
+def consent_scope(view):
+    """Resource caps only: no clock, counter, cached approval or Worker budget."""
+    profile = consent_limits(view)
+    token = _CONSENT_CAPS.set((*_CONSENT_CAPS.get(), profile))
+    try:
+        bind_consent(view)
+        yield
+    finally:
+        _CONSENT_CAPS.reset(token)
 
 
 @contextmanager

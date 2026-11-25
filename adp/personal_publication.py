@@ -242,6 +242,7 @@ class PersonalPublication:
             issued, expires, nonce = int(match[1]), int(match[2]), match[3]
         require(0 <= issued <= now < expires and 0 < expires - issued <= 300
                 and expires <= self.personal.plan["window"]["expires_at"], "Original publication window is expired or invalid")
+        bind_consent({"runtime_limits": self.service.limits.values(), "expires_at": expires}, now)
         with self.service.bounded():
             original_observation, review_binding = self.local()
             old = self.remote()
@@ -543,6 +544,7 @@ class PersonalPublication:
                     "action_id": digest({"personal-publication": view}), "requirement": None, "reservation": None, "pending_observation": None})
             else:
                 require(reviewed == existing["approval"], "Use the original publication intent; do not renew it")
+                bind_consent(existing["view"])
                 with self.service.bounded():
                     self.local()
                     self.remote()  # Observe current credentials without granting replay.
@@ -583,6 +585,7 @@ class PersonalPublication:
         row = self.record()
         if row is None:
             return {"status": "NOT_DELEGATED", "product_acceptance": "NOT_ACCEPTED"}
+        bind_consent(row["view"])
         action = self.journal.inspect()["state"]["execution"]["actions"].get(row["action_id"])
         with self.service.bounded():
             self.c.check_administration(self.c.record())

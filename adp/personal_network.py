@@ -153,10 +153,10 @@ class PersonalDiscoveryRead:
         self.service = service
         self.runtime_settings = service.runtime_settings
 
-    def get(self, path):
+    def get(self, path, *, seconds=None):
         self.service.transport.last_response = None
         try:
-            body = self.service.request("GET", path, missing=True)
+            body = self.service.request("GET", path, missing=True, seconds=seconds)
         except (ADPError, OSError):
             body = None
         observed = self.service.transport.last_response

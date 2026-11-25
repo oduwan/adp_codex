@@ -106,6 +106,15 @@ its historical 5s/45s/128 ceilings; stored M2 permits, expiry, evidence budgets 
 revocation never grow. Configured minima do not apply to remaining time: a
 remaining allowance below three seconds is passed through, never rounded up.
 
+Project-evidence reads shorten one request on that same budget instead of
+copying/restoring counters or profiles. Retained profiles bind before the first
+resumed read, including observation-only recovery/status. An immutable selected
+consent resource context carries only these ceilings around Reviewer/correction
+work; it starts no clock/counter and grants no authority. Each actual native
+phase starts/joins its network budget, while Worker execution keeps its original
+independent reservation. Standalone forge inventories/observations/submissions
+and multi-object uploads also establish one shared logical-operation scope.
+
 The request deadline includes authorization, credential and supervised I/O work;
 the existing bounded cancellation/stop-confirmation allowances remain unchanged.
 The child imports only the central hard ceiling and uses the parent's already
@@ -121,6 +130,8 @@ it is not a measurement of external project tests or Codex Worker execution.
 and must not be charged repeatedly when that immutable client is reused.
 Local validation is cooperatively checked at scopes/request boundaries; existing
 Git and stop/reaping bounds are not replaced by a new global preemption policy.
+The legacy urllib ports retain their socket-based blocking semantics and reject
+late returns; they are not the M7 supervised whole-request process transport.
 Baseline/optimized observations must use the same disposable data and budget;
 historical single-sample failures are reported separately. Empirical median/p95/
 maximum require their sample count and procedure, not an inferred speedup from

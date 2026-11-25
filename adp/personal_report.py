@@ -27,7 +27,7 @@ from .network_git import GitHubTarget
 from .policy_types import Effect, Operation, Request
 from .schema import encode, fields, key, require
 from .storage import atomic
-from .runtime_limits import network_operation
+from .runtime_limits import bind_consent, network_operation
 
 
 class PersonalReportTransport(PersonalProductTransport):
@@ -101,6 +101,7 @@ class PersonalReport(PersonalProduct):
             issued, expires, nonce = int(match[1]), int(match[2]), match[3]
         require(issued <= now < expires <= self.personal.plan["window"]["expires_at"] and expires - issued <= 300,
                 "Original report window expired")
+        bind_consent({"runtime_limits": self.service.limits.values(), "expires_at": expires}, now)
         track = self.c.track
         identity = typed(Identity, track.link["identity"])
         with self.service.bounded():
@@ -139,7 +140,9 @@ class PersonalReport(PersonalProduct):
                     runtime=self.c.runtime) is not None and self._policy_final() is True,
                 "Current exact accepted completion and M3 authority required")
 
+    @network_operation("product.report_observation")
     def observed_report(self, row):
+        bind_consent(row["view"])
         owner = owned_repository(self.read, self.forge.repository, self.personal.repository_id)
         metadata = self.service.request("GET", self.target.api)
         require(owner == self.personal.plan["owner"] and type(metadata) is dict and metadata.get("node_id") == self.target.node_id,
@@ -190,6 +193,7 @@ class PersonalReport(PersonalProduct):
                     "before": data(issue), "after": None, "comment": None}
                 immutable(self.report_path, row)
             require(row["approval"] == reviewed, "Only the original report may reconcile")
+            bind_consent(row["view"])
             self.active = row
             actions = self.journal.inspect()["state"]["execution"]["actions"]
             if row["action"] not in actions:

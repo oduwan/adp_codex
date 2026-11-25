@@ -10,7 +10,6 @@ import hashlib
 import os
 import re
 import time
-from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +31,7 @@ from .policy_schema import branch
 from .policy_types import Effect, Operation, Ref
 from .schema import decode, encode, require, string
 from .runtime_limits import (Budget as _Budget, current_budget, operation_scope,
-                            settings_for, work_span)
+                            measurements_for, network_operation, settings_for, work_span)
 
 ZERO = "0" * 40
 REF_QUERY = """query ADPRef($id: ID!, $ref: String!) {
@@ -100,7 +99,7 @@ class GitHubCAS:
         self.target, self.transport = target, transport
         self.runtime_settings = settings_for(transport, runtime_settings)
         self.limits = self.runtime_settings.limits
-        self.measurements = deque(maxlen=64)  # Private bounded observations, never authority.
+        self.measurements = measurements_for(self)
         self._budget = contextvars.ContextVar("adp-network-budget", default=None)
         self.control = None
         self._live_unknown = False
@@ -162,20 +161,20 @@ class GitHubCAS:
             finally:
                 self._budget.reset(token)
 
-    def request(self, method, path, payload=None, *, missing=False):
+    def request(self, method, path, payload=None, *, missing=False, seconds=None):
         if self._budget.get() is None and current_budget() is None:
             with self.bounded(name="network.request"):
-                return self._request(method, path, payload, missing=missing)
-        return self._request(method, path, payload, missing=missing)
+                return self._request(method, path, payload, missing=missing, seconds=seconds)
+        return self._request(method, path, payload, missing=missing, seconds=seconds)
 
-    def _request(self, method, path, payload=None, *, missing=False):
+    def _request(self, method, path, payload=None, *, missing=False, seconds=None):
         from .personal_read_frame import forbid_writes
         forbid_writes()
         self._check_stop()
         budget = self._budget.get() or current_budget()
         budget.tighten(self.limits)
         started = time.monotonic()
-        deadline = budget.request_deadline()
+        deadline = budget.request_deadline(seconds)
         left = budget.end - time.monotonic()
         self._start_request()
         try:
@@ -208,6 +207,7 @@ class GitHubCAS:
         try:
             wrapped = decode(b'{"value":' + response.body + b'}', 1048600)
             require(set(wrapped) == {"value"}, "Invalid response envelope")
+            require(time.monotonic() < deadline, "Network request exhausted its fixed budget")
             return wrapped["value"]
         except ADPError:
             raise NetworkUncertain("UNKNOWN: malformed GitHub JSON response") from None
@@ -250,6 +250,7 @@ class GitHubCAS:
                     cursors.add(after)
         return tuple(sorted(result, key=lambda r: r.name))
 
+    @network_operation("network.inspect_ref", service=lambda self, **k: self)
     def inspect_ref(self, *, writable=False):
         if self.personal:
             from .personal_rules import inspect_ref
@@ -288,6 +289,7 @@ class GitHubCAS:
         require(type(result) is dict and result.get("sha") == sha, "UNKNOWN: remote object identity mismatch")
         return True
 
+    @network_operation("network.upload", service=lambda self, *a, **k: self)
     def upload(self, objects):
         for item in objects:
             response = self.request("POST", self.target.api + "/git/" + {"blob": "blobs", "tree": "trees", "commit": "commits"}[item.kind], item.payload)
