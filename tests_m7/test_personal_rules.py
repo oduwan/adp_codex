@@ -22,6 +22,7 @@ from adp.personal_publication import PersonalPublication
 from adp.personal_product import PersonalProduct
 from adp.personal_product_policy import observe_policy
 from personal_fixtures import PersonalFixture
+from adp.runtime_limits import DEFAULTS
 
 HEAD = "a" * 40
 BASE = "b" * 40
@@ -66,7 +67,7 @@ class Native:
         return self.entries.get(path, Response(404, None))
 
     def request(self, method, path, body, *, seconds):
-        assert 0 < seconds <= 5
+        assert 0 < seconds <= DEFAULTS.request_timeout_seconds
         if path == "/graphql":
             self.calls.append((method, path))
             item = None if self.current is None else {"name": "work/task", "prefix": "refs/heads/",
@@ -329,7 +330,7 @@ class PersonalRulesTests(unittest.TestCase):
             with self.assertRaises((ValueError, ADPError)):
                 validator("GET", "/repos/owned/project/branches/work%2ftask/protection", None, 5)
             with self.assertRaises(ValueError):
-                validator("GET", "/repos/owned/project/branches/work%2Ftask/protection", None, 6)
+                validator("GET", "/repos/owned/project/branches/work%2Ftask/protection", None, 31)
         f = Native()
         for budget in (_Budget(time.monotonic() - 1), _Budget(time.monotonic() + 45, 128)):
             token = f.service._budget.set(budget)

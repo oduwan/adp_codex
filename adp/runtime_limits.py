@@ -107,8 +107,10 @@ def load_runtime_limits(path=None):
         if path is None:
             selected = os.environ.get("ADP_RUNTIME_LIMITS_FILE")
             if selected is None:
-                import pwd  # Resolution failure belongs to configuration fallback.
-                directory = os.environ.get("XDG_CONFIG_HOME") or str(Path(pwd.getpwuid(os.getuid()).pw_dir) / ".config")
+                directory = os.environ.get("XDG_CONFIG_HOME")
+                if not directory:
+                    import pwd  # Only needed for the owning-home fallback.
+                    directory = str(Path(pwd.getpwuid(os.getuid()).pw_dir) / ".config")
                 selected = str(Path(directory) / "adp-codex" / "runtime-limits.json")
             path = Path(selected)
         payload = load_json(Path(path), protected=True)

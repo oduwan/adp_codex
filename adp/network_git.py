@@ -207,10 +207,10 @@ class GitHubCAS:
         try:
             wrapped = decode(b'{"value":' + response.body + b'}', 1048600)
             require(set(wrapped) == {"value"}, "Invalid response envelope")
-            require(time.monotonic() < deadline, "Network request exhausted its fixed budget")
-            return wrapped["value"]
         except ADPError:
             raise NetworkUncertain("UNKNOWN: malformed GitHub JSON response") from None
+        require(time.monotonic() < deadline, "Network request exhausted its fixed budget")
+        return wrapped["value"]
 
     def _repository(self, query, variables):
         raw = self.request("POST", "/graphql", {"query": query, "variables": {"id": self.target.node_id, **variables}})

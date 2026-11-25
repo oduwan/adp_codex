@@ -105,6 +105,14 @@ class RuntimeLimitsTests(unittest.TestCase):
             result=load_runtime_limits()
         self.assertEqual(result.limits,DEFAULTS)
         self.assertEqual(result.diagnostics[0].error_type,"ImportError")
+        self.path.unlink()  # Remove the deliberately unsafe symlink.
+        directory = self.root / "adp-codex"; directory.mkdir()
+        selected = directory / "runtime-limits.json"
+        selected.write_text('{"request_limit":64}'); selected.chmod(0o600)
+        with patch.dict(os.environ,{"XDG_CONFIG_HOME":str(self.root)},clear=True),patch("builtins.__import__",side_effect=unavailable):
+            result=load_runtime_limits()
+        self.assertEqual(result.limits.request_limit,64)
+        self.assertEqual(result.diagnostics,())
 
     def test_selection_precedence_and_immutable_client_lifetime(self):
         directory = self.root / "adp-codex"; directory.mkdir()
@@ -187,6 +195,19 @@ class RuntimeLimitsTests(unittest.TestCase):
         self.assertEqual(len(client.transport.calls), 1)
         self.assertFalse(client.unconfirmed_contexts())  # Actual response/stop returned.
         self.assertEqual(client.measurements[-1]["outcome"], "ERROR")
+        # A valid decode may itself use the remaining request allowance. Preserve
+        # its timeout cause instead of misclassifying it as malformed JSON.
+        from adp.schema import decode
+        clock, client = Clock(), service()
+        def late_decode(*args):
+            result = decode(*args)
+            clock.advance(DEFAULTS.request_timeout_seconds)
+            return result
+        with patch("time.monotonic", clock), patch("adp.network_git.decode", side_effect=late_decode):
+            with self.assertRaisesRegex(ADPError, "request exhausted"):
+                client.request("GET", "/fixture")
+        self.assertEqual(len(client.transport.calls), 1)
+        self.assertFalse(client.unconfirmed_contexts())
 
     def test_cancelled_transport_preserves_unknown_stop_and_original_exception(self):
         error = KeyboardInterrupt()
