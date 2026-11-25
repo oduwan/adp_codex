@@ -6,6 +6,8 @@ that immutable source, not shifted lines in the subsequent minimal repair.
 The [source manifest](PUBLICATION_CALL_GRAPH_SOURCES.json) binds the union of
 inspected modules. The independent readable subgraphs are reproduced below;
 their underlying lexical inventory remains private with integrity references.
+The reproduced Read section corrects citation offsets against immutable `2b0ecd6`;
+the manifest retains the hashes of the unchanged original private audit inputs.
 This is static engineering analysis, not a runtime trace or release authority.
 
 ## Decisions and interpretation
@@ -392,26 +394,26 @@ A = mandatory current identity, policy, ownership, timing, raw-evidence or effec
 | frame:194 workers.records; :196–199 runtime/stop digests | One records scan; two digest reads per worker, <=16 workers | Reads only, including absence; no worker execution. Per-worker count depends on inventory | A |
 | frame:200–206 progress reference digests | One loop over canonical requirements; read only for this task's non-null approvals | Exact private progress receipt SHA, actual path bounds and authority directory | A |
 | frame:207–215 fixed/adoption digest reads | Five fixed paths; adoption present → exactly two manifest artifact reads | Explicit actual reads plus closed inventory below; not authority by hashes alone | A |
-| frame:217–224 consent/run + four port._value queries | Publication uses owner.record(_observed=observed), avoiding another Memory inspection; product copies selected active. Four queries: HEAD, tree, symbolic ref, dirty status | Actual equality to exact approved consent/run/source branch/clean state. No current ref/status cache | A |
-| frame:224 → history_product_git.administration, containment.admin_seal, enrollment.governance | Once each per `_inputs` | Physical ownership/inode/mode/path, current config/index/refs, committed rules stay actual | A |
-| frame:232 → `_private_inputs`; :233–236 seal | One closed scan per inputs; four scans total per successful frame including two prefreezes | Returned closed map/root set must equal the relevant prefreeze and final seal. Sealing exact data is C, fresh observation/comparison is A | A/C |
+| frame:215–220 consent/run + four port._value queries | Publication uses owner.record(_observed=observed), avoiding another Memory inspection; product copies selected active. Four queries: HEAD, tree, symbolic ref, dirty status | Actual equality to exact approved consent/run/source branch/clean state. No current ref/status cache | A |
+| frame:221 → history_product_git.administration, containment.admin_seal, enrollment.governance | Once each per `_inputs` | Physical ownership/inode/mode/path, current config/index/refs, committed rules stay actual | A |
+| frame:229 → `_private_inputs`; :230–235 seal | One closed scan per inputs; four scans total per successful frame including two prefreezes | Returned closed map/root set must equal the relevant prefreeze and final seal. Sealing exact data is C, fresh observation/comparison is A | A/C |
 | frame:112–160 `_private_inputs` | Four private_directory checks; rooted traversal <=4096 entries, depth<=16, <=1024 JSON; private bytes<=8MiB, separate ticket bounds; two explicit enrollment/marker reads; track adds <=8 original markers | Actual directory/JSON metadata and byte reads. A skipped symlink/foreign selector or optional-absence check would weaken the demonstrated readset protection | A |
 | frame:164–183 `_private_digest` | One O_NOFOLLOW/nonblocking FD read per requested path; absent → None | Exact actual fstat ownership/link/size/mode checks. Read result is SHA only, not a permission/decision | A/C |
 | config:24–54 load_json → frame:55 consumed | Once per actual JSON load; default M1 paths outside registered roots remain actual/unregistered | Actual raw bytes/metadata are checked BEFORE parse; consumed never returns cached data. Pure JSON/schema processing follows the actual read | A/C |
 | storage:71–79 read_private → private_path/safe_path/load_json or consumed(absent) | One per private read; optional absent is explicitly bound | Prevent undeclared pointers and A/B restoration during body/full proof. Do not replace by remembered decoded object | A |
 | frame:23 private_path / :31 present / :43 json_names / :55 consumed | When `_BOUND_BYTES` present, each first calls context; selectors/path/presence/bytes compared to frozen closed map | Fresh actual observations plus denial only; hooks do not recursively inspect Memory or return authority | A/C |
 | ticket_preparation:126–136 `_read` → frame.ticket_bytes :84 | Only in an actual byte-bound frame; otherwise native reader unchanged | Actual FD, exact ticket 0600, archive 0700, bounded raw read. Reads original and baseline, not a new ticket writer | A |
-| frame:248 `_legacy_inputs` → engine_digest | One per input pass, two per frame | Rehash actual engine source now; prior successful digest is not permission to skip later actual source check | A/C |
-| frame:249–253 → source_seal(feature), source_seal(outside admitted paths), source_seal(original checkout) | Exactly three source seals per pass | Actual filesystem walk/metadata/content, bounded32MiB/4096; all compare to original master subset. No Git subprocess in source_seal | A |
-| frame:255–261 → two physical administration reads + original run + administration_snapshot | Two physical reads and one mutable snapshot per inputs pass | Mutable snapshot must equal the exact snapshot captured by that full proof; this closes old-admin B-versus-seal-A restoration | A |
+| frame:251 `_legacy_inputs` → engine_digest | One per input pass, two per frame | Rehash actual engine source now; prior successful digest is not permission to skip later actual source check | A/C |
+| frame:252–254 → source_seal(feature), source_seal(outside admitted paths), source_seal(original checkout) | Exactly three source seals per pass | Actual filesystem walk/metadata/content, bounded32MiB/4096; all compare to original master subset. No Git subprocess in source_seal | A |
+| frame:257–262 → two physical administration reads + original run + administration_snapshot | Two physical reads and one mutable snapshot per inputs pass | Mutable snapshot must equal the exact snapshot captured by that full proof; this closes old-admin B-versus-seal-A restoration | A |
 
 ## Full Episode → archive provenance graph
 
 | Call site → target | Condition/multiplicity | State/reuse security consequence | Class |
 |---|---|---|---|
 | episode:90–97 → frame.active hook | `_capture=None` only; matching frame can return factual view; `_Read` full captures force `_capture` and bypass this shortcut | Expiry checked where requested; full proof never uses nested factual shortcut | A |
-| episode:101–110 → four private_directory and protected descriptor/enrollment/marker reads | One each set per unframed full proof | Exact original and child subjects; no state mutation | A |
-| episode:109–110 → history._archived_view :40 | Once per full proof; supplied Memory prevents reconstruction | Actual original archival proof. With matching framed nested archive query, frame.archive executes current; otherwise full route below | A |
+| episode:99–104 → four private_directory and protected descriptor/enrollment/marker reads | One each set per unframed full proof | Exact original and child subjects; no state mutation | A |
+| episode:106–107 → history._archived_view :40 | Once per full proof; supplied Memory prevents reconstruction | Actual original archival proof. With matching framed nested archive query, frame.archive executes current; otherwise full route below | A |
 | history:53 / :55–62 subject loading | Child absent → load_state; supplied exact child → reread child descriptor/original enrollment/marker; memory absent → root.memory | Branch-specific extra Config/Git construction; not executed by ordinary supplied-memory _Read full capture | A/D totals |
 | history:64–74 archive/master/engine/verify | One master, one archive receipt; engine_digest once; history_git.verify of three heads once | Exact raw receipts, engine and H0→H1→H2 immutable identity remain authenticated | A |
 | history:76–79 recovery provenance loop | <=6 referenced receipts | Actual protected reads/digests, no reconciliation or recovery execution | A |
@@ -421,8 +423,8 @@ A = mandatory current identity, policy, ownership, timing, raw-evidence or effec
 | history:121–135 two old Worker proofs | Exactly two retained original/developer roles: read raw+stop, runtime.observe, worker_result and numeric measurements | Runtime.observe reads retained status/stop; no dispatch/cancel/save. Other contexts must remain independent | A |
 | history:140 → Coordinator.check_administration; :141–144 source seals | Physical checkout always and feature if original run has feature administration; two original source seals always, outer seal if original owner not None | Actual source/admin; owner-release historical case has different validation below | A |
 | history:149 → validate_administration :155 | Once per full proof; captures exact actual administration_snapshot once | No reused validation result; capture is a defensive copy of the actual snapshot just validated | A/C |
-| episode:112–113 expected_relation; :121–132 H3 activation/intent; :134–136 history_git.verify of two heads + activation ancestry | One canonical relation derivation; one activation and one intent read; one second relation derivation through episode_intent; one two-head verification; one merge-base | install occurs only on deep-copied master state/tasks in episode_intent :421–424. It does NOT write canonical M1 | A/C |
-| episode:138 expiry/revocation/guard set | allow_expired=False only, including both _Read full captures | Actual revocation existence and UTC; closed remaining normal gate set. Cannot inherit a stale live result | A |
+| episode:111–112 expected_relation; :118–125 H3 activation/intent; :127–128 history_git.verify of two heads; :130 activation ancestry | One canonical relation derivation; one activation and one intent read; one second relation derivation through episode_intent; one two-head verification; one merge-base | install occurs only on deep-copied master state/tasks in episode_intent :421–424. It does NOT write canonical M1 | A/C |
+| episode:131–137 expiry/revocation/guard set | allow_expired=False only, including both _Read full captures | Actual revocation existence and UTC; closed remaining normal gate set. Cannot inherit a stale live result | A |
 | episode:428 same_observation | Called after new actual inspection; recovery variant also compares exact pending/slots | Input-pure comparison but mandatory full health/owner/head/state/tasks/inbox equality. Ordinary mode permits SYNCED only | A/C |
 
 ## Canonical Memory → native Git graph
