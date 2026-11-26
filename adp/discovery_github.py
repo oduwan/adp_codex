@@ -299,6 +299,59 @@ class GitHubDiscoveryAdapter:
         require(match and match[1].lower() == self.name.lower(), "Selected Git remote does not identify the requested GitHub repository")
         return cfg.identity, value(cfg.root, "symbolic-ref", "--quiet", "HEAD"), value(cfg.root, "rev-parse", "HEAD")
 
+    def _issue(self, row, repo):
+        """One native Issue, using the same complete paging and stability checks."""
+        prefix = "/repos/" + self.name
+        target = _target(row)
+        require(target.repository.lower() == repo.name.lower(), "Foreign issue inventory")
+        number, iid = target.number, Identity(repo.id, target.issue_id)
+        base = prefix + "/issues/" + str(number)
+        label = "issue:" + key(iid)
+        comments_raw = self._pages(base + "/comments", label + ":comments")
+        timeline = self._pages(base + "/timeline", label + ":timeline")
+        dependencies = self._pages(base + "/dependencies/blocked_by", label + ":blocked_by")
+        children = self._pages(base + "/sub_issues", label + ":sub_issues")
+        comments = tuple(sorted((Text(_id(c), c.get("body") or "", _author(c), c["updated_at"],
+            f"{API}{base}/comments#{_id(c)}") for c in comments_raw), key=lambda c: c.id))
+        relations = [Relation("BLOCKED_BY", _target(dep), "NATIVE", API + base + "/dependencies/blocked_by") for dep in dependencies]
+        relations.extend(Relation("SUB_ISSUE", _target(child), "NATIVE", API + base + "/sub_issues") for child in children)
+        notices = []
+        for event_index, event in enumerate(timeline):
+            try:
+                require(type(event) is dict and type(event.get("event")) is str and bool(event["event"]), "Malformed timeline event")
+                if event["event"] in {"marked_as_duplicate", "unmarked_as_duplicate"}:
+                    notices.append("Native duplicate history requires current canonical disposition assessment: " + digest(event))
+                if event["event"] == "cross-referenced":
+                    require(type(event.get("source")) is dict and type(event["source"].get("issue")) is dict, "Malformed native cross-reference")
+                    source = event["source"]["issue"]
+                    target = _target(source)
+                    relations.append(Relation("PULL_REQUEST" if "pull_request" in source else "RELATED", target,
+                        "NATIVE", API + base + "/timeline#" + digest(event)))
+            except (ADPError, KeyError, TypeError, ValueError):
+                self._coverage(label + ":invalid-timeline:" + str(event_index), base + "/timeline", "PARTIAL", None, 0,
+                               "Malformed timeline event/cross-reference; known issue retained")
+        body = row.get("body") or ""
+        text(body)
+        relations.extend(inferred(body, repo.name, API + base + ":body"))
+        for comment in comments:
+            relations.extend(inferred(comment.body, repo.name, comment.source))
+        current = self._one(base, label + ":current")
+        if current is None or _issue_revision(current) != _issue_revision(row):
+            self._coverage(label + ":stable", base, "CHANGED", None, 0, "Issue changed or became inaccessible during observation")
+        else:
+            self._coverage(label + ":stable", base, "COMPLETE", current, 1)
+        issue = Issue(iid, number, f"{repo.url}/issues/{number}", row["title"], body, row["state"],
+            row.get("state_reason"), row["updated_at"], _issue_revision(row),
+            tuple(sorted(l["name"] if type(l) is dict else l for l in row.get("labels", []))),
+            tuple(sorted(_id(a) for a in row.get("assignees", []))),
+            tuple(sorted({_author(row), *(c.author for c in comments)})), comments,
+            tuple(sorted(set(relations), key=lambda r: (r.kind, r.target.repository, r.target.number, r.source))), tuple(sorted(set(notices))))
+        from .discovery_schema import validate_issue
+        validate_issue(issue, repo)
+        if "UNKNOWN" in issue.authors:
+            self._coverage(label + ":authors", base, "UNKNOWN", None, 0, "Canonical source author identity unavailable")
+        return issue
+
     @read_operation("discovery")
     def discover(self) -> Snapshot:
         self._halt, self._requests, self._coverage_items = False, 0, []
@@ -321,54 +374,10 @@ class GitHubDiscoveryAdapter:
             try:
                 target = _target(row)
                 require(target.repository.lower() == repo.name.lower(), "Foreign issue inventory")
-                number, iid = target.number, Identity(rid, target.issue_id)
+                number = target.number
                 require(number not in attempted_issues, "Duplicate/conflicting issue inventory identity")
                 attempted_issues.add(number)
-                base = prefix + "/issues/" + str(number)
-                label = "issue:" + key(iid)
-                comments_raw = self._pages(base + "/comments", label + ":comments")
-                timeline = self._pages(base + "/timeline", label + ":timeline")
-                dependencies = self._pages(base + "/dependencies/blocked_by", label + ":blocked_by")
-                children = self._pages(base + "/sub_issues", label + ":sub_issues")
-                comments = tuple(sorted((Text(_id(c), c.get("body") or "", _author(c), c["updated_at"],
-                    f"{API}{base}/comments#{_id(c)}") for c in comments_raw), key=lambda c: c.id))
-                relations = [Relation("BLOCKED_BY", _target(dep), "NATIVE", API + base + "/dependencies/blocked_by") for dep in dependencies]
-                relations.extend(Relation("SUB_ISSUE", _target(child), "NATIVE", API + base + "/sub_issues") for child in children)
-                notices = []
-                for event_index, event in enumerate(timeline):
-                    try:
-                        require(type(event) is dict and type(event.get("event")) is str and bool(event["event"]), "Malformed timeline event")
-                        if event["event"] in {"marked_as_duplicate", "unmarked_as_duplicate"}:
-                            notices.append("Native duplicate history requires current canonical disposition assessment: " + digest(event))
-                        if event["event"] == "cross-referenced":
-                            require(type(event.get("source")) is dict and type(event["source"].get("issue")) is dict, "Malformed native cross-reference")
-                            source = event["source"]["issue"]
-                            target = _target(source)
-                            relations.append(Relation("PULL_REQUEST" if "pull_request" in source else "RELATED", target,
-                                "NATIVE", API + base + "/timeline#" + digest(event)))
-                    except (ADPError, KeyError, TypeError, ValueError):
-                        self._coverage(label + ":invalid-timeline:" + str(event_index), base + "/timeline", "PARTIAL", None, 0,
-                                       "Malformed timeline event/cross-reference; known issue retained")
-                body = row.get("body") or ""
-                text(body)
-                relations.extend(inferred(body, repo.name, API + base + ":body"))
-                for comment in comments:
-                    relations.extend(inferred(comment.body, repo.name, comment.source))
-                current = self._one(base, label + ":current")
-                if current is None or _issue_revision(current) != _issue_revision(row):
-                    self._coverage(label + ":stable", base, "CHANGED", None, 0, "Issue changed or became inaccessible during observation")
-                else:
-                    self._coverage(label + ":stable", base, "COMPLETE", current, 1)
-                issue = Issue(iid, number, f"{repo.url}/issues/{number}", row["title"], body, row["state"],
-                    row.get("state_reason"), row["updated_at"], _issue_revision(row),
-                    tuple(sorted(l["name"] if type(l) is dict else l for l in row.get("labels", []))),
-                    tuple(sorted(_id(a) for a in row.get("assignees", []))),
-                    tuple(sorted({_author(row), *(c.author for c in comments)})), comments,
-                    tuple(sorted(set(relations), key=lambda r: (r.kind, r.target.repository, r.target.number, r.source))), tuple(sorted(set(notices))))
-                from .discovery_schema import validate_issue
-                validate_issue(issue, repo)
-                if "UNKNOWN" in issue.authors:
-                    self._coverage(label + ":authors", base, "UNKNOWN", None, 0, "Canonical source author identity unavailable")
+                issue = self._issue(row, repo)
                 require(number not in issues, "Duplicate/conflicting issue inventory identity")
                 issues[number] = issue
             except (ADPError, KeyError, TypeError, ValueError, AttributeError):

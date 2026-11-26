@@ -1,5 +1,13 @@
 # D3: current publication admission replaces per-object history replay
 
+> **Issue63 trusted-worktree amendment:** The [explicit stage matrix](TRUSTED_WORKTREE_STAGES.md)
+> supersedes prior per-helper/per-HTTP local source, index, administration and
+> old-history replay requirements below. The actual cold proof and immutable
+> handoff remain; current canonical/external authority, deadlines, revocation,
+> one-use claims, CAS and uncertainty recovery remain fresh. The historical
+> descriptions/evidence below are retained, not represented as current controls.
+> This does not qualify all of #57 or authorize #58, installation or live effects.
+
 > **D4 operator revision (Issue #57):** The historical D1/D2/D3 account
 > below is retained for evidence. Its repeated historical-byte/closed-private-
 > inventory replay, independent closing historical reconstruction, finite-U

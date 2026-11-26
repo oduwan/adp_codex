@@ -157,3 +157,18 @@ Accounting writers use the existing journal/consent interfaces with H3, original
 engine and current reader bindings. Old approvals are never upgraded or renewed.
 The [D4 cutover record](operations/GIT_NATIVE_CUTOVER_STATUS.md) distinguishes
 focused engineering evidence from separately unreleased #58 qualification.
+
+## Trusted dedicated personal worktree — Issue63
+
+The operator-selected [stage contract](operations/TRUSTED_WORKTREE_STAGES.md)
+trusts the admitted dedicated product checkout and local history under ADP's
+cooperative single writer. This supersedes the earlier requirement to probe
+HEAD/index/worktree/config/admin/history/old Workers inside every helper or HTTP
+request solely against malicious same-UID edits. Those attacks are outside the
+model, not passing controls. Actual stopped independent review, cold/restart
+provenance and a single immutable reviewed-SHA handoff remain real boundaries.
+Unselected personal runners and signed-provider semantics do not inherit a new
+trust grant. External GitHub scope/dependencies/policy/permissions/refs, current
+M1/M2, consent/deadlines/revocation, credentials and uncertain effects remain
+live. No ALLOW or permanent snapshot/cache/authority store is added. #64–#66 and
+full #58 qualification are independent subsequent gates.

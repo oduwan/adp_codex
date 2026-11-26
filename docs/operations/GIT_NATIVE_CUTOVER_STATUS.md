@@ -1,5 +1,13 @@
 # D4 Git-native cutover under the revised personal trust model
 
+> **Issue63 trusted-worktree amendment:** The [explicit stage matrix](TRUSTED_WORKTREE_STAGES.md)
+> supersedes prior per-helper/per-HTTP local source, index, administration and
+> old-history replay requirements below. The actual cold proof and immutable
+> handoff remain; current canonical/external authority, deadlines, revocation,
+> one-use claims, CAS and uncertainty recovery remain fresh. The historical
+> descriptions/evidence below are retained, not represented as current controls.
+> This does not qualify all of #57 or authorize #58, installation or live effects.
+
 The operator explicitly superseded the earlier same-UID historical replay and
 standalone net-negative-line-count gate. The historical5b32 report is retained
 below; its BLOCKED_COMPLEXITY decision is not the current architecture rule.

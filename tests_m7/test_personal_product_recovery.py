@@ -25,6 +25,7 @@ class PersonalProductRecoveryTests(unittest.TestCase):
         row = {"pull": {"number": 10}, "execution": [entry], "review": None}
         f.record, f.local, f.review_context, f.save = lambda: row, lambda: None, lambda: {}, lambda row: None
         f.service = SimpleNamespace(bounded=lambda **kw: nullcontext())
+        f.original = Mock(return_value={"synthetic": "admitted-original"})
         f.facts = lambda: {}
         entry["view"]["facts"] = {"base_sha": "f" * 40}
         f.facts = lambda: {"base_sha": "f" * 40}

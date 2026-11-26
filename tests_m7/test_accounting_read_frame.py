@@ -106,7 +106,7 @@ class AccountingReadFrameTests(unittest.TestCase):
             (network.request, ("GET", "/synthetic"), {}),
             (PersonalProduct.save, (object(), {}), {}),
             (PersonalProduct.write_authorized, (object(),), {}),
-            (PersonalProduct.live, (SimpleNamespace(c=c),), {"genuine": True}),
+            (PersonalProduct.local, (object(),), {"genuine": True}),
             (PersonalPublication.live, (SimpleNamespace(c=c),), {"review": False}))
         def read(**kwargs):
             self.assertTrue(_READ_ONLY.get())
@@ -184,7 +184,7 @@ class AccountingReadFrameTests(unittest.TestCase):
             "state": {"generation": 1, "owner": "original", "progress_guard": guard}, "tasks": task, "inbox_count": 0}
         master = {"view": {"binding": {"task_key": "original"}}, "state": deepcopy(observed["state"]),
             "result_state": deepcopy(observed["state"]), "result_tasks": deepcopy(task)}
-        data = {"valid": True, "full": 0, "now": 100, "revoked": False, "source": True}
+        data = {"valid": True, "full": 0, "now": 100, "revoked": False}
         memory = SimpleNamespace(config=SimpleNamespace(root=Path("/synthetic/memory")), common=Path("/synthetic/common"),
             control=Path("/synthetic/control"), pinned_local_remote=Path("/synthetic/remote"),
             inspect=lambda **kw: deepcopy(observed))
@@ -209,8 +209,6 @@ class AccountingReadFrameTests(unittest.TestCase):
         p.record = lambda **kw: deepcopy(p.consent)
         p._live_current = lambda **kw: (fence(), deepcopy(p.consent))[1]
         patcher = patch("adp.personal_history.git", return_value=b"");patcher.start();self.addCleanup(patcher.stop)
-        patcher = patch("adp.personal_read_frame.current_source", side_effect=lambda *a, **kw:
-            require(data["source"], "Current source changed"));patcher.start();self.addCleanup(patcher.stop)
         return c, p, observed, data
 
     def test_one_cold_entry_fresh_projection_and_restart_qualification(self):
@@ -292,10 +290,10 @@ class AccountingReadFrameTests(unittest.TestCase):
             self.assertIs(_CURRENT.get(), parent)
         self.assertEqual((data["full"], second["full"]), (1, 1))
 
-    def test_expiry_revocation_and_current_source_are_fresh(self):
+    def test_expiry_revocation_are_fresh_without_nested_worktree_admission(self):
         c, p, _, data = self.fixture()
         with qualification(c):
-            for name, changed in (("now", 150), ("revoked", True), ("source", False)):
+            for name, changed in (("now", 150), ("revoked", True)):
                 original = data[name];data[name] = changed
                 with self.assertRaises(ADPError):publication_live(p)
                 data[name] = original
@@ -307,19 +305,21 @@ class AccountingReadFrameTests(unittest.TestCase):
             return deepcopy(p.consent)
         p._live_current = read
         with self.assertRaises(ADPError):publication_live(p)
-        c, p, _, data = self.fixture()
-        with patch("adp.personal_read_frame.current_source", side_effect=("original-admin", "changed-admin")):
-            with self.assertRaises(ADPError):publication_live(p)
+        c, p, observed, data = self.fixture()
+        def changed_generation(**kw):
+            observed["state"]["generation"] += 1
+            return deepcopy(p.consent)
+        p._live_current = changed_generation
+        with self.assertRaises(ADPError):publication_live(p)
         p._live_current = lambda **kw: {**p.consent, "unapproved": True}
         with self.assertRaises(ADPError):publication_live(p)
         p._live_current = lambda **kw: deepcopy(p.consent)
         c.episode_fence = lambda: None  # A longer parent grant cannot extend this operation consent.
-        def source(*a, **kw):
-            if source.calls:
-                data["now"] = 150
-            source.calls += 1
-        source.calls = 0
-        with patch("adp.personal_read_frame.current_source", side_effect=source), self.assertRaises(ADPError):publication_live(p)
+        def elapsed(**kw):
+            data["now"] = 150
+            return deepcopy(p.consent)
+        p._live_current = elapsed
+        with self.assertRaises(ADPError):publication_live(p)
         from adp.personal_read_frame import product_live
         for field in ("view", "binding", "action", "reservation"):
             with self.subTest(product_context=field):

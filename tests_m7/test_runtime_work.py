@@ -182,11 +182,13 @@ class RuntimeWorkTests(unittest.TestCase):
             "issue_id":"opaque","original_digest":"d"*64},intent={"approval":"original"},feature=self.root)
         observed={"state":{"generation":1},"local_head":"a"*40};events=[]
         def inspect():events.append("inspect");return deepcopy(observed)
-        product.c=SimpleNamespace(episode=False,memory=SimpleNamespace(inspect=Mock(side_effect=inspect)),revision=lambda:"b"*40)
+        product.c=SimpleNamespace(episode=False,memory=SimpleNamespace(inspect=Mock(side_effect=inspect)),revision=lambda:"b"*40,
+            record=lambda:{"feature_administration":{"fixed":"administration"}})
         product.target=SimpleNamespace(ref="refs/heads/work/task",branch="work/task")
         product.local=Mock(return_value="review-seal")
         product.facts=Mock(return_value={"policy":{}})
         product.publication=SimpleNamespace(current_original=lambda:{"verified":"original"})
+        product.original=Mock(return_value={"verified":"original"})
         product.record=Mock(return_value=None)
         product.forge=SimpleNamespace(inventory=Mock(return_value=[]))
         def value(*a):events.append("source");return "c"*40
@@ -197,19 +199,20 @@ class RuntimeWorkTests(unittest.TestCase):
 
     def test_product_proposal_coheres_generation_checkpoint_without_moving_observation(self):
         product,observed,events=self.product_projection()
-        def administration(*a):
-            events.append("administration");observed.update(state={"generation":2},local_head="d"*40)
-            return {"fixed":"administration"}
-        with patch("adp.personal_product.administration",side_effect=administration):
+        def immutable_tree(*a):
+            events.append("source");observed.update(state={"generation":2},local_head="d"*40)
+            return "c"*40
+        product.port._value=immutable_tree
+        with patch("adp.personal_git.administration",side_effect=AssertionError("Reuse admitted administration")):
             result=product.proposed("PR",title="Original outcome",body="Refs #1")
         self.assertEqual((result["result"]["generation"],result["result"]["checkpoint"]),(2,"d"*40))
-        self.assertEqual(events,["source","administration","inspect","token"])
+        self.assertEqual(events,["source","inspect","token"])
         product.c.memory.inspect.assert_called_once_with()
         self.assertEqual(product.forge.inventory.call_count,1)
 
     def test_product_proposal_reobserves_changes_and_refuses_missing_or_expired_state(self):
         product,observed,events=self.product_projection()
-        with patch("adp.personal_product.administration",return_value={"fixed":"administration"}), \
+        with patch("adp.personal_git.administration",return_value={"fixed":"administration"}), \
                 patch("adp.personal_product.secrets.token_hex",return_value="a"*32):
             first=product.proposed("PR",title="Original outcome",body="Refs #1")
             observed.update(state={"generation":2},local_head="d"*40)

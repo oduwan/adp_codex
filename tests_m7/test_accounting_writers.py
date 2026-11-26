@@ -25,56 +25,41 @@ class AccountingWriterTests(unittest.TestCase):
         from adp.guard_types import data
         from adp.personal_runner import PersonalCoordinator
         from adp.runtime_limits import DEFAULTS
-        from adp.schema import require
         original = Issue(Identity("17", "issue:1"), 1, "https://example.invalid/issues/1", "Original", "Unchanged",
                          "OPEN", None, "now", "a" * 64, (), (), (), (), ())
+        proposal = PersonalProduct.proposed
+        intent = PersonalProduct.intent
+        while hasattr(proposal, "__wrapped__"):proposal = proposal.__wrapped__
+        while hasattr(intent, "__wrapped__"):intent = intent.__wrapped__
         for episode in (True, False):
             with self.subTest(episode=episode):
                 f, p = self.writer()
-                p.c.memory.control = f.claim_path.parent
-                f.invocation["identity"] = ("same-serialized-invocation",)
-                p.c.episode = episode
-                p._live_current = lambda **kw: PersonalProduct._live_current(p, **kw)
-                p.c.revision = lambda: "d" * 40
-                p.c.live = Mock()
-                p.c.workers = SimpleNamespace(fence=Mock())
-                p.c.record = lambda: {"phase": "LOCAL_DRAFT_CODE_REVIEWED"}
-                p.c.original_approval, p.c.verify_local_review = Mock(), Mock()
-                p.personal.plan = {"original_digest": digest(data(original)), "governance_digest": digest(())}
-                p.personal.feature = Path("/synthetic/feature")
-                p.port = SimpleNamespace(_value=lambda *a: "" if a[0] == "status" else "d" * 40)
-                p.review_seal = Mock(return_value="exact")
-                p.history_binding = Mock()
+                p.c.memory.control, p.c.episode = f.claim_path.parent, episode
+                p.personal.plan = {"window": {"expires_at": 190}, "original_digest": digest(data(original)), "issue_id": original.identity.issue_id}
                 observed, events = [original], []
-                def fresh(**kw):
-                    events.append("fresh")
-                    require(PersonalCoordinator.original_matches(p.c, observed[0]), "Original scope changed")
-                p.c.fresh = fresh
+                p.c.original_matches = lambda issue: PersonalCoordinator.original_matches(p.c, issue)
+                p.c.fresh = Mock(side_effect=AssertionError("No full inventory in confirmation"))
+                p.local = Mock(side_effect=lambda **kw: (events.append(("genuine", kw.get("genuine", True))), "exact")[1])
                 def facts(**kw):
                     events.append("facts")
                     observed[0] = replace(original, body="Unapproved scope")
+                    return {"policy": {}}
+                def originals(*, _issues):
+                    events.append("original")
+                    _issues.extend(observed)
+                    return {"map": "actual-current"}
                 p.facts = facts
-                local = p.local
-                def current_local(*, genuine=True, **kw):
-                    events.append(("local", genuine));return local(genuine=genuine, **kw)
-                p.local = current_local
-                row = {"schema_version": 2 if episode else 1, "intents": []}
-                p.record = lambda: row
-                p.initialize = lambda: row
-                p.save = Mock()
-                p.proposed = lambda *a, **kw: {"approval": "exact", "binding": "bound", "result": {
-                    "operation": "PR", "title": "Original", "body": "Original scope", "method": None,
-                    "runtime_limits": DEFAULTS.values(), "issued_at": 90, "expires_at": 190}}
+                p.publication = SimpleNamespace(current_original=originals)
+                p.record = lambda **kw: None
+                p.proposed = lambda *a, **kw: proposal(p, *a, **kw)
                 p.journal = SimpleNamespace(upgrade_product_flow=Mock())
                 p.forge.submit = Mock()
                 before = deepcopy(f.snapshot)
-                intent = PersonalProduct.intent
-                while hasattr(intent, "__wrapped__"):intent = intent.__wrapped__
-                with patch("adp.personal_product.governance", return_value=()), self.assertRaisesRegex(ADPError, "Original scope changed"):
-                    intent(p, "PR", reviewed="exact", authorized=True, authorize_memory=True,
-                        assume_quiescence=True, confirm_rules=True)
-                self.assertEqual(events, [("local", False), "facts", ("local", True), "fresh"] if episode else
-                    [("local", True), "fresh", "facts", ("local", True), "fresh"])
+                with self.assertRaisesRegex(ADPError, "Original scope or native dependencies changed"):
+                    intent(p, "PR", reviewed="product1.90.190." + "a" * 32 + "." + "b" * 64,
+                        authorized=True, authorize_memory=True, assume_quiescence=True,
+                        confirm_rules=True, title="Original", body="Original scope")
+                self.assertEqual(events, [("genuine", True), "facts", "original"])
                 self.assertEqual(f.snapshot, before)
                 p.journal.upgrade_product_flow.assert_not_called()
                 p.forge.submit.assert_not_called()
@@ -125,7 +110,7 @@ class AccountingWriterTests(unittest.TestCase):
                 complete = PersonalTrack.complete
                 while hasattr(complete, "__wrapped__"):complete = complete.__wrapped__
                 with patch("adp.personal_track.typed", return_value=original), \
-                     patch("adp.personal_read_frame.current_source", side_effect=["same", "changed" if change == "source" else "same"]) as source_fence:
+                     patch("adp.personal_read_frame.current_source", side_effect=ADPError("Completion source differs") if change == "source" else None) as source_fence:
                     if change == "none":
                         self.assertEqual(complete(track, product, reviewed="exact", authorized=True,
                             confirm_acceptance=True), {"accepted": True})
@@ -152,7 +137,7 @@ class AccountingWriterTests(unittest.TestCase):
             "requirement": f.requirement}
         action = f.snapshot["state"]["execution"]["actions"][f.identifier]
         action.update(operation=operation, generation=1, payload={"exact": "effect"})
-        p._writing = (f.identifier, deepcopy(action), None, deepcopy(f.snapshot))
+        p._writing = (f.identifier, deepcopy(action), deepcopy(f.snapshot))
         p.record = lambda: {"intents": [deepcopy(p.active)]}
         p.report_record = lambda: deepcopy(p.active)
         p._live_current = lambda: p.active["view"]

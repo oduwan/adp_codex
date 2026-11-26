@@ -116,7 +116,6 @@ def archive(personal, memory, runtime, child, *, _capture=None):
 def current_source(owner, consent, *, product=False):
     """Current source fence; no historical receipts or object-byte replay."""
     from .discovery_schema import digest
-    from .execution_containment import admin_seal
     from .personal_enrollment import governance
     from .personal_history_product_git import administration
     view, c = consent["view"], owner.c
@@ -129,32 +128,9 @@ def current_source(owner, consent, *, product=False):
             and digest(governance(root)) == c.personal.plan["governance_digest"]
             and owner.transport.credential_binding == consent["binding" if product else "credential_binding"],
             "Current source, administration, governance or credential differs from consent")
-    administration_digest = admin_seal(root)
     for option in ("-v", "-f"):
         require(all(row.startswith(b"H ") for row in owner.port._git("ls-files", option, "-z").split(b"\0") if row),
                 "Unsupported hidden index flags")
-    return administration_digest
-
-
-def historical_source(c, master, observed):
-    """Fresh original source/admin at batch and pre-CAS boundaries only."""
-    from pathlib import Path
-    from .execution_containment import source_seal
-    from .personal_history_product_git import administration
-    from .personal_history import validate_administration
-    from .personal_storage import read_private
-    from .accounting_policy import entry
-    root = c.personal.root
-    require(master["engine"] == c.personal.descriptor["base"]["engine"], "Historical recovery source changed")
-    seals = master["view"]["binding"]["evidence"]["seals"]
-    require(source_seal(root.feature) == seals["feature"]
-            and source_seal(root.feature, tuple(root.plan["paths"])) == seals["outside"]
-            and source_seal(Path(root.plan["checkout"]["path"])) == seals["outer"], "Original unaccepted source changed")
-    run = read_private(root.state / "run.json")
-    require(administration(Path(root.plan["checkout"]["path"])) == root.plan["administration"]
-            and (run["feature_administration"] is None or administration(root.feature) == run["feature_administration"]),
-            "Original physical administration changed")
-    validate_administration(root, master, entry(observed["state"]), observed, child=c.personal)
 
 
 def _live(owner, *, product=False, _capture=None):
@@ -164,10 +140,7 @@ def _live(owner, *, product=False, _capture=None):
             before = owner.c.memory.inspect()
             consent = deepcopy(owner.active) if product else owner.record(_observed=before)
             require(consent is not None, "Exact operation consent required")
-            opening_source = current_source(owner, consent, product=product)
-            result = owner._live_current(**({"genuine": False} if product else {"review": True}))
-            closing_source = current_source(owner, owner.active if product else result, product=product)
-            require(opening_source == closing_source, "Current Git administration changed during observation")
+            result = owner._live_current(**({} if product else {"review": True}))
             from .personal_episode import same_observation
             closing = owner.c.memory.inspect()
             same_observation(before, closing)
@@ -182,7 +155,7 @@ def _live(owner, *, product=False, _capture=None):
                                 basis=_capture["historical_basis"])
                 m, receipt, contexts, _, workers = _capture["archive"]
                 _capture["archive"] = (m, receipt, contexts, actual, workers)
-                _capture.update(subject=actual, identity=_identity(owner.c), consent=deepcopy(result), source_admin=closing_source)
+                _capture.update(subject=actual, identity=_identity(owner.c), consent=deepcopy(result))
             owner.c.episode_fence()
             view = expected if product else expected["view"]
             require(view["issued_at"] <= owner.c.clock() < view["expires_at"], "Operation consent expired during closing observation")

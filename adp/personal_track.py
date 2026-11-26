@@ -517,7 +517,6 @@ class PersonalTrack:
                 "source_ref": "refs/heads/" + self.personal.plan["feature"]["branch"],
                 "administration": digest(self.c.record()["feature_administration"])},
                 "binding": product.transport.credential_binding}
-            source_admin = current_source(product, source_operand, product=True)
             payload = {"pull": {k: row["pull"][k] for k in ("id", "number", "repository_id", "url")},
                 "revision": view["source"], "head_ref": product.target.ref, "base_ref": v["facts"]["base_ref"],
                 "expected_base": v["facts"]["base_sha"], "source_tree": view["tree"],
@@ -539,8 +538,7 @@ class PersonalTrack:
                                origin=self.c.source_origin())
             from .personal_episode import same_observation as same_subject
             with locked(self.c.memory.control):
-                require(current_source(product, source_operand, product=True) == source_admin,
-                        "Completion source administration changed")
+                current_source(product, source_operand, product=True)  # One acceptance handoff, inside the canonical lock.
                 if self.c.episode:
                     self.c.episode_fence()
                 same_subject(subject, self.c.memory.inspect())

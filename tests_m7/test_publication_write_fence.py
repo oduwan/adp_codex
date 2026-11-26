@@ -96,7 +96,7 @@ class PublicationWriteFenceTests(unittest.TestCase):
 
     def seed(self, budget):
         self.p._write_basis = {"identity": ("same-serialized-invocation",), "service": self.service, "transport": self.transport,
-            "target": self.target, "consent": deepcopy(self.row), "invocation": self.invocation, "subject": deepcopy(self.snapshot), "source_admin": None,
+            "target": self.target, "consent": deepcopy(self.row), "invocation": self.invocation, "subject": deepcopy(self.snapshot),
             "archive": ({"historical": "not-replayed"},), "budget": budget,
             "caps": (budget.end, budget.request_seconds, budget.maximum_calls),
             "historical_objects": ((False, ("actual-pinned-context",), (("1" * 40, "commit", 10),)),)}
@@ -148,13 +148,12 @@ class PublicationWriteFenceTests(unittest.TestCase):
                 self.assertEqual(len(self.http_calls), before)
             self.snapshot = original
 
-    def test_claim_private_source_revocation_and_credential_drift_refuse_before_child(self):
-        for kind in ("claim", "source", "intent", "revocation", "credential", "deadline", "clock-rollback"):
+    def test_claim_revocation_and_credential_drift_refuse_before_child(self):
+        for kind in ("claim", "intent", "revocation", "credential", "deadline", "clock-rollback"):
             with self.service.bounded() as budget:
                 self.seed(budget)
                 before = len(self.http_calls)
                 if kind == "claim":atomic(self.claim_path, encode({"intent": "foreign"}))
-                if kind == "source":self.seal = "changed-actual-source"
                 if kind == "intent":self.row["view"]["expires_at"] = 191
                 if kind == "revocation":self.revoked = True
                 if kind == "credential":self.actor = {"uid": 1002}

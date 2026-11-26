@@ -86,7 +86,14 @@ class PersonalCoordinator:
             same_observation(subject, observed)
         row = self.record()
         require(row is None or row["generation"] == observed["state"]["generation"], "Personal execution generation changed")
-        self.check_administration(row)
+        publication = getattr(self, "publication", None)
+        if publication is None:
+            self.check_administration(row)  # Unselected local runner retains its original contract.
+        else:
+            require(publication.c is self and publication.personal is self.personal
+                    and publication.cfg.root == self.personal.feature
+                    and publication.target.memory_id == self.personal.repository_id,
+                    "Selected personal port differs from the admitted worktree/repository")
         require(self.personal.intent["phase"] == "ENROLLED", "Complete the original personal setup first")
         if self.episode:
             self.episode_fence()

@@ -14,7 +14,6 @@ from .discovery_types import Identity, Issue
 from .errors import ADPError
 from .execution_memory import invocation_lock
 from .guard_types import Permit, data
-from .personal_git import administration
 from .personal_github import owned_repository
 from .personal_product import PersonalProduct, ASSENT, ENVELOPE, TOKEN
 from .github_product import DelegationProfile, delegation_subject
@@ -112,7 +111,7 @@ class PersonalReport(PersonalProduct):
             capture = {} if self.c.episode else None
             seal = self.local(_history_capture=capture)
             facts = self.facts()
-            original = self.publication.current_original()
+            original = self.original()
             current, _, _ = track.status(transport=self.transport)
             body = ("Implemented original Issue " + str(self.personal.plan["issue"]) + ": " + self.personal.intent["original"]["title"]
                 + "\n\nReviewed source: `" + accepted["source"] + "`. " + accepted["pull"]["url"]
@@ -129,7 +128,7 @@ class PersonalReport(PersonalProduct):
                 "facts": facts, "method": None, "title": None, "body": body,
                 "target": self.personal.intent["original"]["url"], "completion": digest(accepted),
                 "review_binding": seal, "original_observation": original,
-                "administration": digest(administration(self.personal.feature)),
+                "administration": digest(self.c.record()["feature_administration"]),
                 "policy_assent": ASSENT, "administrative_quiescence_warrant": WARRANT,
                 "merge_envelope": ENVELOPE, "generation": observed["state"]["generation"],
                 "checkpoint": observed["local_head"], "issued_at": issued, "expires_at": expires, "nonce": nonce}
@@ -141,8 +140,8 @@ class PersonalReport(PersonalProduct):
                 "binding": self.transport.credential_binding}
 
     def final_boundary(self):
-        view = self.live(genuine=True)
-        require(self.publication.current_original() == view["original_observation"] and self.facts() == view["facts"],
+        view = self.live()
+        require(self.original() == view["original_observation"] and self.facts() == view["facts"],
                 "Current original source/project/report conditions changed")
         require(self.c.track.accepted(typed(Identity, self.c.track.link["identity"]), transport=self.transport,
                     runtime=self.c.runtime) is not None and self._policy_final() is True,
@@ -193,6 +192,7 @@ class PersonalReport(PersonalProduct):
         self.c.live()
         with invocation_lock(self.c.memory.control):
             row = self.report_record()
+            retained = row is not None
             if row is None:
                 proposal = self.report_preview(approved=reviewed)
                 require(proposal["approval"] == reviewed, "Exact report proposal changed")
@@ -208,7 +208,11 @@ class PersonalReport(PersonalProduct):
             self.history_binding(view=row["view"])
             actions = self.journal.inspect()["state"]["execution"]["actions"]
             if row["action"] not in actions:
-                self.live(genuine=True)
+                self.live()
+                if retained:
+                    self.local()
+                    require(self.original() == row["view"]["original_observation"] and self.facts() == row["view"]["facts"],
+                            "Retained report original or project policy changed")
                 permit = self.c.reserve("personal-report:" + row["action"])
                 row["reservation"] = data(permit)
                 row["requirement"] = permit.decision.baseline.requirement_id
@@ -244,8 +248,9 @@ class PersonalReport(PersonalProduct):
                         "effect", {"id": row["action"], "plan": digest(plan), "payload": payload})
                     self._policy_final = lambda: provider.decide(plan, authorization).effect == Effect.ALLOW
                 from .personal_read_frame import current_source
-                self._writing = (row["action"], {**action, "status": "SUBMITTED"},
-                                 current_source(self, row, product=True), self.c.memory.inspect())
+                self.c.workers.fence()
+                current_source(self, row, product=True)  # One immutable handoff.
+                self._writing = (row["action"], {**action, "status": "SUBMITTED"}, self.c.memory.inspect())
                 try:
                     self.forge.submit(row["action"], Operation.REPORT, payload, authorization=effect,
                         plan_digest=digest(plan), dispatch=dispatch, validate=self.final_boundary)
