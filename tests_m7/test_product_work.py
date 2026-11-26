@@ -106,3 +106,24 @@ class ProductWorkTests(PersonalFixture):
         self.assertFalse(any("/issues?state=" in path or "/pulls?state=all&per_page=" in path for _, path in calls))
         self.assertFalse(any("/issues/2" in path or "/issues/3" in path for _, path in calls))
 
+    def test_final_m3_reobserves_permission_after_submitted_and_prevents_post(self):
+        p = self.seeded()
+        proposal = p.proposed("PR", title="Original task", body="Refs #1")
+        inventories = 0
+        def change(method, path):
+            nonlocal inventories
+            if method == "GET" and path.startswith(p.target.api + "/pulls?"):
+                inventories += 1
+                if inventories == 2:  # New consent first, then final pre-effect inventory.
+                    self.http.server.permission = "READ"
+        self.http.hook = change
+        with self.assertRaises(ADPError):
+            p.intent("PR", reviewed=proposal["approval"], authorized=True, authorize_memory=True,
+                assume_quiescence=True, confirm_rules=True, title="Original task", body="Refs #1")
+        self.assertGreaterEqual(inventories, 2)
+        self.assertEqual(self.http.effects, [])
+        intent = p.record()["intents"][0]
+        action = p.journal.inspect()["state"]["execution"]["actions"][intent["action"]]
+        self.assertEqual(action["status"], "SUBMITTED")
+        self.assertEqual(self.http.pulls, [])
+

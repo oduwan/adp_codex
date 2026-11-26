@@ -238,8 +238,13 @@ class PersonalCoordinator:
                 "The existing exact episode review baseline is required")
         return identifier
 
-    def allowed(self, requirement):
-        decision = self.guard.inspect(self.task_id, requirement)
+    def allowed(self, requirement, *, _observed=None):
+        if _observed is None:
+            decision = self.guard.inspect(self.task_id, requirement)
+        else:
+            require(_observed["health"] == "SYNCED" and _observed["local_owner"], "Current owning canonical snapshot required")
+            state, task = _observed["state"], _observed["tasks"][key(self.task_id)]
+            decision = self.guard._decision(requirement, state, task, self.guard._get(state, task, requirement))
         if decision.kind != DecisionKind.ALLOW:
             code = "PERSONAL_FORENSIC_RECOVERY_UNSUPPORTED" if decision.kind == DecisionKind.FORENSIC_REQUIRED else "PROGRESS_GUARD_STOPPED"
             raise PersonalBlocked(code, "Follow the retained M2 disposition; this minimal backend cannot bypass or automatically replace its forensic/terminal recovery boundary.")

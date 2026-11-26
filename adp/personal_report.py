@@ -71,20 +71,20 @@ class PersonalReport(PersonalProduct):
         require(coordinator.track is not None, "Select a frozen personal track first")
         self.report_path = self.personal.state / "report.json"
 
-    def report_record(self):
+    def report_record(self, *, _observed=None):
         row = read_private(self.report_path, optional=True)
         if row is not None:
             fields(row, "view approval binding action requirement reservation observation before after comment")
             require(row["view"]["operation"] == "REPORT" and row["approval"] == self.token(row["view"], row["binding"])
-                    and row["action"] == self.report_key(), "Original report identity/consent changed")
+                    and row["action"] == self.report_key(_observed=_observed), "Original report identity/consent changed")
             require(row["reservation"] is None and row["requirement"] is None
                     or row["reservation"] is not None
                     and row["requirement"] == typed(Permit, row["reservation"]).decision.baseline.requirement_id,
                     "Report must retain its exact original M2 requirement/permit")
         return row
 
-    def report_key(self):
-        task = self.c.memory.inspect()["tasks"][key(self.c.task_id)]
+    def report_key(self, *, _observed=None):
+        task = (self.c.memory.inspect() if _observed is None else _observed)["tasks"][key(self.c.task_id)]
         return digest({"repository": self.personal.repository_id, "task": self.c.task_id, "iteration": task["iteration"]})
 
     def save_report(self, row):
@@ -243,7 +243,7 @@ class PersonalReport(PersonalProduct):
                     require(replace(current, safety=plan.safety) == plan, "Report plan changed after checkpoint")
                     plan = current
                     authorization = self.authorize(provider, plan, q)
-                    require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Fresh checkpoint-bound M3 refused report")
+                    require(plan.policy_effect == Effect.ALLOW, "Fresh checkpoint-bound M3 refused report")
                     effect = self.proof("execution/effect", digest({"id": row["action"], "plan": digest(plan), "payload": payload}),
                         "effect", {"id": row["action"], "plan": digest(plan), "payload": payload})
                     self._policy_final = lambda: provider.decide(plan, authorization).effect == Effect.ALLOW

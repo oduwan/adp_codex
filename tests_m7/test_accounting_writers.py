@@ -35,6 +35,7 @@ class AccountingWriterTests(unittest.TestCase):
             with self.subTest(episode=episode):
                 f, p = self.writer()
                 p.c.memory.control, p.c.episode = f.claim_path.parent, episode
+                p.c.track = None
                 p.personal.plan = {"window": {"expires_at": 190}, "original_digest": digest(data(original)), "issue_id": original.identity.issue_id}
                 observed, events = [original], []
                 p.c.original_matches = lambda issue: PersonalCoordinator.original_matches(p.c, issue)
@@ -44,7 +45,7 @@ class AccountingWriterTests(unittest.TestCase):
                     events.append("facts")
                     observed[0] = replace(original, body="Unapproved scope")
                     return {"policy": {}}
-                def originals(*, _issues):
+                def originals(*, _issues, **kw):
                     events.append("original")
                     _issues.extend(observed)
                     return {"map": "actual-current"}
@@ -129,22 +130,27 @@ class AccountingWriterTests(unittest.TestCase):
         p = (PersonalReport if operation == "REPORT" else PersonalProduct).__new__(
             PersonalReport if operation == "REPORT" else PersonalProduct)
         p.c, p.service, p.transport, p.guard = f.c, f.service, f.transport, f.p.guard
-        p.clock, p.personal = lambda: f.now, SimpleNamespace(repository_id=f.target.memory_id)
+        repository = {"node_id": f.target.node_id, "database_id": f.target.database_id}
+        p.clock, p.personal = lambda: f.now, SimpleNamespace(repository_id=f.target.memory_id, plan={"repository": repository})
+        p.target = f.target
+        f.invocation["identity"] = ("same-serialized-invocation",)
+        p.c.revision = lambda: "d" * 40
         p.c.personal = p.personal
         p.active = {"action": f.identifier, "view": {"operation": operation, "generation": 1,
-            "revision": "d" * 40, "issued_at": 90, "expires_at": 190},
+            "revision": "d" * 40, "source_ref": f.target.ref, "repository": repository, "issued_at": 90, "expires_at": 190},
             "binding": f.transport.credential_binding, "reservation": f.row["reservation"]["permit"],
             "requirement": f.requirement}
         action = f.snapshot["state"]["execution"]["actions"][f.identifier]
         action.update(operation=operation, generation=1, payload={"exact": "effect"})
         p._writing = (f.identifier, deepcopy(action), deepcopy(f.snapshot))
-        p.record = lambda: {"intents": [deepcopy(p.active)]}
-        p.report_record = lambda: deepcopy(p.active)
-        p._live_current = lambda: p.active["view"]
-        p.forge = SimpleNamespace(_claim_path=lambda _: f.claim_path, repository_id=str(f.target.database_id))
+        p.record = lambda **kw: {"intents": [deepcopy(p.active)]}
+        p.report_record = lambda **kw: deepcopy(p.active)
+        p._live_current = Mock(side_effect=AssertionError("No full live/Reviewer reconstruction in write callback"))
+        p.forge = SimpleNamespace(service=f.service, _claim_path=lambda _: f.claim_path, repository_id=str(f.target.database_id))
         claim = {"intent": f.identifier, "generation": 1, "payload": digest(action["payload"]),
                  "operation": operation, "repository": p.forge.repository_id}
         atomic(f.claim_path, encode(claim))
+        f.service._start_request()  # Direct callback fixture enters its exact own request hazard.
         return f, p
 
     def test_pr_merge_report_use_same_late_canonical_fence(self):
@@ -179,7 +185,7 @@ class AccountingWriterTests(unittest.TestCase):
         f.revoked = False
         atomic(f.claim_path, encode({"foreign": "claim"}))
         with f.service.bounded(), self.assertRaises(ADPError):p.write_authorized()
-        p.report_record = lambda: {**p.active, "binding": "changed"}
+        p.report_record = lambda **kw: {**p.active, "binding": "changed"}
         with f.service.bounded(), self.assertRaises(ADPError):p.write_authorized()
         self.assertEqual(active["deadline"], 180)
 

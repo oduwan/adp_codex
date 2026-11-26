@@ -73,17 +73,20 @@ class PersonalProduct:
         self.specification = Requirement(self.c.task_id, "personal-product-effects", ("exact-effects-observed",))
         self.ci_specification = Requirement(self.c.task_id, "personal-post-pr-validation", ("prescribed-ci-qualified",))
 
-    def record(self):
+    def record(self, *, _observed=None):
         row = read_private(self.path, optional=True)
+        observed = self.c.memory.inspect() if _observed is None else _observed
         if row is None:
+            require(observed["health"] == "SYNCED" and observed["state"]["schema_version"] == 3,
+                    "Execution needs synchronized explicitly upgraded memory")
             require(not any(a["operation"] in (Operation.PR, Operation.MERGE) and a["task_key"] == key(self.c.task_id)
-                for a in self.journal.inspect()["state"]["execution"]["actions"].values()),
+                for a in observed["state"]["execution"]["actions"].values()),
                 "Missing product intent history cannot authorize replacement effects")
             return None
         fields(row, "schema_version setup generation intents pull gates review execution correction publications")
         require(type(row["schema_version"]) is int and row["schema_version"] in ((1, 2) if self.c.episode else (1,))
                 and row["setup"] == self.personal.intent["approval"]
-                and row["generation"] == self.c.memory.inspect()["state"]["generation"]
+                and row["generation"] == observed["state"]["generation"]
                 and type(row["intents"]) is list and len(row["intents"]) <= 4
                 and type(row["execution"]) is list and len(row["execution"]) <= 8
                 and type(row["gates"]) is list and len(row["gates"]) <= self.personal.plan["window"]["maximum_check_observations"]
@@ -134,11 +137,13 @@ class PersonalProduct:
         require(not any(present) or all(present), "Incomplete accounting writer binding")
         return ".".join(("product2" if all(present) else "product1", str(view["issued_at"]), str(view["expires_at"]), view["nonce"], digest({"view": view, "credential": binding})))
 
-    def local(self, *, genuine=True, _history_capture=None):
+    def local(self, *, genuine=True, _history_capture=None, _observed=None):
         if genuine:
             from .personal_read_frame import forbid_writes
             forbid_writes()  # Cold admission may verify/admit canonical approval.
-        self.c.live(_history_capture=_history_capture) if _history_capture is not None else self.c.live()
+        observed = _observed
+        if observed is None or genuine:
+            observed = self.c.live(_history_capture=_history_capture) if _history_capture is not None else self.c.live()
         run = self.c.record()
         require(run["phase"] == "LOCAL_DRAFT_CODE_REVIEWED" and run["feature_administration"] is not None,
                 "Finish the exact reviewed local draft and admitted worktree first")
@@ -146,10 +151,10 @@ class PersonalProduct:
             self.c.workers.fence()
             self.c.original_approval()
             self.c.verify_local_review()
-        observed = self.c.memory.inspect()
+            observed = self.c.memory.inspect()  # These cold callbacks may checkpoint.
         require(observed["tasks"][key(self.c.task_id)]["source_revision"] == self.c.revision(),
                 "Accepted canonical source and run revision differ")
-        return self.review_seal()
+        return self.review_seal(_observed=observed)
 
     def history_binding(self, *, capture=None, view=None):
         if not getattr(self.c, "episode", False):
@@ -165,8 +170,9 @@ class PersonalProduct:
             require(all(view.get(k) == v for k, v in binding.items()), "Legacy or changed accounting writer; observe only")
         return binding
 
-    def review_seal(self, *, review_worker=None):
-        state = self.c.memory.inspect()
+    def review_seal(self, *, review_worker=None, _observed=None):
+        state = self.c.memory.inspect() if _observed is None else _observed
+        require(state["health"] == "SYNCED" and state["local_owner"], "Current owning review observation required")
         task, run = state["tasks"][key(self.c.task_id)], self.c.record()
         reviews = []
         for name in ("original_review", "code_review"):
@@ -177,9 +183,10 @@ class PersonalProduct:
             require(assignment is not None and assignment["status"] == "accepted"
                     and assignment["result"] == self.c.workers.result(worker)
                     and assignment["generation"] == state["state"]["generation"], "Canonical review assignment changed")
-            s, t, guard = self.c.guard._snapshot(self.c.task_id, worker["requirement"])
+            s, t = state["state"], task
+            guard = self.c.guard._get(s, t, worker["requirement"])
             if guard["active"] is None:
-                self.c.allowed(worker["requirement"])
+                self.c.allowed(worker["requirement"], _observed=state)
             else:
                 coordination = run["coordination"]
                 if coordination is None and review_worker is not None:
@@ -344,13 +351,14 @@ class PersonalProduct:
         view = self.active["view"]
         bind_consent(view, self.clock())
         capture = {} if self.c.episode else None
-        self.local(genuine=False, _history_capture=capture)
+        observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
+        seal = self.local(genuine=False, _observed=observed)
         self.history_binding(capture=capture, view=view)
         require(view["issued_at"] <= self.clock() < view["expires_at"]
-                and view["generation"] == self.c.memory.inspect()["state"]["generation"]
+                and view["generation"] == observed["state"]["generation"]
                 and view["revision"] == self.c.revision()
                 and view["source_ref"] == "refs/heads/" + self.personal.plan["feature"]["branch"]
-                and view["review_binding"] == self.review_seal()
+                and view["review_binding"] == seal
                 and self.transport.credential_binding == self.active["binding"], "Exact operation owner/source/review/credential/consent changed")
         return view
 
@@ -360,13 +368,35 @@ class PersonalProduct:
         if self.c.episode:
             from .personal_read_frame import _CURRENT
             require(_CURRENT.get() is not None and _CURRENT.get()["c"] is self.c, "No active historical invocation")
-        view = self._live_current()
+        require(self.active is not None, "Exact operation consent required")
+        view = self.active["view"]
+        bind_consent(view, self.clock())
         require(type(self._writing) is tuple and len(self._writing) == 3
                 and self._writing[0] == self.active["action"], "Fresh one-use product dispatch required")
         identifier, expected, subject = self._writing
-        original = (self.report_record() if view["operation"] == "REPORT" else
-            next((i for i in self.record()["intents"] if i["action"] == identifier), None))
+        require(self.target == self.service.target and self.forge.service is self.service
+                and self.service.transport is self.transport
+                and view["repository"] == self.personal.plan["repository"]
+                and (self.target.node_id, self.target.database_id, self.target.memory_id, self.target.ref)
+                == (view["repository"]["node_id"], view["repository"]["database_id"], self.personal.repository_id, view["source_ref"])
+                and view["revision"] == self.c.revision(), "Current effect recipient/source/transport differs")
+        original = (self.report_record(_observed=subject) if view["operation"] == "REPORT" else
+            next((i for i in self.record(_observed=subject)["intents"] if i["action"] == identifier), None))
         require(original == self.active, "Current product intent changed")
+        claim = {"intent": identifier, "generation": expected["generation"], "payload": digest(expected["payload"]),
+                 "operation": expected["operation"], "repository": self.forge.repository_id}
+        require(read_private(self.forge._claim_path(identifier)) == claim, "Original forge dispatch claim changed")
+        require(self.transport.credential_binding == self.active["binding"], "Current effect credential changed")
+        # The service already checked uncertainty before starting this request.
+        # Its own durable marker must remain intact until confirmed response.
+        require(self.service._live_unknown is True and read_private(self.service._hazard_path(), optional=True) ==
+                {"status": "IN_FLIGHT_OR_UNKNOWN", "repository": self.target.node_id}, "Current request stop boundary changed")
+        if self.c.episode:
+            self.c.episode_fence()
+            from .personal_read_frame import _identity
+            require(_identity(self.c) == _CURRENT.get()["identity"], "Historical invocation identity changed")
+        # Intent/claim/credential callbacks may observe or advance canonical
+        # state. Take the single actual late snapshot after those callbacks.
         observed = self.c.memory.inspect()
         from .personal_episode import same_observation
         same_observation(subject, observed)
@@ -376,13 +406,9 @@ class PersonalProduct:
                 and state["generation"] == view["generation"] and task["source_revision"] == view["revision"]
                 and row == expected and row["status"] == "SUBMITTED" and row["operation"] == view["operation"],
                 "Current canonical submitted effect/owner/source differs")
-        claim = {"intent": identifier, "generation": row["generation"], "payload": digest(row["payload"]),
-                 "operation": row["operation"], "repository": self.forge.repository_id}
-        require(read_private(self.forge._claim_path(identifier)) == claim, "Original forge dispatch claim changed")
         permit = typed(Permit, self.active["reservation"])
         item = self.guard._get(state, task, self.active["requirement"])
         active = self.guard._active(state, task, item, permit.token)
-        require(self.transport.credential_binding == self.active["binding"], "Current effect credential changed")
         if self.c.episode:
             self.c.episode_fence()
         now = self.clock()
@@ -541,7 +567,10 @@ class PersonalProduct:
                 require(replace(current, safety=plan.safety) == plan, "Product plan changed after durable checkpoint")
                 plan = current
                 authorization = self.authorize(provider, plan, qualifications)
-                require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Fresh checkpoint-bound M3 refused effect")
+                # The new checkpoint has its own actual plan and exact auth.
+                # Final default decide independently reobserves it after the
+                # forge prechecks, immediately before the external mutation.
+                require(plan.policy_effect == Effect.ALLOW, "Fresh checkpoint-bound M3 refused effect")
                 effect = self.proof("execution/effect", digest({"id": old["action"], "plan": digest(plan), "payload": payload}),
                     "effect", {"id": old["action"], "plan": digest(plan), "payload": payload})
                 self._policy_final = lambda: provider.decide(plan, authorization).effect == Effect.ALLOW

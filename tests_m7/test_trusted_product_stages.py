@@ -56,7 +56,10 @@ class TrustedProductStageTests(unittest.TestCase):
                 p.c.verify_local_review.assert_called_once_with()
                 p.c.fresh.assert_not_called()
                 p.port._value.assert_not_called()
-                self.assertGreater(p.c.memory.inspect.call_count, 3)  # Current state is never cached.
+                self.assertEqual(p.c.live.call_count, 4)  # Each call obtains current authority.
+                self.assertEqual(p.c.memory.inspect.call_count, 1)  # Only the cold post-review checkpoint.
+                self.assertTrue(all(call.kwargs["_observed"] is p.c.live.return_value
+                    for call in p.review_seal.call_args_list))
 
     def test_cold_entry_refuses_unaccepted_source_and_unstopped_worker(self):
         p, observed = self.product()
@@ -230,14 +233,15 @@ class TrustedProductStageTests(unittest.TestCase):
         result = {"outcome": "PASS", "summary": "synthetic exact review", "evidence": ["fixture:review"]}
         task = {"source_revision": "a"*40, "assignments": {n: {"status": "accepted", "generation": 1, "result": result}
                 for n in ("scope", "code")}}
-        state = {"state": {"generation": 1, "progress_guard": {"task_epochs": {key("task"): 1}}},
+        state = {"health": "SYNCED", "local_owner": True,
+                 "state": {"generation": 1, "progress_guard": {"task_epochs": {key("task"): 1}}},
                  "tasks": {key("task"): task}}
         workers = {n: {"request": {"id": n, "revision": "a"*40}, "assignment": {"assignment_id": n},
             "requirement": n, "observation": {"synthetic": "stopped"}} for n in ("scope", "code")}
         p.c = SimpleNamespace(task_id="task", memory=SimpleNamespace(inspect=lambda: deepcopy(state)),
             record=lambda: {"original_review": "scope", "code_review": "code"}, worker=lambda name: workers[name],
             workers=SimpleNamespace(result=lambda worker: result), allowed=Mock(),
-            guard=SimpleNamespace(_snapshot=lambda *a: (state["state"], task, {"active": None, "approval": "fixture"})))
+            guard=SimpleNamespace(_get=lambda *a: {"active": None, "approval": "fixture"}))
         original = p.review_seal()
         workers["code"]["request"]["revision"] = "b"*40
         with self.assertRaisesRegex(ADPError, "different canonical SHA"):p.review_seal()
