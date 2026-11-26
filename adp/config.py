@@ -31,6 +31,8 @@ def load_json(path: Path, limit: int = 65536, *, protected: bool = False) -> dic
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
             raise ADPError("JSON must be a regular bounded file")
         raw = os.read(descriptor, limit + 1)
+        if protected and len(raw) != metadata.st_size:
+            raise ADPError("Protected JSON must contain the complete opened file")
         if len(raw) > limit:
             raise ADPError("JSON payload exceeds size limit")
     finally:

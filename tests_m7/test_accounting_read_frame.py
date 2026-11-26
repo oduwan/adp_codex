@@ -21,6 +21,56 @@ from adp.schema import require
 
 
 class AccountingReadFrameTests(unittest.TestCase):
+    def test_existing_episode_gate_refuses_missing_or_changed_baseline_without_admission(self):
+        from adp.guard_schema import requirement_id
+        from adp.guard_types import data
+        from adp.personal_runner import PersonalCoordinator
+        c = PersonalCoordinator.__new__(PersonalCoordinator)
+        c.episode, c.task_id = True, "original"
+        c.personal = SimpleNamespace(plan={"criterion": "original-requirement"})
+        expected = data(c.specification("develop"))
+        item = {**deepcopy(expected), "tasks": ["original-key"]}
+        c.guard = SimpleNamespace(_snapshot=lambda *args: ({}, {"key": "original-key"}, item))
+        wanted = requirement_id(expected["contract"], expected["gate"])
+        self.assertEqual(c.review_requirement(), wanted)
+        for name in ("contract", "gate", "acceptance", "dependencies", "limits", "tasks"):
+            original = item[name]
+            item[name] = [] if type(original) is list else {} if type(original) is dict else "changed"
+            if item[name] == original:item[name] = ["unapproved"]
+            with self.subTest(field=name), self.assertRaises(ADPError):c.review_requirement()
+            item[name] = original
+        def missing(*args):raise ADPError("Missing original gate")
+        c.guard._snapshot = missing
+        with self.assertRaises(ADPError):c.review_requirement()
+
+    def test_initial_protected_read_requires_complete_bytes_and_safe_opened_metadata(self):
+        from adp.config import load_json
+        from adp.ticket_preparation import TicketArchive
+        import os
+        with TemporaryDirectory() as directory:
+            root = Path(directory);path = root / "receipt.json"
+            path.write_bytes(b'{} trailing');path.chmod(0o600)
+            with patch("adp.config.os.read", return_value=b'{}'), self.assertRaises(ADPError):
+                load_json(path, protected=True)
+            path.write_bytes(b'{"original":true}')
+            self.assertEqual(load_json(path, protected=True), {"original": True})
+            with self.assertRaises(ADPError):load_json(path, path.stat().st_size - 1, protected=True)
+            path.chmod(0o644)
+            with self.assertRaises(ADPError):load_json(path, protected=True)
+            self.assertEqual(load_json(path), {"original": True})  # Ordinary signed reads unchanged.
+            path.chmod(0o600)
+            with patch("adp.config.os.getuid", return_value=os.getuid() + 1), self.assertRaises(ADPError):
+                load_json(path, protected=True)
+            link = root / "hardlink";os.link(path, link)
+            with self.assertRaises(ADPError):load_json(path, protected=True)
+            link.unlink();link.symlink_to(path)
+            with self.assertRaises(ADPError):load_json(link, protected=True)
+            archive = TicketArchive(root / "tickets", protected_roots=(root / "product",))
+            ticket = archive.directory / "original-proof.json"
+            ticket.write_bytes(b'{} trailing');ticket.chmod(0o600)
+            with patch("adp.ticket_preparation.os.read", return_value=b'{}'), self.assertRaises(ADPError):
+                archive._read(ticket)
+
     def fixture(self):
         receipt = {"archive": "exact", "result": "a" * 40}
         old = {"mode": "STOP_UNSAFE", "counters": {"attempts": 1}}

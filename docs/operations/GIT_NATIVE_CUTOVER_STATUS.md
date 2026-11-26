@@ -55,13 +55,16 @@ episode revocation, exact canonical subject and actual acceptance time under
 the existing canonical mutation lock before writing its immutable receipt.
 An expired or changed subject leaves no receipt. Corrected manual completion
 uses the approved completion SHA, without renewing the earlier PR consent.
+Protected JSON reads retain the complete opened-file length check before
+decoding. This authenticates initial input without a historical byte mirror.
+The non-issuing exact episode review-gate regression is retained unchanged.
 
 ## Metrics and qualification interpretation
 
 The existing baseline counting rule includes docstrings and all tracked
-adp/*.py. At the current implementation snapshot:100 modules,26354 physical
-lines,23654 code lines,1238 function nodes,248 classes,19409 statements.
-Against frozen13fd this is +144/+155 lines, -2 functions, -1 class and +84
+adp/*.py. At the current implementation snapshot:100 modules,26356 physical
+lines,23656 code lines,1238 function nodes,248 classes,19411 statements.
+Against frozen13fd this is +146/+157 lines, -2 functions, -1 class and +86
 statements. Final exact-source metrics and per-file deltas belong in the handoff.
 Retained additions implement explicit writer compatibility, protected direct
 receipt reads and live canonical fences; they replace the frame/inventory/
