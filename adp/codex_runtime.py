@@ -172,6 +172,8 @@ class CodexExecRuntime:
             stop = self._stop_receipt(request_id, record)
             if stop and stop["stopped"]:
                 record = {**record, "stopped": True}
+            elif record["status"] != RuntimeStatus.RUNNING:
+                record = {**record, "status": RuntimeStatus.UNKNOWN, "stopped": False}
         return self._observation(request_id, record)
 
     def dispatch(self, request: WorkerRequest):

@@ -21,6 +21,47 @@ from adp.schema import require
 
 
 class AccountingReadFrameTests(unittest.TestCase):
+    def test_terminal_runtime_needs_current_bound_stop_receipt(self):
+        from contextlib import nullcontext
+        from adp.codex_runtime import CodexExecRuntime
+        from adp.execution_types import RuntimeStatus, WorkerResult
+        from adp.guard_types import Outcome, data
+        from adp.schema import encode
+        from adp.storage import atomic
+        for personal in (False, True):
+            with self.subTest(personal=personal), TemporaryDirectory() as directory:
+                c, _, _, _ = self.fixture()
+                runtime = CodexExecRuntime(Path(directory));identifier = "e" * 64
+                raw = {"host": runtime.host, "request_digest": "a" * 64, "status": "COMPLETED",
+                    "pid": 51001, "start_time": "synthetic-only", "context": "synthetic:" + identifier,
+                    "result": data(WorkerResult(Outcome.PASS, True, ("code",), "Synthetic only")),
+                    "elapsed": 1, "samples": 1, "payload_bytes": 100, "stopped": True}
+                runtime._save(identifier, raw)
+                path = runtime.directory / (identifier + ".stop.json")
+                receipt = {"request_digest": raw["request_digest"], "pid": raw["pid"],
+                    "status": "EXITED", "stopped": True, "cli_exit": 0}
+                original = runtime._path(identifier).read_bytes()
+                with qualification(c) if personal else nullcontext():
+                    missing = runtime.observe(identifier)
+                    self.assertEqual(missing.status, RuntimeStatus.UNKNOWN)
+                    self.assertIs(missing.stopped, False)
+                    atomic(path, encode({**receipt, "status": "UNKNOWN", "stopped": False}))
+                    self.assertEqual(runtime.observe(identifier).status, RuntimeStatus.UNKNOWN)
+                    atomic(path, encode(receipt))
+                    complete = runtime.observe(identifier)
+                    self.assertEqual(complete.status, RuntimeStatus.COMPLETED)
+                    self.assertIs(complete.stopped, True)
+                    for changed in ({"pid": 51002}, {"request_digest": "b" * 64}):
+                        atomic(path, encode({**receipt, **changed}))
+                        with self.assertRaises(ADPError):runtime.observe(identifier)
+                    path.unlink()
+                    self.assertEqual(runtime._path(identifier).read_bytes(), original)
+                    runtime._save(identifier, {**raw, "status": "RUNNING", "stopped": False})
+                    with patch("adp.codex_runtime._start_time", return_value="synthetic-only"):
+                        self.assertEqual(runtime.observe(identifier).status, RuntimeStatus.RUNNING)
+                    runtime._save(identifier, {**raw, "status": "UNSUPPORTED_RUNTIME", "pid": None, "result": None})
+                    self.assertEqual(runtime.observe(identifier).status, RuntimeStatus.UNSUPPORTED_RUNTIME)
+
     def test_absent_new_runtime_is_not_started_without_creating_evidence(self):
         from adp.codex_runtime import CodexExecRuntime
         from adp.execution_types import RuntimeStatus

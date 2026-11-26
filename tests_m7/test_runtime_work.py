@@ -110,7 +110,7 @@ class RuntimeWorkTests(unittest.TestCase):
 
     def publication(self):
         pub=PersonalPublication.__new__(PersonalPublication)
-        pub.c=SimpleNamespace(memory=SimpleNamespace(control=self.root))
+        pub.c=SimpleNamespace(episode=False,memory=SimpleNamespace(control=self.root))
         pub.service=service(); pub.record=Mock(return_value=None)
         pub.save=Mock(); pub.initialize=Mock(); pub.local=Mock(); pub.remote=Mock()
         return pub
@@ -126,7 +126,7 @@ class RuntimeWorkTests(unittest.TestCase):
         observed={"state":{"generation":task.generation,"progress_guard":{"task_epochs":{key(task.task_id):task.task_epoch}}},
                   "tasks":{key(task.task_id):{"iteration":task.iteration}}}
         pub=PersonalPublication.__new__(PersonalPublication)
-        pub.c=SimpleNamespace(task_id=task.task_id,memory=SimpleNamespace(inspect=Mock(side_effect=lambda:deepcopy(observed))),
+        pub.c=SimpleNamespace(episode=False,task_id=task.task_id,memory=SimpleNamespace(inspect=Mock(side_effect=lambda:deepcopy(observed))),
             source_authors=Mock(return_value=task.authors))
         pub.personal=SimpleNamespace(repository_id=task.repository_id,intent={"governance":[]})
         pub.target=SimpleNamespace(ref=task.source_ref,branch=task.source_ref.removeprefix("refs/heads/"))
@@ -182,7 +182,7 @@ class RuntimeWorkTests(unittest.TestCase):
             "issue_id":"opaque","original_digest":"d"*64},intent={"approval":"original"},feature=self.root)
         observed={"state":{"generation":1},"local_head":"a"*40};events=[]
         def inspect():events.append("inspect");return deepcopy(observed)
-        product.c=SimpleNamespace(memory=SimpleNamespace(inspect=Mock(side_effect=inspect)),revision=lambda:"b"*40)
+        product.c=SimpleNamespace(episode=False,memory=SimpleNamespace(inspect=Mock(side_effect=inspect)),revision=lambda:"b"*40)
         product.target=SimpleNamespace(ref="refs/heads/work/task",branch="work/task")
         product.local=Mock(return_value="review-seal")
         product.facts=Mock(return_value={"policy":{}})
@@ -313,13 +313,13 @@ class RuntimeWorkTests(unittest.TestCase):
                     call=lambda:obj.publish(reviewed="exact",authorized=True,assume_quiescence=True,confirm_project_rules=True)
                 elif kind=="product":
                     obj=PersonalProduct.__new__(PersonalProduct); obj.service=client
-                    obj.c=SimpleNamespace(memory=SimpleNamespace(control=self.root))
+                    obj.c=SimpleNamespace(episode=False,memory=SimpleNamespace(control=self.root))
                     obj.record=Mock(return_value={"intents":[{"approval":"exact","view":view}]})
                     obj.local=Mock(side_effect=first_read)
                     call=lambda:obj.intent("PR",reviewed="exact",authorized=True,authorize_memory=True,assume_quiescence=True,confirm_rules=True)
                 else:
                     obj=PersonalReport.__new__(PersonalReport); obj.service=client
-                    obj.c=SimpleNamespace(memory=SimpleNamespace(control=self.root),live=Mock())
+                    obj.c=SimpleNamespace(episode=False,memory=SimpleNamespace(control=self.root),live=Mock())
                     obj.report_record=Mock(return_value={"approval":"exact","view":view,"action":"retained"})
                     obj.journal=SimpleNamespace(inspect=lambda:{"state":{"execution":{"actions":{"retained":{}}}}})
                     obj.observed_report=Mock(side_effect=first_read)
@@ -332,7 +332,7 @@ class RuntimeWorkTests(unittest.TestCase):
         for operation in ("REVIEW","CORRECT"):
             obj=PersonalProduct.__new__(PersonalProduct)
             obj.service=service(RuntimeSettings(RuntimeLimits(30,300,256)))
-            obj.c=SimpleNamespace(memory=SimpleNamespace(control=self.root)); obj.clock=lambda:1000
+            obj.c=SimpleNamespace(episode=False,memory=SimpleNamespace(control=self.root)); obj.clock=lambda:1000
             view={"operation":operation,"issued_at":999,"expires_at":2000}
             entry={"view":view,"approval":"exact","binding":"retained","phase":"PREPARED"}
             obj.record=Mock(return_value={"pull":{},"execution":[entry]}); obj.token=Mock(return_value="exact")

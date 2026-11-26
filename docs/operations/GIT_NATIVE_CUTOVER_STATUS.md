@@ -62,6 +62,9 @@ An absent new runtime directory reports no started Worker and creates nothing.
 Existing directories and actual receipt bytes retain their protections; missing
 required historical runtime evidence still refuses cold qualification, and a
 SUBMITTED assignment with missing evidence cannot dispatch again.
+For a launched terminal Worker, the current bound supervisor stop receipt is
+mandatory. Losing it returns UNKNOWN/stopped=False without rewriting the saved
+result. A saved stopped=True flag alone cannot approve a current review.
 Accounting intent uses its current local fences before native facts, then the
 unchanged full genuine proof after facts and before canonical effects. This
 defers one duplicate proof within that boundary; ordinary personal ordering,
@@ -70,9 +73,9 @@ M3 reauthorization and independent closing/effect observations are unchanged.
 ## Metrics and qualification interpretation
 
 The existing baseline counting rule includes docstrings and all tracked
-adp/*.py. At the current implementation snapshot:100 modules,26363 physical
-lines,23660 code lines,1238 function nodes,248 classes,19414 statements.
-Against frozen13fd this is +153/+161 lines, -2 functions, -1 class and +89
+adp/*.py. At the current implementation snapshot:100 modules,26365 physical
+lines,23662 code lines,1238 function nodes,248 classes,19416 statements.
+Against frozen13fd this is +155/+163 lines, -2 functions, -1 class and +91
 statements. Final exact-source metrics and per-file deltas belong in the handoff.
 Retained additions implement explicit writer compatibility, protected direct
 receipt reads and live canonical fences; they replace the frame/inventory/
