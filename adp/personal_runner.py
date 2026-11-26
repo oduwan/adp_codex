@@ -326,8 +326,9 @@ class PersonalCoordinator:
                 context["accounting_episode"]["candidate_source"] = candidate_diff(self.personal.root)
         return context
 
-    def worker(self, request_id):
-        matches = [row for row in self.workers.records() if row["request"]["id"] == request_id]
+    def worker(self, request_id, *, _records=None):
+        matches = [row for row in (self.workers.records() if _records is None else _records)
+                   if row["request"]["id"] == request_id]
         require(len(matches) == 1, "The genuine purpose-bound worker record is missing")
         return matches[0]
 

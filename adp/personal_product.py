@@ -156,7 +156,7 @@ class PersonalProduct:
                 "Accepted canonical source and run revision differ")
         return self.review_seal(_observed=observed)
 
-    def history_binding(self, *, capture=None, view=None):
+    def history_binding(self, *, capture=None, view=None, _observed=None):
         if not getattr(self.c, "episode", False):
             return {}
         from .personal_history import _reader_binding
@@ -165,7 +165,7 @@ class PersonalProduct:
             self.c.live(_history_capture=capture)
         binding = _reader_binding(capture)
         if view is not None:
-            row = self.record()
+            row = self.record(_observed=_observed)
             require(row is None or row["schema_version"] == 2, "Legacy Product history is observation-only")
             require(all(view.get(k) == v for k, v in binding.items()), "Legacy or changed accounting writer; observe only")
         return binding
@@ -174,9 +174,10 @@ class PersonalProduct:
         state = self.c.memory.inspect() if _observed is None else _observed
         require(state["health"] == "SYNCED" and state["local_owner"], "Current owning review observation required")
         task, run = state["tasks"][key(self.c.task_id)], self.c.record()
+        workers = self.c.workers.records()
         reviews = []
         for name in ("original_review", "code_review"):
-            worker = self.c.worker(run[name])
+            worker = self.c.worker(run[name], _records=workers)
             require(name != "code_review" or worker["request"]["revision"] == task["source_revision"],
                     "Independent code review is for a different canonical SHA")
             assignment = task["assignments"].get(worker["assignment"]["assignment_id"])
@@ -286,9 +287,10 @@ class PersonalProduct:
             seal = self.local(_history_capture=capture)
             facts = self.facts(merge=operation == "MERGE")
             original = self.original()
+            retained = self.record()
             if operation == "PR":
                 product_text(title, body)
-                require(self.record() is None or self.record()["pull"] is None, "One original PR only")
+                require(retained is None or retained["pull"] is None, "One original PR only")
                 payload = {"body": body}
                 inventory = self.forge.inventory(Operation.PR, payload)
                 require(inventory is not None and not any(type(r.get("head")) is not dict
@@ -315,9 +317,9 @@ class PersonalProduct:
                 "administration": digest(self.c.record()["feature_administration"]), "facts": facts,
                 "title": title if operation == "PR" else None, "body": body if operation == "PR" else None,
                 "method": method if operation == "MERGE" else None, "merge_mode": "DELEGATED" if delegate else "MANUAL",
-                "pull": self.record()["pull"] if self.record() is not None else None,
+                "pull": retained["pull"] if retained is not None else None,
                 "validation": self.validation_binding() if operation == "MERGE" else None,
-                "product_review": self.record()["review"] if operation == "MERGE" else None,
+                "product_review": retained["review"] if operation == "MERGE" else None,
                 "policy_assent": ASSENT, "administrative_quiescence_warrant": WARRANT,
                 "merge_envelope": ENVELOPE}
             # Observe after all preceding callbacks, at the original first-read
@@ -353,7 +355,7 @@ class PersonalProduct:
         capture = {} if self.c.episode else None
         observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
         seal = self.local(genuine=False, _observed=observed)
-        self.history_binding(capture=capture, view=view)
+        self.history_binding(capture=capture, view=view, _observed=observed)
         require(view["issued_at"] <= self.clock() < view["expires_at"]
                 and view["generation"] == observed["state"]["generation"]
                 and view["revision"] == self.c.revision()
@@ -1101,7 +1103,8 @@ class PersonalProduct:
         with self.service.bounded():
             self.c.check_administration(self.c.record())
             self.service._check_stop()
-            require({r.name: r.revision for r in self.service.refs()}.get(self.target.ref) == self.c.revision(), "Published current ref unavailable")
+            from .personal_rules import inspect_ref
+            require(inspect_ref(self.service, writable=False) == self.c.revision(), "Published current ref unavailable")
             if row["pull"] is None:
                 return {"status": "PRODUCT_EFFECT_UNCERTAIN", "mutation_retry": "NOT_AUTHORIZED"}
             item = self.pull(allow_merged=True)

@@ -48,7 +48,8 @@ class ProductCoordinator(PersonalCoordinator):
         row = product.record()
         delta = original_with_own_relation(self.personal.intent["original"], issue, row["pull"], self.personal.plan["repository"]["name"])
         with product.service.bounded():
-            remote = {r.name: r.revision for r in product.service.refs()}.get(product.target.ref)
+            from .personal_rules import inspect_ref
+            remote = inspect_ref(product.service, writable=False)
             actions = product.journal.inspect()["state"]["execution"]["actions"].values()
             require(any(a["task_key"] == key(self.task_id) and a["operation"] == Operation.PUSH
                         and a["status"] == "OBSERVED" and a["revision"] == remote for a in actions),

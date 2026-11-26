@@ -272,9 +272,12 @@ class PersonalReport(PersonalProduct):
                 self.journal.change(lambda e, s, t: e["actions"][row["action"]].update(status="OBSERVED", observation=data(observed)))
                 # Reconcile only this authenticated own comment addition.
                 p = self.personal.plan
-                from .personal_enrollment import selection
-                observation, owner = selection(Path(p["checkout"]["path"]), p["checkout"]["remote"], self.personal.repository_id, self.read)
-                after = next(i for i in observation.snapshot.issues if data(i.identity) == self.c.track.link["identity"])
+                issues = []
+                self.publication.current_original(_issues=issues, _prerequisites=())
+                matches = [i for i in issues if data(i.identity) == self.c.track.link["identity"]]
+                require(len(matches) == 1, "Exact original report Issue identity required")
+                after = matches[0]
+                owner = owned_repository(self.read, p["repository"]["name"], self.personal.repository_id)
                 raw = self.service.request("GET", self.target.api + "/issues/" + str(p["issue"]))
                 require(owner == p["owner"], "Current report account/permission changed")
                 own_report_delta(typed(Issue, row["before"]), after, comment, raw)

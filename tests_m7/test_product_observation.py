@@ -29,8 +29,9 @@ class ProductObservationTests(unittest.TestCase):
             "requirement": n, "observation": {"synthetic": "stopped"}} for n in ("scope", "code")}
         memory = SimpleNamespace(inspect=Mock(side_effect=lambda: deepcopy(observed)))
         c = SimpleNamespace(task_id="task", memory=memory, guard=ProgressGuard(memory, clock=lambda: 100),
-            record=lambda: {"original_review": "scope", "code_review": "code"}, worker=lambda name: workers[name],
-            workers=SimpleNamespace(result=lambda worker: deepcopy(result)))
+            record=lambda: {"original_review": "scope", "code_review": "code"},
+            workers=SimpleNamespace(result=lambda worker: deepcopy(result), records=Mock(return_value=list(workers.values()))))
+        c.worker = lambda name, **kw: PersonalCoordinator.worker(c, name, **kw)
         c.allowed = lambda requirement, **kw: PersonalCoordinator.allowed(c, requirement, **kw)
         c.guard._snapshot = Mock(side_effect=AssertionError("No second canonical snapshot"))
         p.c, p.clock = c, lambda: 100
@@ -40,9 +41,16 @@ class ProductObservationTests(unittest.TestCase):
         p, observed, _ = self.review()
         first = p.review_seal()
         self.assertEqual(p.c.memory.inspect.call_count, 1)
+        p.c.workers.records.assert_called_once_with()
         self.assertEqual(p.review_seal(_observed=observed), first)
         self.assertEqual(p.c.memory.inspect.call_count, 1)
         p.c.guard._snapshot.assert_not_called()
+
+    def test_shared_worker_inventory_still_refuses_ambiguous_role_identity(self):
+        p, observed, workers = self.review()
+        p.c.workers.records.return_value.append(deepcopy(workers["code"]))
+        with self.assertRaisesRegex(ADPError, "worker record is missing"):p.review_seal(_observed=observed)
+        p.c.workers.records.assert_called_once_with()
 
     def test_current_review_assignment_source_owner_and_guard_refusals_remain(self):
         for change in ("source", "assignment", "generation", "owner", "health", "stop"):

@@ -239,8 +239,8 @@ class TrustedProductStageTests(unittest.TestCase):
         workers = {n: {"request": {"id": n, "revision": "a"*40}, "assignment": {"assignment_id": n},
             "requirement": n, "observation": {"synthetic": "stopped"}} for n in ("scope", "code")}
         p.c = SimpleNamespace(task_id="task", memory=SimpleNamespace(inspect=lambda: deepcopy(state)),
-            record=lambda: {"original_review": "scope", "code_review": "code"}, worker=lambda name: workers[name],
-            workers=SimpleNamespace(result=lambda worker: result), allowed=Mock(),
+            record=lambda: {"original_review": "scope", "code_review": "code"}, worker=lambda name, **kw: workers[name],
+            workers=SimpleNamespace(result=lambda worker: result, records=lambda: list(workers.values())), allowed=Mock(),
             guard=SimpleNamespace(_get=lambda *a: {"active": None, "approval": "fixture"}))
         original = p.review_seal()
         workers["code"]["request"]["revision"] = "b"*40

@@ -8,7 +8,8 @@ import time
 from adp.discovery_schema import digest
 from adp.errors import ADPError
 from adp.guard_types import data
-from adp.network_git import GitHubTarget
+from adp.network_git import GitHubTarget, GitHubPolicyAdapter
+from adp.policy import PolicyProvider
 from adp.personal_enrollment import apply_personal
 from adp.personal_history_product_git import administration
 from adp.personal_product import PersonalProduct
@@ -92,10 +93,22 @@ class ProductWorkTests(PersonalFixture):
             calls.append((method, path))
             return actual(method, path, body, seconds=seconds)
         self.http.request = counted
-        before = len(self.http.server.calls)
         p.c.fresh = Mock(side_effect=AssertionError("No unrelated inventory inside intent"))
-        result = p.intent("PR", reviewed=proposal["approval"], authorized=True, authorize_memory=True,
-            assume_quiescence=True, confirm_rules=True, title="Original task", body="Refs #1")
+        plan, decide, inspect = PolicyProvider.plan, PolicyProvider.decide, GitHubPolicyAdapter.inspect
+        with (patch.object(PolicyProvider, "plan", autospec=True, side_effect=plan) as plans,
+              patch.object(PolicyProvider, "decide", autospec=True, side_effect=decide) as decisions,
+              patch.object(GitHubPolicyAdapter, "inspect", autospec=True, side_effect=inspect) as inspections,
+              patch.object(p, "facts", wraps=p.facts) as facts,
+              patch.object(p, "original", wraps=p.original) as originals,
+              patch.object(p.publication, "current_original", wraps=p.publication.current_original) as native_originals):
+            result = p.intent("PR", reviewed=proposal["approval"], authorized=True, authorize_memory=True,
+                assume_quiescence=True, confirm_rules=True, title="Original task", body="Refs #1")
+            counts = {"plan": plans.call_count, "decide": decisions.call_count, "policy_inspect": inspections.call_count,
+                "facts": facts.call_count, "original": originals.call_count, "current_original": native_originals.call_count,
+                "fresh": p.c.fresh.call_count}
+            self.assertEqual(counts, {"plan": 4, "decide": 2, "policy_inspect": 5,
+                "facts": 3, "original": 2, "current_original": 2, "fresh": 0})
+            print("PRODUCT_LOGICAL_CALLS " + json.dumps(counts, sort_keys=True), flush=True)
         self.assertEqual(result["status"], "PR_PRESENT")
         self.assertEqual(len(self.http.effects), 1)
         p.c.fresh.assert_not_called()
