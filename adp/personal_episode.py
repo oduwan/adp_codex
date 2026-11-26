@@ -82,17 +82,10 @@ class EpisodeState(PersonalState):
         parent = "personal:" + digest({"repository": self.repository_id, "issue": self.plan["issue_id"]})
         return child_id(parent, self.descriptor["episode"])
 
-    def active(self, *, memory=None, runtime=None, allow_expired=True, now=None):
-        return self._active_view(memory=memory, runtime=runtime, allow_expired=allow_expired, now=now)[:2]
+    def active(self, *, memory=None, runtime=None, allow_expired=True, now=None, _capture=None):
+        return self._active_view(memory=memory, runtime=runtime, allow_expired=allow_expired, now=now, _capture=_capture)[:2]
 
     def _active_view(self, *, memory=None, runtime=None, allow_expired=True, now=None, _capture=None):
-        from .personal_read_frame import active
-        framed = active(self, memory, runtime, _capture=_capture)
-        if framed is not None:
-            if not allow_expired:
-                require(type(now) is int and self.plan["window"]["issued_at"] <= now < self.plan["window"]["expires_at"],
-                        "Episode window expired")
-            return framed
         # Closed plans were validated on load. Re-read their exact protected
         # identities here; do not recursively reload the same root/plan/track
         # through every nested authority proof. No positive result is cached.
@@ -122,13 +115,13 @@ class EpisodeState(PersonalState):
         require(activation == {"schema_version": 1, "descriptor": digest(self.descriptor),
             "checkpoint": activation["checkpoint"], "relation": digest({k: v for k, v in relation.items() if k != "usage"})},
             "Episode activation is not bound to its exact canonical relation")
-        target = episode_intent(self.root, self.descriptor, m, archive, _workers=workers)
+        target = capture.get("episode_intent") or episode_intent(self.root, self.descriptor, m, archive, _workers=workers)
         require(read_private(self.directory / "intent.json") == target, "Retain the exact one-use episode intent")
         require(activation["checkpoint"] == capture["historical_basis"]["checkpoint"]
                 and capture["installed"] == (target["state"], target["tasks"]), "Installed historical basis differs from exact episode intent")
         if not allow_expired:
-            from .personal_read_frame import present
-            require(not present(self.root.state / "accounting-recovery" / "revoked" / (digest(self.intent["approval"]) + ".json")), "Episode approval revoked")
+            require(read_private(self.root.state / "accounting-recovery" / "revoked" /
+                                 (digest(self.intent["approval"]) + ".json"), optional=True) is None, "Episode approval revoked")
             require(type(now) is int and self.plan["window"]["issued_at"] <= now < self.plan["window"]["expires_at"], "Episode window expired")
             require(all(identifier == relation["parent_requirement"] or item["mode"] == "normal"
                         for identifier, item in observed["state"]["progress_guard"]["requirements"].items()),

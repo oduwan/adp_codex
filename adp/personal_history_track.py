@@ -86,10 +86,8 @@ def later_windows(first):
     """Closed native 1→2→3 attachment/consent proof, without links/effective."""
     from .personal_runner import PersonalCoordinator
     from .personal_track import LINK
-    from .personal_read_frame import json_names, present
     link_root = Path(read_private(first.state / LINK)["root"])
     paths = list((link_root / "links").glob("*.json"))
-    json_names(link_root / "links", [p.name for p in paths])
     if len(paths) <= 1:
         return []  # No later ref can be authorized by this empty projection.
     coordinator = PersonalCoordinator(first, None, None)
@@ -103,7 +101,7 @@ def later_windows(first):
         identity = by_number[number]
         link = read_private(track.root / "links" / (digest(identity) + ".json"), optional=True)
         if link is None:
-            require(number == 3 or not present(track.root / "links" / (digest(by_number[3]) + ".json")),
+            require(number == 3 or not (track.root / "links" / (digest(by_number[3]) + ".json")).exists(),
                     "Later Issue has no admitted predecessor")
             break
         directory = track.root / "windows" / digest(identity)

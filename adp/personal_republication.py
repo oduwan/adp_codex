@@ -8,10 +8,17 @@ from .schema import key, require
 
 class RevisionPublication(PersonalPublication):
     def __init__(self, product, *, transport=None):
-        require(not product.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: no corrected publication from legacy Product consent")
         super().__init__(product.c, transport=transport)
         self.product = product
         self.path = self.personal.state / "publication-revisions" / (self.c.revision() + ".json")
+
+    def local(self, *, _history_capture=None):
+        correction = self.product.record()["correction"]
+        if self.c.episode:
+            require(correction is not None, "Exact correction intent required")
+            execution = next(e for e in self.product.record()["execution"] if e["approval"] == correction["approval"])
+            self.product.history_binding(view=execution["view"])
+        return super().local(_history_capture=_history_capture)
 
     def history(self):
         row = self.product.record()

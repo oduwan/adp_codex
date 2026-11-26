@@ -223,16 +223,12 @@ class GitHubCAS:
                 "UNKNOWN: canonical GitHub repository binding changed")
         return repo
 
-    def refs(self, *, expected=None):
-        if expected is not None:
-            require(type(expected) is tuple and len(expected) <= 4096 and all(type(r) is Ref for r in expected)
-                    and len({r.name for r in expected}) == len(expected), "UNKNOWN: invalid negative ref envelope")
+    def refs(self):
         result = []
         with self.bounded() if self._budget.get() is None else _unchanged():
             for prefix in ("refs/heads/", "refs/tags/"):
                 after, cursors = None, set()
                 while True:
-                    before = len(result)
                     repo = self._repository(REFS_QUERY, {"prefix": prefix, "after": after})
                     connection = repo.get("refs")
                     require(type(connection) is dict and type(connection.get("nodes")) is list
@@ -243,28 +239,24 @@ class GitHubCAS:
                         name = item.get("name")
                         branch(name)
                         observed = Ref(prefix + name, oid(item["target"].get("oid")))
-                        require(expected is None or observed in expected, "UNKNOWN: remote ref changed outside exact snapshot")
                         result.append(observed)
                     require(len(result) <= 4096 and len({r.name for r in result}) == len(result), "UNKNOWN: duplicate/oversized ref inventory")
                     page = connection["pageInfo"]
                     require(type(page.get("hasNextPage")) is bool, "UNKNOWN: incomplete pagination")
                     if page["hasNextPage"] is False:
                         break
-                    require(expected is None or len(result) > before and any(r.name.startswith(prefix) and r not in result for r in expected),
-                            "UNKNOWN: ref paging cannot progress within the approved inventory")
                     after = page.get("endCursor")
                     string(after, 512)
                     require(after not in cursors, "UNKNOWN: repeated pagination cursor")
                     cursors.add(after)
         actual = tuple(sorted(result, key=lambda r: r.name))
-        require(expected is None or actual == expected, "UNKNOWN: incomplete or changed exact ref inventory")
         return actual
 
     @network_operation("network.inspect_ref", service=lambda self, **k: self)
-    def inspect_ref(self, *, writable=False, _bounded_personal=False):
+    def inspect_ref(self, *, writable=False):
         if self.personal:
             from .personal_rules import inspect_ref
-            return inspect_ref(self, writable=writable, _bounded=_bounded_personal)
+            return inspect_ref(self, writable=writable)
         return self._inspect_ref(writable=writable)
 
     def _inspect_ref(self, *, writable=False):
@@ -330,8 +322,7 @@ class GitHubPolicyAdapter(GitPolicyAdapter):
 
     def _remote_refs(self, config):
         _endpoint(config, self.service.target)
-        expected = getattr(self, "_publication_expected_refs", None)
-        return self.service.refs(expected=expected) if expected is not None else self.service.refs()
+        return self.service.refs()
 
 
 def _endpoint(config, target):
@@ -463,7 +454,7 @@ class GitHubGitExecutionPort(GitExecutionPort):
             require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
             if validate is not None:
                 validate()
-            require(self.service.inspect_ref(writable=True, **({"_bounded_personal": True} if admit_objects is not None else {}))
+            require(self.service.inspect_ref(writable=True)
                     == action["expected_target"], "Remote changed before immutable object transfer")
             objects = (closure(self.root, action["revision"], self.service.known_commit, git_reader=self._git)
                        if self.bound_git_directory is not None else closure(self.root, action["revision"], self.service.known_commit))
@@ -475,7 +466,7 @@ class GitHubGitExecutionPort(GitExecutionPort):
             self._authorize(action, provider, plan, authorization)
             if validate is not None:
                 validate()
-            require(self.service.inspect_ref(writable=True, **({"_bounded_personal": True} if admit_objects is not None else {}))
+            require(self.service.inspect_ref(writable=True)
                     == action["expected_target"], "Remote changed before atomic CAS")
             try:
                 self.service.cas(action["expected_target"], action["revision"], action_id)

@@ -48,10 +48,8 @@ class PersonalWorkers:
         self.directory = controller.personal.state / "workers"
 
     def records(self):
-        from .personal_read_frame import json_names
         rows = []
         paths = sorted(self.directory.glob("*.json")) if self.directory.exists() else []
-        json_names(self.directory, [p.name for p in paths])
         if self.directory.exists():
             for path in paths:
                 row = read_private(path)

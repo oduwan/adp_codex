@@ -64,10 +64,19 @@ class AccountingTrackCompletionTests(AccountingFixture):
         git(self.a, "merge", "--ff-only", merge)
         self.transport.api.responses[self.prefix + "/branches/trunk"].body["commit"] = {"sha": merge}
 
-    def test_only_full_fresh_merged_accepted_successor_unblocks_the_native_chain(self):
+    def published_product(self, *, developers=None):
         # Reuse the focused real-port synthetic candidate procedure, never a
         # fake Developer PASS or fabricated accepted-completion receipt.
-        candidate_flow.AccountingCandidateTests.test_scope_then_explicit_candidate_copy_and_fresh_staged_sha_reviews(self)
+        incident = self.incident
+        def original_scope():
+            result = incident()
+            if developers is not None:
+                # Configure the new disposable episode BEFORE archival consent
+                # or enrollment, never mutate an issued grant/plan/budget.
+                self.child_choices["developers"] = developers
+            return result
+        with patch.object(self, "incident", side_effect=original_scope):
+            candidate_flow.AccountingCandidateTests.test_scope_then_explicit_candidate_copy_and_fresh_staged_sha_reviews(self)
         source = self.c.revision()
         self.store = self.base / "owned-synthetic-forge.git"
         self.store.mkdir()
@@ -89,6 +98,12 @@ class AccountingTrackCompletionTests(AccountingFixture):
         self.product = product
         self.http.authorize_write = product.write_authorized
         identity = next(i for i, o in self.c.track.originals.items() if o.issue.number == 1)
+        return source, identity
+
+    def test_only_full_fresh_merged_accepted_successor_unblocks_the_native_chain(self):
+        source, identity = self.published_product()
+        product = self.product
+        p = self.personal.plan
         self.assertIsNone(self.c.track.accepted(identity))
         proposal = product.proposed("PR", title="Complete the original Issue", body="Implement the admitted scope. Refs #1")
         product.intent("PR", reviewed=proposal["approval"], authorized=True, authorize_memory=True,
@@ -110,6 +125,21 @@ class AccountingTrackCompletionTests(AccountingFixture):
         self.assertEqual(receipt["source"], source)
         self.assertEqual(receipt["origin"]["kind"], "RETAINED_UNACCEPTED")
         self.assertEqual(len(self.requests), 6)
+        from adp.personal_report import PersonalReport
+        report = PersonalReport(self.c, transport=self.http)
+        self.http.authorize_write = report.write_authorized
+        proposed = report.report_preview()
+        self.assertTrue(proposed["approval"].startswith("product2."))
+        self.http.report_loss = "after"
+        result = report.report(reviewed=proposed["approval"], authorized=True, authorize_memory=True,
+            assume_quiescence=True, confirm_rules=True)
+        self.assertEqual(result["status"], "REPORTED")
+        counters = self.c.memory.inspect()["state"]["progress_guard"]
+        again = report.report(reviewed=proposed["approval"], authorized=True, authorize_memory=True,
+            assume_quiescence=True, confirm_rules=True)
+        self.assertEqual(again["reference"], result["reference"])
+        self.assertEqual(len(self.all_comments), 1)
+        self.assertEqual(counters, self.c.memory.inspect()["state"]["progress_guard"])
         _, token = self.c.invocation("handoff")
         self.c.run(reviewed=token, authorized=True, operation="handoff")
         self.now = p["window"]["expires_at"] + 1
@@ -179,3 +209,35 @@ class AccountingTrackCompletionTests(AccountingFixture):
         self.assertNotEqual(second, third)
         self.assertIsNone(self.c.record())
         self.assertEqual(len(self.requests), 11)
+
+    def test_accounting_correction_reuses_publisher_without_replenishing_episode(self):
+        source, identity = self.published_product(developers=1)
+        product = self.product
+        proposal = product.proposed("PR", title="Complete original Issue", body="Implement original scope. Refs #1")
+        product.intent("PR", reviewed=proposal["approval"], authorized=True, authorize_memory=True,
+            assume_quiescence=True, confirm_rules=True, title=proposal["result"]["title"], body=proposal["result"]["body"])
+        old_review = self.c.record()["code_review"]
+        self.http.conclusion = "failure"
+        proposal = product.execution_preview("CI", accept_native=True)
+        failed = product.execute("CI", reviewed=proposal["approval"], authorized=True, accept_native=True)
+        self.assertEqual(failed["status"], "FAIL")
+        proposal = product.execution_preview("CORRECT")
+        self.assertTrue(proposal["approval"].startswith("product2."))
+        corrected = product.execute("CORRECT", reviewed=proposal["approval"], authorized=True)
+        self.assertEqual(corrected["status"], "CORRECTED_REQUIRES_NEW_PUBLICATION")
+        self.assertNotEqual(self.c.revision(), source)
+        self.assertNotEqual(self.c.record()["code_review"], old_review)
+        publication = product.publication_backend(transport=self.http)
+        self.http.authorize_write = publication.write_authorized
+        proposal = publication.preview()
+        self.assertTrue(proposal["approval"].startswith("publish2."))
+        result = publication.publish(reviewed=proposal["approval"], authorized=True, assume_quiescence=True,
+            confirm_project_rules=True)
+        self.assertEqual(result["status"], "PUBLISHED_UNACCEPTED")
+        self.assertEqual(len(self.all_pulls), 1)
+        self.assertIsNone(self.c.track.accepted(identity))
+        roles = [r["purpose"] for r in self.c.workers.records()]
+        self.assertEqual((roles.count("develop"), roles.count("code"), roles.count("product")), (1, 2, 0))
+        self.assertEqual(self.c.record()["observations"], 3)
+        self.assertEqual(product.record()["gates"][0]["status"], "FAIL")
+        self.assertFalse(any(method == "PUT" for method, _, _ in self.http.effects))

@@ -44,64 +44,51 @@ class AccountingGitFactTests(unittest.TestCase):
         self.action, self.revision = action, revision
         self.port, self.native = HistoryReadPort(config, bound_git_directory=bound), GitExecutionPort(config, bound_git_directory=bound)
 
-    def test_final_input_seal_observes_child_proof_source_credential_and_consent_drift(self):
+    def test_current_source_credential_index_head_ref_and_worktree_fences(self):
         from types import SimpleNamespace
-        from adp.personal_read_frame import _inputs
-        from adp.schema import key
-        from adp.storage import atomic
-        state, runtime, evidence = (self.root.parent / name for name in ("private-state", "private-runtime", "private-evidence"))
-        for path in (state, runtime, evidence):path.mkdir(mode=0o700)
-        request, proof = "a" * 64, "b" * 64
-        record, stop = runtime / (request + ".json"), runtime / (request + ".stop.json")
-        attestation = evidence / (proof + ".json")
-        for path in (record, stop, attestation):atomic(path, b"{}\n")
-        workers = [{"request": {"id": request}}]
+        from adp.personal_read_frame import current_source
         from adp.personal_enrollment import governance
         from adp.discovery_schema import digest
         source = {"revision": self.revision, "tree": value(self.root, "rev-parse", "HEAD^{tree}"),
             "source_ref": "refs/heads/work/original", "administration": digest(administration(self.root))}
-        run, consent = {"current": "exact", "revision": self.revision}, {"view": {**source, "exact": True}, "credential_binding": "synthetic-only"}
-        plan = {"feature": {"branch": "work/original"}, "governance_digest": digest(governance(self.root)),
-            "effects": {"marker": str(state / "marker.json")}}
-        c = SimpleNamespace(task_id="original", personal=SimpleNamespace(state=state, feature=self.root, directory=state,
-            root=SimpleNamespace(state=state, directory=state), plan=plan), track=None,
-            runtime=SimpleNamespace(directory=runtime, _path=lambda identifier: runtime / (identifier + ".json")),
-            authority=SimpleNamespace(directory=evidence), workers=SimpleNamespace(records=lambda: workers), record=lambda: run)
-        owner = SimpleNamespace(c=c, port=self.native, record=lambda **kwargs: consent,
-            active={"view": {**source, "source_tree": source["tree"]}, "binding": "synthetic-only", "action": "one"},
-            transport=SimpleNamespace(credential_binding="synthetic-only"))
-        observed = {"state": {"progress_guard": {"requirements": {"code": {"tasks": [key(c.task_id)],
-            "approval": {"reference": "personal:" + proof}}}}}}
-        baseline = _inputs(owner, observed, product=False)
-        for path in (record, stop, attestation):
-            raw = path.read_bytes();atomic(path, b"{ }\n")
-            self.assertNotEqual(_inputs(owner, observed, product=False), baseline)
-            atomic(path, raw)
-            self.assertEqual(_inputs(owner, observed, product=False), baseline)
-        raw = stop.read_bytes();stop.unlink()
-        self.assertNotEqual(_inputs(owner, observed, product=False), baseline);atomic(stop, raw)
-        consent["view"]["exact"] = False
-        self.assertNotEqual(_inputs(owner, observed, product=False), baseline);consent["view"]["exact"] = True
+        consent = {"view": deepcopy(source), "credential_binding": "synthetic-only"}
+        personal = SimpleNamespace(feature=self.root, plan={"feature": {"branch": "work/original"},
+            "governance_digest": digest(governance(self.root))})
+        c = SimpleNamespace(personal=personal, revision=lambda: self.revision)
+        owner = SimpleNamespace(c=c, port=self.native, transport=SimpleNamespace(credential_binding="synthetic-only"))
+        baseline = current_source(owner, consent)
+        git(self.root, "config", "adp.negative", "changed")
+        self.assertNotEqual(current_source(owner, consent), baseline)
+        git(self.root, "config", "--unset", "adp.negative")
+        self.assertEqual(current_source(owner, consent), baseline)
         owner.transport.credential_binding = "changed"
-        with self.assertRaises(ADPError):_inputs(owner, observed, product=False)
+        with self.assertRaises(ADPError):current_source(owner, consent)
         owner.transport.credential_binding = "synthetic-only"
         for option, undo in (("--assume-unchanged", "--no-assume-unchanged"), ("--skip-worktree", "--no-skip-worktree")):
             git(self.root, "update-index", option, "product")
             try:
-                with self.assertRaisesRegex(ADPError, "hidden index flags"):_inputs(owner, observed, product=False)
+                with self.assertRaisesRegex(ADPError, "hidden index flags"):current_source(owner, consent)
             finally:git(self.root, "update-index", undo, "product")
-        raw = (self.root / "product").read_bytes();(self.root / "product").write_bytes(b"Uncommitted source\n")
-        with self.assertRaises(ADPError):_inputs(owner, observed, product=False)
-        (self.root / "product").write_bytes(raw)
-        self.assertEqual(_inputs(owner, observed, product=False), baseline)
-        expected = _inputs(owner, observed, product=True);owner.active["action"] = "other"
-        self.assertNotEqual(_inputs(owner, observed, product=True), expected)
+        raw = (self.root / "product").read_bytes()
+        (self.root / "product").write_bytes(b"Uncommitted source\n")
+        with self.assertRaises(ADPError):current_source(owner, consent)
+        git(self.root, "add", "product")
+        with self.assertRaises(ADPError):current_source(owner, consent)
+        git(self.root, "reset", "HEAD", "--", "product");(self.root / "product").write_bytes(raw)
+        ref = value(self.root, "symbolic-ref", "HEAD")
+        git(self.root, "checkout", "-b", "foreign")
+        with self.assertRaises(ADPError):current_source(owner, consent)
+        git(self.root, "checkout", ref.removeprefix("refs/heads/"))
+        git(self.root, "commit", "--allow-empty", "-m", "Changed source")
+        with self.assertRaises(ADPError):current_source(owner, consent)
+        git(self.root, "update-ref", ref, self.revision)
+        current_source(owner, consent)
 
     def test_original_source_engine_and_physical_administration_remain_fixed(self):
         from types import SimpleNamespace
-        from adp.personal_read_frame import _legacy_inputs
+        from adp.personal_read_frame import historical_source
         from adp.execution_containment import source_seal
-        from adp.personal_recovery import engine_digest
+        from adp.personal_recovery import administration_snapshot, engine_digest
         from adp.schema import encode
         from adp.storage import atomic
         state = self.root.parent / "historical-private";state.mkdir(mode=0o700)
@@ -109,20 +96,20 @@ class AccountingGitFactTests(unittest.TestCase):
         personal = SimpleNamespace(feature=self.root, state=state, plan={"paths": ["product"],
             "checkout": {"path": str(self.root)}, "administration": deepcopy(physical)})
         atomic(state / "run.json", encode({"feature_administration": physical}))
-        master = {"engine": engine_digest(), "view": {"binding": {"evidence": {"seals": {
-            "feature": source_seal(self.root), "outside": source_seal(self.root, ("product",)),
-            "outer": source_seal(self.root), "admin": "historical refs may legitimately differ"}}}}}
+        master = {"engine": engine_digest(), "administration": administration_snapshot(personal),
+            "view": {"binding": {"evidence": {"seals": {"feature": source_seal(self.root),
+            "outside": source_seal(self.root, ("product",)), "outer": source_seal(self.root)}}}}}
         c = SimpleNamespace(personal=SimpleNamespace(root=personal, descriptor={"base": {"engine": master["engine"]}}))
-        expected = _legacy_inputs(c, master)
-        raw = (self.root / "product").read_bytes();(self.root / "product").write_bytes(b"Changed old unaccepted candidate\n")
-        with self.assertRaisesRegex(ADPError, "unaccepted source changed"):_legacy_inputs(c, master)
+        observed = {"state": {"progress_guard": {"schema_version": 1}}}
+        historical_source(c, master, observed)
+        raw = (self.root / "product").read_bytes();(self.root / "product").write_bytes(b"Changed candidate\n")
+        with self.assertRaises(ADPError):historical_source(c, master, observed)
         (self.root / "product").write_bytes(raw)
-        self.assertEqual(_legacy_inputs(c, master), expected)
         personal.plan["administration"]["root"]["inode"] += 1
-        with self.assertRaisesRegex(ADPError, "physical administration changed"):_legacy_inputs(c, master)
+        with self.assertRaises(ADPError):historical_source(c, master, observed)
         personal.plan["administration"] = deepcopy(physical)
         master["engine"] = "0" * 64
-        with self.assertRaisesRegex(ADPError, "recovery source changed"):_legacy_inputs(c, master)
+        with self.assertRaises(ADPError):historical_source(c, master, observed)
 
     def test_stateless_native_facts_preserve_files_refs_and_actual_integrity(self):
         expected = self.native.observe(self.action)

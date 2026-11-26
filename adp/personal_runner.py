@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 import time
 
+from .personal_read_frame import qualified as historical_operation
 from .codex_runtime import CodexExecRuntime
 from .config import Config
 from .discovery_schema import digest, typed
@@ -64,6 +65,7 @@ class PersonalCoordinator:
             from .personal_track import PersonalTrack
             self.track = PersonalTrack(self)
 
+    @historical_operation
     def live(self, *, _history_capture=None):
         # Recheck immutable retained consent and the actual owner. Do not rerun
         # Git configuration discovery for every nested evidence verification.
@@ -93,11 +95,10 @@ class PersonalCoordinator:
     def episode_fence(self):
         """Final nonblocking consent/owner check after full evidence validation."""
         from .accounting_policy import entry
-        from .personal_read_frame import present
         window = self.personal.plan["window"]
         require(window["issued_at"] <= self.clock() < window["expires_at"]
-                and not present(self.personal.root.state / "accounting-recovery" / "revoked" /
-                         (digest(self.personal.intent["approval"]) + ".json")), "Episode consent expired or revoked")
+                and read_private(self.personal.root.state / "accounting-recovery" / "revoked" /
+                         (digest(self.personal.intent["approval"]) + ".json"), optional=True) is None, "Episode consent expired or revoked")
 
     def seconds_left(self):
         self.live()
@@ -236,6 +237,7 @@ class PersonalCoordinator:
             code = "PERSONAL_FORENSIC_RECOVERY_UNSUPPORTED" if decision.kind == DecisionKind.FORENSIC_REQUIRED else "PROGRESS_GUARD_STOPPED"
             raise PersonalBlocked(code, "Follow the retained M2 disposition; this minimal backend cannot bypass or automatically replace its forensic/terminal recovery boundary.")
 
+    @historical_operation
     def fresh(self, *, _history_capture=None):
         self.live()
         plan = self.personal.plan
@@ -782,6 +784,7 @@ class PersonalCoordinator:
         self.workers.actual(review, approval=True, accounted=True)
         self.guard.require_approval(self.task_id, self.review_requirement())
 
+    @historical_operation
     def invocation(self, operation="run"):
         require(operation in ("run", "resume", "handoff"), "Unsupported personal invocation")
         if operation == "handoff":
@@ -804,6 +807,7 @@ class PersonalCoordinator:
             "expires_at": self.personal.plan["window"]["expires_at"]}
         return view, "personal-run:" + digest(view)
 
+    @historical_operation
     def run(self, *, reviewed, authorized, operation="run"):
         require(authorized, "Separately approve the exact finite personal invocation")
         _, initial_token = self.invocation(operation)
@@ -852,6 +856,7 @@ class PersonalCoordinator:
                 if observation.stopped is not True:
                     raise PersonalBlocked("WORKER_STOP_UNCONFIRMED", "Retain the original runtime evidence and reconcile its stop before any later work.")
 
+    @historical_operation
     def status(self):
         observed = self.memory.inspect()
         row = self.record()

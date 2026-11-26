@@ -280,3 +280,38 @@ class NetworkExecutionQualification(ExecutionFixture):
         self.assertTrue(self.port._claim_path(self.action_id).exists())
         with self.assertRaises(ADPError):self.port.submit(self.action, provider, plan, auth, dispatch=ticket, admit_objects=refuse)
         with self.assertRaises(ADPError):self.port.prepare_dispatch(self.action_id, self.action)
+
+    def test_partial_immutable_upload_budget_exhaustion_never_cas_or_remint(self):
+        from adp.personal_publication import PersonalPublication
+        with patch.dict(os.environ, {"TZ": "UTC"}):self.prepare()
+        before = self.server.refs()
+        ticket = self.port.prepare_dispatch(self.action_id, self.action)
+        self.conductor.journal.change(lambda e, s, t: e["actions"][self.action_id].update(status="SUBMITTED"))
+        provider, plan, auth = self.policy()
+        original_upload = self.service.upload
+        budget_seen = []
+        def admission(objects, budget):
+            publication = PersonalPublication.__new__(PersonalPublication)
+            publication._write_basis = {"budget": budget}
+            self.assertEqual(publication.admit_objects(objects, budget, provider.adapter), "LOWER_BOUND_FITS")
+            self.assertGreater(len(objects), 1)
+            budget_seen.append(budget)
+        def partial(objects):
+            budget = self.service._budget.get()
+            self.assertIs(budget, budget_seen[0])
+            # Spend actual permitted read requests after lower-bound admission;
+            # do not edit counters, grants, limits or deadlines to simulate it.
+            while budget.calls < budget.maximum_calls - 1:
+                self.assertTrue(self.service.known_commit(self.initial))
+            original_upload(objects)
+        with patch.object(self.service, "upload", side_effect=partial), self.assertRaises(ADPError):
+            self.port.submit(self.action, provider, plan, auth, dispatch=ticket, admit_objects=admission)
+        self.assertEqual(budget_seen[0].calls, budget_seen[0].maximum_calls + 1)  # Includes refused attempt.
+        self.assertEqual(budget_seen[0].transport_calls, budget_seen[0].maximum_calls)
+        self.assertEqual(self.server.refs(), before)
+        self.assertEqual(len(self.server.mutations), 1)
+        self.assertFalse(any(kind == "ref" for kind, _ in self.server.mutations))
+        self.assertEqual(self.port.observe(self.action).status, "UNKNOWN")
+        self.assertTrue(self.port._claim_path(self.action_id).exists())
+        with self.assertRaises(ADPError):self.port.submit(self.action, provider, plan, auth, dispatch=ticket)
+        with self.assertRaises(ADPError):self.port.prepare_dispatch(self.action_id, self.action)

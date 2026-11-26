@@ -143,25 +143,28 @@ class HistoricalConsentTests(unittest.TestCase):
         capture["historical_basis"]["extra"] = "unsupported"
         with self.assertRaises(ADPError):_reader_binding(capture)
 
-    def test_staged_accounting_writer_families_refuse_before_any_effect(self):
+    def test_accounting_writers_bind_existing_consents_without_upgrading_legacy(self):
         from adp.personal_product import PersonalProduct
-        from adp.personal_republication import RevisionPublication
-        from adp.personal_report import PersonalReport
         from adp.personal_track import PersonalTrack
-        c = SimpleNamespace(episode=True)
-        product = SimpleNamespace(c=c)
-        calls = ((PersonalProduct.intent.__wrapped__, (product, "PR"), {"reviewed": "old", "authorized": True,
-                    "authorize_memory": True, "assume_quiescence": True, "confirm_rules": True}),
-            (PersonalProduct.execute.__wrapped__, (product, "REVIEW"), {"reviewed": "old", "authorized": True}),
-            (PersonalProduct.write_authorized, (product,), {}),
-            (PersonalReport.report.__wrapped__, (product,), {"reviewed": "old", "authorized": True,
-                    "authorize_memory": True, "assume_quiescence": True, "confirm_rules": True}),
-            (PersonalTrack.complete.__wrapped__, (product, product), {"reviewed": "old", "authorized": True, "confirm_acceptance": True}),
-            (PersonalTrack.next.__wrapped__.__wrapped__, (product, product, None), {"reviewed": "old", "setup_approval": "old", "authorized": True}),
-            (RevisionPublication, (product,), {}))
-        for call, args, kwargs in calls:
-            with self.subTest(call=call), self.assertRaisesRegex(ADPError, "ACCOUNTING_WRITER_CUTOVER_PENDING"):
-                call(*args, **kwargs)
+        capture = {"historical_basis": {"schema_version": 1, "checkpoint": "a" * 40, "relation_digest": "b" * 64},
+            "historical_engine": "c" * 64}
+        p = PersonalProduct.__new__(PersonalProduct)
+        p.c = SimpleNamespace(episode=True)
+        p.record = lambda: {"schema_version": 2}
+        with patch("adp.personal_recovery.engine_digest", return_value="d" * 64):
+            binding = _reader_binding(capture)
+            self.assertEqual(p.history_binding(capture=capture, view=binding), binding)
+            for k in binding:
+                wrong = {**binding, k: "foreign"}
+                with self.assertRaises(ADPError):p.history_binding(capture=capture, view=wrong)
+            p.record = lambda: {"schema_version": 1}
+            with self.assertRaises(ADPError):p.history_binding(capture=capture, view=binding)
+            view = dict(binding, issued_at=100, expires_at=200, nonce="a" * 32)
+            self.assertTrue(PersonalProduct.token(view, "credential").startswith("product2."))
+            self.assertTrue(PersonalProduct.token({k:v for k,v in view.items() if k not in binding}, "credential").startswith("product1."))
+            track = PersonalTrack.__new__(PersonalTrack);track.c = p.c
+            self.assertEqual(track.next_binding(capture, {**binding, "schema_version": 2}), binding)
+            with self.assertRaises(ADPError):track.next_binding(capture, {**binding, "schema_version": 1})
 
     def test_publication_live_rejects_old_schema_changed_basis_and_reader_before_git(self):
         from adp.personal_publication import PersonalPublication

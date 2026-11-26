@@ -1,5 +1,15 @@
 # Existing H3 historical basis — D2 engineering implementation
 
+> **D4 operator revision (Issue #57):** The historical D1/D2/D3 account
+> below is retained for evidence. Its repeated historical-byte/closed-private-
+> inventory replay, independent closing historical reconstruction, finite-U
+> request predictor and net-negative-LOC intermediate STOP are superseded by
+> the approved [personal trust boundary](../ARCHITECTURE.md#personal-historical-trust-boundary--d4-operator-revision).
+> Full entry/restart authentication remains; mutable current authorization and
+> original budgets remain live. N+1 is a negative lower bound only. This does
+> not release #58, change old grants or authorize any live product effect.
+
+
 Issue #55 implements the independently approved
 [D1 contract](GIT_NATIVE_EVIDENCE_CONTRACT.md). It is a stacked engineering
 change over #54 and frozen PR #52, not installation, migration or runtime

@@ -1,5 +1,15 @@
 # Git-native historical basis and publication cutover contract
 
+> **D4 operator revision (Issue #57):** The historical D1/D2/D3 account
+> below is retained for evidence. Its repeated historical-byte/closed-private-
+> inventory replay, independent closing historical reconstruction, finite-U
+> request predictor and net-negative-LOC intermediate STOP are superseded by
+> the approved [personal trust boundary](../ARCHITECTURE.md#personal-historical-trust-boundary--d4-operator-revision).
+> Full entry/restart authentication remains; mutable current authorization and
+> original budgets remain live. N+1 is a negative lower bound only. This does
+> not release #58, change old grants or authorize any live product effect.
+
+
 Status: selected D1 engineering contract for Issues #53–#57; not integration,
 installation, publication, migration or execution authority. Full qualification
 is Issue #58 and requires a separate operator release.

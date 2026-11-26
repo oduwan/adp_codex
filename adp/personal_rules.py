@@ -51,7 +51,7 @@ def supported_branch(response, branch: str, expected=None):
     return revision
 
 
-def enrollment_rules(read, repository: dict, owner: dict, branch: str, *, expected=None) -> dict:
+def enrollment_rules(read, repository: dict, owner: dict, branch: str) -> dict:
     from .enrollment import branch_rules
     name = repository["name"]
     # Keep ordinary/signed enrollment byte-compatible; opt in here only.
@@ -65,9 +65,6 @@ def enrollment_rules(read, repository: dict, owner: dict, branch: str, *, expect
     path = "/repos/" + name + "/rules/branches/" + quote(branch, safe="")
     result = observations[path]
     unavailable = plan_error(result, path)
-    require(expected is None or expected.get("rules") in ("OBSERVED", "PLAN_UNAVAILABLE")
-            and (unavailable is not None) == (expected["rules"] == "PLAN_UNAVAILABLE"),
-            "UNKNOWN: approved branch rule availability changed")
     if unavailable is not None:
         try:
             identity = private_repository(read, repository, owner)
@@ -84,7 +81,7 @@ def enrollment_rules(read, repository: dict, owner: dict, branch: str, *, expect
     return value
 
 
-def inspect_ref(service, *, writable: bool, _bounded=False):
+def inspect_ref(service, *, writable: bool):
     if not writable:
         repo = service._repository(PERSONAL_REF_QUERY, {"ref": service.target.ref})
         return ref_value(repo, service.target.branch)
@@ -93,9 +90,6 @@ def inspect_ref(service, *, writable: bool, _bounded=False):
     name = target.owner + "/" + target.name
     result = checked(read, name, target.api + "/rules/branches/" + quote(target.branch, safe=""))
     unavailable = plan_error(result, target.api + "/rules/branches/" + quote(target.branch, safe=""))
-    require(not _bounded or service.personal_policy_binding is None
-            or (unavailable is not None) == (service.personal_policy_binding[0] is not None),
-            "UNKNOWN: feature policy availability changed")
     policy = None
     if unavailable is None:
         require(result.status == 200 and result.body == [] and type(result.body) is list

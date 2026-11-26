@@ -50,6 +50,7 @@ class PersonalProductSecurityTests(unittest.TestCase):
         with TemporaryDirectory(prefix="adp-synthetic-retained-") as directory:
             f = PersonalProduct.__new__(PersonalProduct)
             f.c = SimpleNamespace(memory=SimpleNamespace(control=Path(directory)), revision=lambda: "b" * 40)
+            f.service = SimpleNamespace(bounded=lambda **kw: nullcontext())
             f.clock = lambda: 2000
             view = {"operation": "CI", "issued_at": 1000, "expires_at": 1300, "nonce": "a" * 32, "revision": "a" * 40}
             token = f.token(view, "c" * 64)
@@ -71,7 +72,7 @@ class PersonalProductSecurityTests(unittest.TestCase):
         f.record = lambda: row
         f.c = SimpleNamespace(record=lambda: {}, check_administration=lambda row: None, revision=lambda: source)
         f.target = SimpleNamespace(ref="refs/heads/work/task")
-        f.service = SimpleNamespace(bounded=nullcontext, _check_stop=lambda: None, refs=lambda: (Ref(f.target.ref, source),))
+        f.service = SimpleNamespace(bounded=lambda **kw: nullcontext(), _check_stop=lambda: None, refs=lambda: (Ref(f.target.ref, source),))
         f.pull = lambda **kwargs: {"merged": True, "merged_by": {"id": 91}}
         f.port = SimpleNamespace(_value=lambda *args: "e" * 40)
         f.forge = SimpleNamespace(observe=lambda *args, **kwargs: ExternalObservation("PRESENT", "https://github.com/owned/project/pull/10", "f" * 40))
@@ -143,6 +144,7 @@ class PersonalProductSecurityTests(unittest.TestCase):
             self.assertEqual(rows[-1]["head"]["ref"], "work/task")
             forge = GitHubProductForge.__new__(GitHubProductForge)
             forge.repository, forge.transport = "owned/project", Reads()
+            forge.service = SimpleNamespace(bounded=lambda **kw: nullcontext())
             rows = forge.reviews({"number": 10}, "a" * 40)
             self.assertTrue(any(r["state"] == "CHANGES_REQUESTED" for r in rows))
         self.assertTrue(any(path.endswith("page=2") for path in calls))

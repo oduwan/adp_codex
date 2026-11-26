@@ -129,11 +129,17 @@ class TicketArchive:
         require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid()
                 and stat.S_IMODE(info.st_mode) == 0o600 and info.st_size <= MAX_ARTIFACT,
                 "Unsafe private ticket artifact")
-        from .personal_read_frame import ticket_bytes
-        actual = ticket_bytes(path, MAX_ARTIFACT)
-        if actual is not None:
-            return actual
-        return path.read_bytes()
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            actual = os.fstat(fd)
+            require(stat.S_ISREG(actual.st_mode) and actual.st_nlink == 1 and actual.st_uid == os.geteuid()
+                    and stat.S_IMODE(actual.st_mode) == 0o600 and actual.st_size <= MAX_ARTIFACT,
+                    "Unsafe opened private ticket artifact")
+            raw = os.read(fd, MAX_ARTIFACT + 1)
+            require(len(raw) == actual.st_size <= MAX_ARTIFACT, "Truncated or oversized private ticket artifact")
+            return raw
+        finally:
+            os.close(fd)
 
     def _put(self, prefix, value):
         raw = encode(value, MAX_ARTIFACT)
@@ -198,8 +204,6 @@ class TicketArchive:
         validate_identity(identity)
         baseline = self.directory / ("baseline-" + key(identity) + ".json")
         if not baseline.exists():
-            from .personal_read_frame import consumed
-            consumed(baseline)
             return None
         value = json_value(self._read(baseline), MAX_ARTIFACT)
         reference = ORIGINAL + _hash(value)

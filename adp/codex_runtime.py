@@ -128,11 +128,11 @@ class CodexExecRuntime:
 
     def _read(self, request_id):
         path = self._path(request_id)
+        from .personal_read_frame import protected_runtime
+        protected = protected_runtime(self.directory)
         if not path.exists():
-            from .personal_read_frame import consumed
-            consumed(path)
             return None
-        return load_json(path, 32768)
+        return load_json(path, 32768, protected=protected)
 
     def _save(self, request_id, record):
         atomic(self._path(request_id), encode(record, 32768))
@@ -148,11 +148,11 @@ class CodexExecRuntime:
 
     def _stop_receipt(self, request_id, record):
         path = self.directory / (request_id + ".stop.json")
+        from .personal_read_frame import protected_runtime
+        protected = protected_runtime(self.directory)
         if not path.exists():
-            from .personal_read_frame import consumed
-            consumed(path)
             return None
-        observed = load_json(path, 2048)
+        observed = load_json(path, 2048, protected=protected)
         from .schema import fields
         fields(observed, "request_digest pid status stopped cli_exit")
         require(observed["request_digest"] == record["request_digest"] and observed["pid"] == record["pid"]

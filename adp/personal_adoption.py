@@ -49,7 +49,9 @@ def adopted(c, *, historical=False):
             and receipt["original_request"] == m["request"] and receipt["scope_review"] == digest(review)
             and receipt["intent"] == digest(intent) and receipt["manifest"] == m["blueprint"]["material"], "Retained candidate origin changed")
     # Authenticate historical approval without reusing it as future authority.
-    token, body = grant("adoption", digest(intent["payload"]), intent["submitted_at"], intent["approval"])
+    from .personal_history import _historical_grant
+    body = _historical_grant("adoption", digest(intent["payload"]), intent["submitted_at"],
+                             intent["approval"], intent["grant"]["engine"])
     require(intent["grant"] == body and intent["payload"]["episode"] == receipt["episode"], "Candidate copy consent differs")
     for row in receipt["manifest"]:
         observed = read_private(c.personal.state / "adoption-files" / (digest(row["path"]) + ".json"))

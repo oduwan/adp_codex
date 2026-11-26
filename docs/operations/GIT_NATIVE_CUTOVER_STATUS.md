@@ -1,3 +1,85 @@
+# D4 Git-native cutover under the revised personal trust model
+
+The operator explicitly superseded the earlier same-UID historical replay and
+standalone net-negative-line-count gate. The historical5b32 report is retained
+below; its BLOCKED_COMPLEXITY decision is not the current architecture rule.
+This implementation still requires exact-HEAD focused source/security/evidence
+review. No #58 CI/integration, installation or live execution is released.
+
+## Replaced paths and remaining current fences
+
+| Removed or replaced | Existing replacement | Still independently observed |
+| --- | --- | --- |
+| `_Read` entry/body/closing historical reconstruction and `_BOUND_BYTES` inventory mirror | One lexical `qualification` of existing `_active_view`, H3 and protected raw receipts | Every operation/restart performs a cold proof; new child receipts use actual protected opened reads |
+| `_inputs` / `_legacy_inputs` / per-object `storage_context` and `object_inventory` replay | `current_source` per changing request; `historical_source` at batch/pre-CAS boundaries | Current source HEAD/ref/tree/index/worktree/admin/governance, original source seals at batch boundaries |
+| Historical file selector/absence/byte hooks in generic config, runtime, ticket and private readers | Existing protected private loader; personal-scoped protected runtime reads; direct protected ticket FD read | Initial missing/corrupt objects/receipts, metadata/host identity; actual mutable revocation reads |
+| Repeated historical reader digests and pure installed-state reconstruction | Immutable invocation operands from the consumed H3 proof | Fresh canonical Memory, frozen old task/guards/epochs/generation/fixed relation, literal local/remote ancestry |
+| Scenario-specific finite-U prediction, expected-ref/paging and rules-mode forecast plumbing | Existing Budget plus side-effect-free N+1 lower bound | Actual requests still consume the same counter/deadline; partial immutable upload can stop before CAS |
+| Temporary accounting writer gates | Same normal Product/CI/review/correction/REPORT/completion/NEXT bodies with existing-view H3/engine/reader binding | Live M1/M2, exact committed-source review and actual project/native evidence remain mandatory |
+
+No new permanent identity, authority record, store, journal, ref, database,
+service or background process is added. The existing H3 is the single historical
+basis. No ALLOW, current owner or positive permission survives an invocation.
+The scope is reset on normal return and exceptions; another coordinator receives
+its own independent qualification. Copied thread/process contexts refuse reuse.
+
+For publication, the existing post-SUBMITTED dispatch binds one exact current
+canonical subject, consent, claim, service, transport, target and Budget. Every
+POST/CAS rechecks it with one late actual Memory inspection. Post-upload fences
+cannot adopt another checkpoint. All three native M3 authorizations, both full
+batch validations, fresh target/rules, exact expected-old CAS, confirmed stop,
+observation and settlement remain. N+1 fitting is **not** guaranteed completion.
+
+## Existing writer cutover
+
+Accounting publication keeps publish2. The existing Product journal uses schema2
+and product2 tokens for PR/MERGE and CI/REVIEW/CORRECT views. REPORT uses those
+same view/token rules in its existing record. Completion approval is
+personal-completion2; its existing schema2 lineage receipt is retained. NEXT uses
+schema2/personal-next2 in its existing intent. The three common fields are
+historical_basis, historical_engine and reader_engine. Ordinary personal and
+signed-provider formats and external authority rules are unchanged.
+
+Incomplete legacy or changed-reader approvals cannot reserve, dispatch or be
+upgraded automatically. Completed execution results remain literal retained
+observations, not current PASS. Existing effects can be observed; completed NEXT
+can reconnect only to the exact originally attached successor. New NEXT after
+accepted completion uses historical proof even after owner release/expiry; it
+never renews the old grant. Corrected publication reuses the actual publisher,
+with fresh correction binding required at new local admission. Historical
+adoption uses its actual recorded post-H3 engine through the non-issuing decoder;
+copy/issuance remains current-engine and live-authorized.
+
+## Metrics and qualification interpretation
+
+The existing baseline counting rule includes docstrings and all tracked
+adp/*.py. At the current implementation snapshot:100 modules,26333 physical
+lines,23635 code lines,1238 function nodes,248 classes,19395 statements.
+Against frozen13fd this is +123/+136 lines, -2 functions, -1 class and +70
+statements. Final exact-source metrics and per-file deltas belong in the handoff.
+Retained additions implement explicit writer compatibility, protected direct
+receipt reads and live canonical fences; they replace the frame/inventory/
+prediction paths above. More lines alone do not establish simplicity, and lower
+component cost alone does not qualify complete publication.
+
+Old10 frame methods and finite-U prediction assertions included expectations now
+excluded by the operator's revised trust boundary. Their old-source outcomes and
+original inventory denominators are preserved. Current replacements retain live
+source/consent/owner/generation/checkpoint/M2/revocation/claim controls and cold
+receipt/object/permission checks. Malicious same-UID historical mutation within
+an already qualified invocation is RETIRED_MODEL_EXCLUDED, **not security PASS**.
+The test-ID/obligation mapping and actual final selection are reported separately.
+Synthetic seam/component tests do not prove a genuine worker or live GitHub flow.
+
+Full #58 remains NOTRUN / NOT_RELEASED. Complete publication wall time and fit
+remain UNKNOWN until its separately authorized qualification. The old Python3.11
+qualifier's descendant-stop receipt remains UNKNOWN; it was not inspected or
+assumed terminated. All prior failures and rejected reviews remain historical.
+
+---
+
+# Historical5b32 partial handback (superseded decision, retained evidence)
+
 # D4 bounded deletions and complexity stop
 
 Issue #57 follows independently reviewed #54–#56, stacked on frozen PR #52.

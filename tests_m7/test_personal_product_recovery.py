@@ -24,7 +24,7 @@ class PersonalProductRecoveryTests(unittest.TestCase):
         entry = {"view": view, "approval": token, "binding": "c" * 64, "phase": "PREPARED", "checks": [], "result": None, "reservation": None}
         row = {"pull": {"number": 10}, "execution": [entry], "review": None}
         f.record, f.local, f.review_context, f.save = lambda: row, lambda: None, lambda: {}, lambda row: None
-        f.service = SimpleNamespace(bounded=nullcontext)
+        f.service = SimpleNamespace(bounded=lambda **kw: nullcontext())
         f.facts = lambda: {}
         entry["view"]["facts"] = {"base_sha": "f" * 40}
         f.facts = lambda: {"base_sha": "f" * 40}
@@ -60,7 +60,7 @@ class PersonalProductRecoveryTests(unittest.TestCase):
         f.record = lambda: row
         f.c = SimpleNamespace(record=lambda: {}, check_administration=lambda row: None, revision=lambda: source)
         f.target = SimpleNamespace(ref="refs/heads/work/task")
-        f.service = SimpleNamespace(bounded=nullcontext, _check_stop=lambda: None, refs=lambda: (Ref(f.target.ref, source),))
+        f.service = SimpleNamespace(bounded=lambda **kw: nullcontext(), _check_stop=lambda: None, refs=lambda: (Ref(f.target.ref, source),))
         f.pull = lambda **kwargs: {"merged": True, "merged_by": {"id": 91}}
         f.port = SimpleNamespace(_value=lambda *args: "e" * 40)
         f.forge = SimpleNamespace(observe=lambda *args, **kwargs: ExternalObservation("PRESENT", "https://github.com/owned/project/pull/10", "f" * 40))

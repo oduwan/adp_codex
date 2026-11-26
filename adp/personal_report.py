@@ -7,6 +7,7 @@ from datetime import datetime
 import re
 import secrets
 
+from .personal_read_frame import qualified as historical_operation
 from .discovery_github import API, _author, _id, _issue_revision, inferred
 from .discovery_schema import digest, typed
 from .discovery_types import Identity, Issue
@@ -91,8 +92,8 @@ class PersonalReport(PersonalProduct):
         atomic(self.report_path, encode(row, LIMIT))
 
     @network_operation("product.report_preview")
+    @historical_operation
     def report_preview(self, *, approved=None):
-        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: REPORT needs the current reader binding")
         now = self.clock()
         if approved is None:
             issued, expires, nonce = now, min(now + 300, self.personal.plan["window"]["expires_at"]), secrets.token_hex(16)
@@ -108,7 +109,8 @@ class PersonalReport(PersonalProduct):
         with self.service.bounded():
             accepted = track.accepted(identity, transport=self.transport, runtime=self.c.runtime)
             require(accepted is not None, "Only actual accepted completion can produce a product report")
-            seal = self.local()
+            capture = {} if self.c.episode else None
+            seal = self.local(_history_capture=capture)
             facts = self.facts()
             original = self.publication.current_original()
             current, _, _ = track.status(transport=self.transport)
@@ -120,6 +122,7 @@ class PersonalReport(PersonalProduct):
                 + ("\nNext original Issue " + str(current["next_issue"]) + " needs separate scope/window approval."
                     if current["next_issue"] is not None else "\nTrack: " + current["status"] + "."))
             product_text("Product outcome", body)
+            observed = self.c.memory.inspect()
             view = {"operation": "REPORT", "runtime_limits": self.service.limits.values(),
                 "setup": self.personal.intent["approval"], "repository": self.personal.plan["repository"],
                 "revision": self.c.revision(), "source_tree": accepted["tree"], "source_ref": self.target.ref,
@@ -128,8 +131,12 @@ class PersonalReport(PersonalProduct):
                 "review_binding": seal, "original_observation": original,
                 "administration": digest(administration(self.personal.feature)),
                 "policy_assent": ASSENT, "administrative_quiescence_warrant": WARRANT,
-                "merge_envelope": ENVELOPE, "generation": self.c.memory.inspect()["state"]["generation"],
-                "checkpoint": self.c.memory.inspect()["local_head"], "issued_at": issued, "expires_at": expires, "nonce": nonce}
+                "merge_envelope": ENVELOPE, "generation": observed["state"]["generation"],
+                "checkpoint": observed["local_head"], "issued_at": issued, "expires_at": expires, "nonce": nonce}
+            if capture is not None:
+                from .personal_episode import same_observation
+                same_observation(capture["subject"], observed)
+                view.update(self.history_binding(capture=capture))
             return {"status": "REPORT_PROPOSED", "result": view, "approval": self.token(view, self.transport.credential_binding),
                 "binding": self.transport.credential_binding}
 
@@ -142,6 +149,7 @@ class PersonalReport(PersonalProduct):
                 "Current exact accepted completion and M3 authority required")
 
     @network_operation("product.report_observation")
+    @historical_operation
     def observed_report(self, row):
         bind_consent(row["view"])
         owner = owned_repository(self.read, self.forge.repository, self.personal.repository_id)
@@ -178,8 +186,8 @@ class PersonalReport(PersonalProduct):
         return observed, comment
 
     @network_operation("product.report")
+    @historical_operation
     def report(self, *, reviewed, authorized, authorize_memory, assume_quiescence, confirm_rules):
-        require(not self.c.episode, "ACCOUNTING_WRITER_CUTOVER_PENDING: observe original REPORT only")
         require(authorized is True and authorize_memory is True and assume_quiescence is True and confirm_rules is True,
                 "Separate exact REPORT, memory, rules and administrative-quiescence approvals required")
         self.c.live()
@@ -197,6 +205,7 @@ class PersonalReport(PersonalProduct):
             require(row["approval"] == reviewed, "Only the original report may reconcile")
             bind_consent(row["view"])
             self.active = row
+            self.history_binding(view=row["view"])
             actions = self.journal.inspect()["state"]["execution"]["actions"]
             if row["action"] not in actions:
                 self.live(genuine=True)
@@ -234,7 +243,9 @@ class PersonalReport(PersonalProduct):
                     effect = self.proof("execution/effect", digest({"id": row["action"], "plan": digest(plan), "payload": payload}),
                         "effect", {"id": row["action"], "plan": digest(plan), "payload": payload})
                     self._policy_final = lambda: provider.decide(plan, authorization).effect == Effect.ALLOW
-                self._writing = row["action"]
+                from .personal_read_frame import current_source
+                self._writing = (row["action"], {**action, "status": "SUBMITTED"},
+                                 current_source(self, row, product=True), self.c.memory.inspect())
                 try:
                     self.forge.submit(row["action"], Operation.REPORT, payload, authorization=effect,
                         plan_digest=digest(plan), dispatch=dispatch, validate=self.final_boundary)

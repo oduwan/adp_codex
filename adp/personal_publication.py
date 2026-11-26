@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import secrets
 
+from .personal_read_frame import qualified as historical_operation
 from .config import Config
 from .discovery_github import GitHubDiscoveryAdapter
 from .discovery_schema import digest, typed
@@ -47,22 +48,19 @@ class OriginalRead:
     """
     SUFFIXES = ("comments", "timeline", "dependencies/blocked_by", "sub_issues")
 
-    def __init__(self, transport, base, *, additional=(), expected=None):
+    def __init__(self, transport, base, *, additional=()):
         self.transport, self.base, self.observed = transport, base, {}
-        self.expected = dict(expected) if expected is not None else None
         self.bases = (base, *additional)
         require(type(additional) is tuple and 1 <= len(self.bases) <= 8
                 and len(set(self.bases)) == len(self.bases), "Bounded unique original observations required")
 
     def get(self, path):
-        require(self.expected is None or path in self.expected, "UNKNOWN: original-ticket paging exceeded its approved paths")
         response = self.transport.get(path)
         if any(path == base or any(path.startswith(base + "/" + suffix + "?") for suffix in self.SUFFIXES)
                for base in self.bases):
             require(response.status == 200, "Complete current original-ticket evidence required")
             observed = digest({"body": response.body,
                 "pagination": [(k.lower(), v) for k, v in response.headers if k.lower() == "link"]})
-            require(self.expected is None or observed == self.expected[path], "UNKNOWN: original-ticket evidence changed")
             require(path not in self.observed or self.observed[path] == observed, "Original-ticket evidence changed during observation")
             self.observed[path] = observed
             require(len(self.observed) <= 81, "Original-ticket evidence exceeds accepted paging bounds")
@@ -200,9 +198,9 @@ class PersonalPublication:
             for number in sorted(o.issue.number for o in self.c.track.originals.values())
             if number != self.personal.plan["issue"]))
 
-    def current_original(self, *, expected=None):
+    def current_original(self):
         bases = self.original_bases()
-        capture = OriginalRead(self.read, bases[0], additional=bases[1:], expected=expected)
+        capture = OriginalRead(self.read, bases[0], additional=bases[1:])
         observer = GitHubDiscoveryAdapter(self.personal.plan["repository"]["name"], capture,
             max_requests=self.service.limits.request_limit, clock=self.clock)
         observer._halt, observer._requests, observer._coverage_items, observer._now = False, 0, [], self.clock()
@@ -230,13 +228,13 @@ class PersonalPublication:
         try:
             retained = self.record()
             self.service.personal_policy_binding = ((retained["view"].get("plan_policy"),) if retained is not None else None)
-            bounded = self.c.episode and retained is not None and retained["schema_version"] == 2
-            return self.service.inspect_ref(writable=True, **({"_bounded_personal": True} if bounded else {}))
+            return self.service.inspect_ref(writable=True)
         except (ADPError, OSError):
             raise PersonalBlocked("FEATURE_POLICY_UNVERIFIED",
                 "Verify current owner/admin access, exact feature ref and protections. A private plan-disabled fallback requires supported unprotected branch evidence, exact classic-plan evidence and separate operation assent. Other unknown or constrained refs remain blocked; never retry an uncertain write.") from None
 
     @network_operation("publication.proposed")
+    @historical_operation
     def proposed(self, approved=None):
         now = self.clock()
         if approved is None:
@@ -291,6 +289,7 @@ class PersonalPublication:
             return view, token, binding
 
     @network_operation("publication.preview")
+    @historical_operation
     def preview(self):
         if self.record() is not None:
             return {"status": "PUBLICATION_INTENT_EXISTS", "result": self.status(), "approval": None}
@@ -298,6 +297,7 @@ class PersonalPublication:
         return {"status": "PUBLICATION_PROPOSED", "result": view, "approval": token}
 
     @measured("publication.live")
+    @historical_operation
     def live(self, *, review=True, _capture=None):
         from .personal_read_frame import forbid_writes, publication_live
         if not review:
@@ -338,26 +338,19 @@ class PersonalPublication:
         from .personal_read_frame import forbid_writes
         forbid_writes()
         if self.c.episode:
-            from .personal_read_frame import _identity, _inputs, _legacy_inputs
-            from .personal_history_git import object_inventory, storage_context
+            from .personal_read_frame import _CURRENT, _identity, current_source
             from .personal_episode import same_observation
             basis = self._write_basis
-            require(self._dispatching and basis is not None and _identity(self.c) == basis["identity"]
+            require(self._dispatching and basis is not None and _CURRENT.get() is not None
+                    and _CURRENT.get() is basis["invocation"] and _identity(self.c) == basis["identity"]
                     and basis["service"] is self.service and basis["transport"] is self.transport
                     and self.service.target == self.target == basis["target"] and self.port.service is self.service,
                     "Exact invocation-local publication subject required")
-            # Every operand is read now. No live/history/Guard/journal callback
-            # or network request is hidden in these bounded input readers.
-            require((*_inputs(self, basis["subject"], product=False), _legacy_inputs(self.c, basis["archive"][0])) == basis["inputs"],
-                    "Current source, private evidence or credential changed")
-            for remote, context, objects in basis["historical_objects"]:
-                require(storage_context(self.c.memory, remote=remote) == context
-                        and object_inventory(self.c.memory, [o[0] for o in objects], remote=remote) == objects
-                        and storage_context(self.c.memory, remote=remote) == context,
-                        "Actual historical object binding changed")
+            row = self.record(_observed=basis["subject"])
+            require(row == basis["consent"], "Current publication intent changed")
+            require(current_source(self, row) == basis["source_admin"], "Current source administration changed")
             observed = self.c.memory.inspect()  # One late actual canonical observation.
             same_observation(basis["subject"], observed)
-            row = basis["inputs"][1]
             task = observed["tasks"][key(self.c.task_id)]
             item = self.guard._get(observed["state"], task, row["requirement"])
             permit = typed(Permit, row["reservation"]["permit"])
@@ -378,9 +371,10 @@ class PersonalPublication:
                     and budget.request_seconds <= basis["caps"][1] and budget.maximum_calls <= basis["caps"][2],
                     "Original request/operation budget changed")
             self.c.episode_fence()
+            require(self.transport.credential_binding == row["credential_binding"], "Publication credential changed")
             now = self.guard._now()
-            require(active["started"] <= now < active["deadline"] and row["view"]["issued_at"] <= now < row["view"]["expires_at"]
-                    and self.transport.credential_binding == row["credential_binding"], "Publication consent or credential expired")
+            require(active["started"] <= now < active["deadline"] and row["view"]["issued_at"] <= now < row["view"]["expires_at"],
+                    "Publication consent or permit expired")
             budget.check()
             return True
         # Full genuine review is performed at both batch boundaries. Recheck
@@ -419,31 +413,32 @@ class PersonalPublication:
             # repository inventory inside the unchanged CAS request budget.
             prerequisites = self.c.track.publication_prerequisites()
         expected_original = self.record()["view"]["original_observation"]
-        require((self.current_original(expected=expected_original) if capture is not None else self.current_original())
-                == expected_original, "Original-ticket scope or native evidence changed")
-        require([enrollment_rules(self.read, p["repository"], p["owner"], item["ref"].removeprefix("refs/heads/"),
-                    **({"expected": item} if capture is not None else {}))
+        require(self.current_original() == expected_original, "Original-ticket scope or native evidence changed")
+        require([enrollment_rules(self.read, p["repository"], p["owner"], item["ref"].removeprefix("refs/heads/"))
                 for item in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")
         require(self.remote() == self.record()["view"]["expected_old"], "Remote authority or exact ref changed before CAS")
         if capture is not None:
-            from .personal_read_frame import _inputs, _legacy_inputs
+            from .personal_read_frame import _CURRENT, current_source
             from .personal_episode import same_observation
-            require((*_inputs(self, capture["subject"], product=False), _legacy_inputs(self.c, capture["archive"][0])) == capture["inputs"],
-                    "Publication subject changed after closing proof")
+            from .personal_read_frame import historical_source
+            source_admin = current_source(self, capture["consent"])
+            require(source_admin == capture["source_admin"], "Source administration changed after closing observation")
             actual = self.c.memory.inspect()
             same_observation(capture["subject"], actual)
+            historical_source(self.c, capture["archive"][0], actual)
             if self._write_basis is not None:
                 same_observation(self._write_basis["subject"], actual)
-                require(capture["inputs"] == self._write_basis["inputs"]
+                require(capture["consent"] == self._write_basis["consent"]
                         and capture["identity"] == self._write_basis["identity"]
-                        and capture["historical_objects"] == self._write_basis["historical_objects"],
+                        and source_admin == self._write_basis["source_admin"],
                         "Post-upload validation cannot adopt changed inputs")
             else:
                 budget = self.service._budget.get()
                 require(budget is not None, "Original publication budget required")
-                capture.update(subject=actual, service=self.service, transport=self.transport, target=self.target,
-                    budget=budget, caps=(budget.end, budget.request_seconds, budget.maximum_calls), prerequisites=prerequisites)
-                self._write_basis = capture
+                self._write_basis = dict(subject=actual, consent=capture["consent"], identity=capture["identity"],
+                    source_admin=source_admin,
+                    invocation=_CURRENT.get(), service=self.service, transport=self.transport, target=self.target,
+                    budget=budget, caps=(budget.end, budget.request_seconds, budget.maximum_calls))
 
     @measured("publication.count_admission")
     def admit_objects(self, objects, budget, adapter):
@@ -454,35 +449,7 @@ class PersonalPublication:
         remaining, count = budget.maximum_calls - budget.calls, len(objects)
         if count + 1 > remaining:
             raise PersonalBlocked("PUBLICATION_REQUEST_COUNT_INSUFFICIENT", "Object POSTs plus CAS exceed the original remaining budget; no upload started.")
-        from .personal_authority import PersonalAuthority
-        from .personal_episode import EpisodeState
-        from .personal_runner import PersonalCoordinator
-        from .personal_track import PersonalTrack
-        from .personal_workers import PersonalWorkers
-        from .codex_runtime import CodexExecRuntime
-        track, p = self.c.track, self.personal
-        row = basis["inputs"][1]
-        refs = getattr(adapter, "_publication_expected_refs", None)
-        links = [name for name in basis["inputs"][2] if track is not None and Path(name).parent == track.root / "links"]
-        local_only = (type(self) is PersonalPublication and type(self.c) is PersonalCoordinator
-            and type(p) is EpisodeState and type(track) is PersonalTrack
-            and type(self.c.authority) is PersonalAuthority and type(self.c.workers) is PersonalWorkers
-            and type(self.c.runtime) is CodexExecRuntime
-            and p.plan["issue"] == 1 and not p.plan["native_prerequisites"] and basis["prerequisites"] == ()
-            and track.index["first"] == str(p.root.directory) and track.link["parent"] is None
-            and track.link["identity"] == p.root.intent["original"]["identity"]
-            and links == [str(track.root / "links" / (digest(track.link["identity"]) + ".json"))]
-            and getattr(self.c, "product", None) is None)
-        modes = {"OBSERVED": 2, "PLAN_UNAVAILABLE": 5}
-        tail = None
-        if local_only and refs is not None and all(r["rules"] in modes for r in p.plan["branch_rules"]):
-            graph = sum(max(1, sum(r.name.startswith(prefix) for r in refs)) for prefix in ("refs/heads/", "refs/tags/"))
-            remote, inspect = (6, 3) if row["view"].get("plan_policy") is None else (11, 8)
-            tail = (graph + len(row["view"]["original_observation"]) + len(self.original_bases())
-                + sum(modes[r["rules"]] for r in p.plan["branch_rules"]) + remote * 2 + inspect + 2)
-        if tail is None or count + tail > remaining:
-            raise PersonalBlocked("PUBLICATION_REQUEST_COUNT_UNKNOWN", "The complete remaining read/CAS/settlement envelope is unproved within the original budget; no upload started.")
-        return "COUNT_FEASIBLE"  # Never an authorization or wall-time guarantee.
+        return "LOWER_BOUND_FITS"  # Remaining GETs still consume the same Budget.
 
     def rules(self):
         return Rules(permissions=(Permission(Operation.PUSH, Effect.ALLOW),), reviews=1,
@@ -622,7 +589,6 @@ class PersonalPublication:
         plan = provider.plan(task, Request(Operation.PUSH))
         if self.c.episode:
             require(digest(snapshot) == plan.snapshot_digest, "UNKNOWN: actual publication snapshot changed")
-            adapter._publication_expected_refs = tuple(snapshot.remote_refs)
         authorization = Authorization(self.proof("policy/operation", PolicyProvider.authorization_subject(plan), "operation", data(plan)))
         require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Actual M3 refused publication")
         return provider, plan, authorization
@@ -662,6 +628,7 @@ class PersonalPublication:
             "ref": self.target.ref, "revision": observation.revision, "product_acceptance": "NOT_ACCEPTED", "other_external_rights": "NOT_DELEGATED"}
 
     @network_operation("publication.publish")
+    @historical_operation
     def publish(self, *, reviewed, authorized, assume_quiescence, confirm_project_rules, accept_plan_unavailable=False):
         require(authorized is True and assume_quiescence is True and confirm_project_rules is True,
                 "Separately confirm the exact publication, project rules and finite quiescence warrant")
@@ -718,6 +685,7 @@ class PersonalPublication:
                 return self.settle(result)
 
     @network_operation("publication.status")
+    @historical_operation
     def status(self):
         row = self.record()
         if row is None:

@@ -175,30 +175,30 @@ or pending transaction. No positive decision is cached across callbacks. Raw
 receipts, source, administration, host, consent and Git protections remain
 freshly verified; the existing operation deadlines and request caps still apply.
 
-One episode-only `Publication.live(review=True)` computation also uses a private
-synchronous read frame to prevent repeated expansion of that same history
-through nested review/Guard checks. It performs a full actual active/archival
-proof, one complete original semantic check, and an independent full closing
-proof with no subsequent semantic body. A protected bounded input seal before
-the body and after closing compares the exact consent, current run/worker rows,
-child runtime/stop/progress/adoption inputs, source/index/ref/admin/governance
-and credentials without repeating authority checks. Changed inputs refuse.
-The semantic result must exactly equal the actual final sealed consent (or its
-product view); the final expiry check uses that matched consent's own window.
-Every nested factual lookup still reads current canonical ownership,
-state/tasks/inbox and checks time/revocation. Defensive copies prevent a reader
-from modifying the retained inputs. The frame is bound to the exact objects,
-process and thread, is destroyed on exceptions, and never crosses a callback,
-checkpoint or native effect. Verification resolves an already admitted exact
-episode gate; it cannot mint evidence or create/repair a baseline. Canonical
-mutation/inbox recovery and admission fences refuse while a frame is active.
-Per-object `write_authorized`, ordinary/signed behavior, M3 reauthorization and
-all fixed budgets remain unchanged. No ALLOW or operation authority is cached.
-The same closed pattern applies to one local `Product.live(genuine=False)`
-read, binding the entire active consent, credential binding, action and
-reservation and copying the result to prevent mutable-view aliasing. Its final
-own operation expiry is checked at actual current time. Genuine/native reads
-and product write authorization explicitly use the original unframed checks.
+The revised D4 personal trust boundary replaces the old synchronous byte-replay
+frame. An authorized invocation qualifies H0→H1→H2→H3 and protected historical
+receipts once. Only immutable original facts and the verified installed H3 are
+reused within that invocation; return, exception and restart discard them.
+Malicious same-UID historical-file changes during that invocation are outside
+this approved model, not a passing security control. Missing/corrupt evidence
+before entry or restart still refuses. Actual personal runtime receipt reads
+retain owned/protected file and directory checks, including new child receipts.
+
+Every historical projection obtains fresh canonical Memory and verifies frozen
+parent/task/guard/epoch/generation/fixed-relation and literal ancestry. Local
+semantic reads retain independent current source/administration and canonical
+opening/closing observations, exact consent equality, final expiry and their
+read-only mutation barrier. The cold history reader can use its preexisting
+read-only native observations; it gains no dispatch, grant or mutation authority.
+
+Publication's existing one-use dispatch holds only current comparison operands.
+Each changing request checks source HEAD/ref/tree, clean status/index flags,
+Git administration/governance/credentials, exact SUBMITTED intent/claim,
+current M1/M2 and revocation plus the same original Budget. Original historical
+working-source seals remain fresh at batch/pre-CAS boundaries. No historical
+Git-object byte replay or closed private-file inventory is retained per object.
+See [the cutover record](GIT_NATIVE_CUTOVER_STATUS.md) for writer compatibility
+and the distinction between focused evidence and unreleased #58 qualification.
 
 Episode memory retains the exact accepted `Memory` type and inherited current
 inspection/ownership/remote/status/layout/inbox/recovery/CAS behavior. A private,
@@ -211,51 +211,17 @@ memoized. Larger inventories use the original reader. Missing, corrupt or
 malformed input refuses. Ordinary and signed memory factories never select
 this optimization.
 
-The accounting-only historical Git reader batches each command's actual pin
-queries and may retain bounded decoded immutable commit facts. Every reuse
-rehashes the actual HEAD commit and complete retained tree/blob closure, then
-re-evaluates current symbolic source, action and ancestry. Configuration,
-physical administration, replacement refs and all authority stay fresh. It
-caches neither PRESENT nor ALLOW and cannot submit Git effects. Unsupported
-optimization envelopes use the unchanged native observer; missing or corrupt
-objects refuse. Other personal and signed Git execution paths are unchanged.
+The historical Git reader is stateless: it uses the native observer and actual
+bounded immutable commit/tree/blob verification, with explicit literal object
+interpretation and current HEAD/ref/physical closing checks. No decoded commit
+facts or PRESENT/ALLOW verdict is kept across calls. Unsupported framing uses
+the original observer; missing/corrupt objects refuse. Ordinary and signed Git
+execution keep their existing default interpretation.
 
 The engineering tests use synthetic receipts/disposable repositories. Genuine
 M8 execution, live archival application, installation, adoption, acceptance,
 merge and advancement remain **NOT_AUTHORIZED / ON HOLD** pending separate
 operator integration and live decisions.
-
-The private synchronous publication/product read frame binds every actual JSON
-proof consumed by the unchanged validators to its pre-body byte/presence seal.
-It inventories bounded protected personal/runtime/track roots before observation;
-unlisted present inputs, changed optional absence, incomplete reads and
-unprotected runtime files refuse. The hook reads real bytes and parses them
-normally, supplies no cached data, and is inactive outside this frame. Current
-M1 owner/ref/control reads remain fresh and outside these proof roots. Actual
-HEAD/tree/ref, clean status, administration, governance and credentials must
-already match the approved consent at both seals. Independent full historical
-proof follows the single semantic body; no later body can replace a proof only
-during validation. Native/write/reauthorization gates remain unframed.
-
-Both full historical proofs use a separate deny-only actual-byte binding, with
-factual shortcuts disabled. Each proof's private inputs are frozen before that
-proof, including the selected immutable ticket archive. Artifact reads retain
-the archive's existing 1 MiB/64-file/16 MiB bounds; other private proof bytes
-have a separate 8 MiB envelope, with bounded entry/depth traversal. Original
-full/outside/checkout source must still equal the historical master seals; old
-physical identities remain bound to the original plan/run. Each input seal
-compares the exact actual mutable Git-administration snapshot already validated
-by its full proof, preserving the existing allowed-ref rules. The engine source
-is rechecked too. These are finite read-consistency checks, not an atomic
-filesystem snapshot; all later current authority/effect fences still apply.
-
-Private proof readers refuse undeclared pointers while this binding is active.
-The closed input set includes the exact per-original enrollment marker paths.
-Actual optional presence and selected JSON name sets are compared as well as
-bytes, so hiding a file cannot bypass its parser. Later completion observations
-bind directory/setup to the already qualified deterministic coordinator before
-following receipts. Direct current-M1 reads and ordinary/signed paths retain
-their existing native checks; no remembered filesystem answer is returned.
 
 Accounting inspections also batch only fresh native registration queries. Normal
 HEAD remains observed after layout; final actual status stays after blob reads.

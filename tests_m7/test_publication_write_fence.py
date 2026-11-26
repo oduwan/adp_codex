@@ -76,8 +76,12 @@ class PublicationWriteFenceTests(unittest.TestCase):
             _claim=lambda *args: self.claim)
         self.legacy = {"immutable": "authenticated-at-entry"}
         patch("adp.personal_read_frame._identity", return_value=("same-serialized-invocation",)).start()
-        patch("adp.personal_read_frame._inputs", side_effect=lambda *a, **k: self.inputs()).start()
-        patch("adp.personal_read_frame._legacy_inputs", side_effect=lambda *a: deepcopy(self.legacy)).start()
+        patch("adp.personal_read_frame.current_source", side_effect=lambda *a, **k:
+            require(self.seal == "actual-inputs", "Current source changed")).start()
+        from adp.personal_read_frame import _CURRENT
+        self.invocation = {"c": self.c}
+        token = _CURRENT.set(self.invocation);self.addCleanup(_CURRENT.reset, token)
+        self.p.record = lambda **kw: deepcopy(self.row)
         patch("adp.personal_history._archived_view", side_effect=AssertionError("No archived semantic replay")).start()
         patch("adp.personal_history_git.storage_context", return_value=("actual-pinned-context",)).start()
         patch("adp.personal_history_git.object_inventory", return_value=(("1" * 40, "commit", 10),)).start()
@@ -92,7 +96,7 @@ class PublicationWriteFenceTests(unittest.TestCase):
 
     def seed(self, budget):
         self.p._write_basis = {"identity": ("same-serialized-invocation",), "service": self.service, "transport": self.transport,
-            "target": self.target, "inputs": (*self.inputs(), deepcopy(self.legacy)), "subject": deepcopy(self.snapshot),
+            "target": self.target, "consent": deepcopy(self.row), "invocation": self.invocation, "subject": deepcopy(self.snapshot), "source_admin": None,
             "archive": ({"historical": "not-replayed"},), "budget": budget,
             "caps": (budget.end, budget.request_seconds, budget.maximum_calls),
             "historical_objects": ((False, ("actual-pinned-context",), (("1" * 40, "commit", 10),)),)}
@@ -145,13 +149,13 @@ class PublicationWriteFenceTests(unittest.TestCase):
             self.snapshot = original
 
     def test_claim_private_source_revocation_and_credential_drift_refuse_before_child(self):
-        for kind in ("claim", "source", "private", "revocation", "credential", "deadline", "clock-rollback"):
+        for kind in ("claim", "source", "intent", "revocation", "credential", "deadline", "clock-rollback"):
             with self.service.bounded() as budget:
                 self.seed(budget)
                 before = len(self.http_calls)
                 if kind == "claim":atomic(self.claim_path, encode({"intent": "foreign"}))
                 if kind == "source":self.seal = "changed-actual-source"
-                if kind == "private":self.legacy["immutable"] = "changed-private-receipt"
+                if kind == "intent":self.row["view"]["expires_at"] = 191
                 if kind == "revocation":self.revoked = True
                 if kind == "credential":self.actor = {"uid": 1002}
                 if kind == "deadline":self.now = 180
@@ -159,7 +163,7 @@ class PublicationWriteFenceTests(unittest.TestCase):
                 with self.assertRaises((ADPError, OSError)):self.blob()
                 self.assertEqual(len(self.http_calls), before)
             atomic(self.claim_path, encode(self.claim)); self.seal = "actual-inputs"
-            self.legacy = {"immutable": "authenticated-at-entry"}; self.revoked = False; self.now = 100
+            self.row["view"]["expires_at"] = 190; self.revoked = False; self.now = 100
             self.actor = self.transport._context
 
     def test_old_stop_marker_and_expired_or_exhausted_budget_never_launch(self):
@@ -189,11 +193,11 @@ class NegativeReadEnvelopeTests(unittest.TestCase):
         root = "/repos/owned/disposable/issues/1"
         transport = SimpleNamespace(get=Mock(return_value=Response(200, {"original": True})))
         expected = {root: digest({"body": {"original": True}, "pagination": []})}
-        reader = OriginalRead(transport, root, expected=expected)
+        reader = OriginalRead(transport, root)
         self.assertEqual(reader.get(root).status, 200)
         before = transport.get.call_count
-        with self.assertRaises(ADPError):reader.get(root + "/comments?per_page=100&page=2")
-        self.assertEqual(transport.get.call_count, before)
+        self.assertEqual(reader.get(root + "/comments?per_page=100&page=2").status, 200)
+        self.assertEqual(transport.get.call_count, before + 1)
         transport.get.return_value = Response(200, {"original": "changed"})
         with self.assertRaises(ADPError):reader.get(root)
 
@@ -212,75 +216,48 @@ class NegativeReadEnvelopeTests(unittest.TestCase):
     def test_fresh_refs_complete_and_empty_or_unknown_paging_fail_within_bound(self):
         expected = (Ref("refs/heads/one", "a" * 40), Ref("refs/heads/two", "a" * 40))
         service = self.service([self.page(["one"], more=True, cursor="1"), self.page(["two"]), self.page([], prefix="refs/tags/")])
-        self.assertEqual(service.refs(expected=expected), expected)
+        self.assertEqual(service.refs(), expected)
         self.assertEqual(service._repository.call_count, 3)  # max(1,2)+max(1,0)
-        for pages in ([self.page([], more=True, cursor="new")], [self.page(["foreign"])],
-                [self.page(["one", "two"], more=True, cursor="extra")],
-                [self.page(["one"]), self.page([], prefix="refs/tags/")]):
+        for pages in ([self.page(["one"], more=True, cursor="1"), self.page(["two"], more=True, cursor="1")],
+                [self.page(["one", "one"])], [{"nodes": [], "pageInfo": {}}]):
             service = self.service(pages)
-            with self.assertRaises(ADPError):service.refs(expected=expected)
+            with self.assertRaises(ADPError):service.refs()
             self.assertLessEqual(service._repository.call_count, 3)
 
     def test_request_count_lower_bound_unknown_and_supported_tail_do_not_charge_or_renew(self):
-        from adp.codex_runtime import CodexExecRuntime
-        from adp.personal_authority import PersonalAuthority
-        from adp.personal_episode import EpisodeState
-        from adp.personal_runner import PersonalCoordinator
-        from adp.personal_storage import PersonalBlocked
-        from adp.personal_track import PersonalTrack
-        from adp.personal_workers import PersonalWorkers
         from adp.runtime_limits import Budget
+        from adp.personal_storage import PersonalBlocked
         p = PersonalPublication.__new__(PersonalPublication)
-        c = PersonalCoordinator.__new__(PersonalCoordinator)
-        c.authority, c.runtime, c.workers = (cls.__new__(cls) for cls in (PersonalAuthority, CodexExecRuntime, PersonalWorkers))
-        track = PersonalTrack.__new__(PersonalTrack)
-        track.root = Path("/synthetic/track")
-        identity = {"repository_id": "opaque", "issue_id": "original"}
-        root = SimpleNamespace(directory=Path("/synthetic/root"), intent={"original": {"identity": identity}})
-        plan = {"issue": 1, "native_prerequisites": [], "branch_rules": [{"rules": "OBSERVED"}]}
-        p.personal = EpisodeState(Path("/synthetic/episode"), {"plan": plan}, root, {})
-        track.index, track.link = {"first": str(root.directory)}, {"parent": None, "identity": identity}
-        c.track, p.c = track, c
-        p.original_bases = lambda: ("/repos/owned/disposable/issues/1",)
-        row = {"view": {"original_observation": {str(i): "a" * 64 for i in range(5)}}}
-        readset = {str(track.root / "links" / (digest(identity) + ".json")): "b" * 64}
         budget = Budget(time.monotonic() + 150)
-        p._write_basis = {"budget": budget, "inputs": (None, row, readset), "prerequisites": ()}
-        adapter = SimpleNamespace(_publication_expected_refs=(Ref("refs/heads/trunk", "c" * 40),))
+        p._write_basis = {"budget": budget}
         initial = (budget.end, budget.calls, budget.maximum_calls)
-        self.assertEqual(p.admit_objects((None, None), budget, adapter), "COUNT_FEASIBLE")
-        self.assertEqual((budget.end, budget.calls, budget.maximum_calls), initial)
-        for count, calls, mode in ((512, 0, "INSUFFICIENT"), (2, 108, "UNKNOWN"), (127, 0, "UNKNOWN")):
+        for count in (0, 2, 127):
+            self.assertEqual(p.admit_objects((None,) * count, budget, object()), "LOWER_BOUND_FITS")
+            self.assertEqual((budget.end, budget.calls, budget.maximum_calls), initial)
+        for count, calls in ((128, 0), (512, 0), (2, 126)):
             budget.calls = calls
             before = (budget.end, budget.calls, budget.maximum_calls)
-            with self.assertRaises(PersonalBlocked) as error:p.admit_objects((None,) * count, budget, adapter)
-            self.assertTrue(error.exception.reason.endswith(mode))
+            with self.assertRaises(PersonalBlocked) as error:p.admit_objects((None,) * count, budget, object())
+            self.assertTrue(error.exception.reason.endswith("INSUFFICIENT"))
             self.assertEqual((budget.end, budget.calls, budget.maximum_calls), before)
-        budget.calls = 0
-        c.authority = SimpleNamespace()  # Unclassified external authority: never assume M=0.
-        with self.assertRaises(PersonalBlocked) as error:p.admit_objects((), budget, adapter)
-        self.assertTrue(error.exception.reason.endswith("UNKNOWN"))
 
     def test_mode_envelope_is_fresh_scoped_and_never_turns_a_403_into_absence(self):
         from test_personal_rules import Native
         from adp.personal_rules import enrollment_rules
         f = Native()
         f.service.personal_policy_binding = (None,)  # Previously approved normal mode.
-        with self.assertRaises(ADPError):f.service.inspect_ref(writable=True, _bounded_personal=True)
-        self.assertEqual(len(f.calls), 1)  # Refuses before plan-disabled fallback reads.
-        f.calls.clear()
         with self.assertRaises(ADPError):f.service.inspect_ref(writable=True)
         self.assertGreater(len(f.calls), 1)  # Ordinary v1 observation path is preserved.
         f = Native()
-        with self.assertRaises(ADPError):enrollment_rules(f, f.repository, f.owner, "trunk", expected={"rules": "OBSERVED"})
-        self.assertEqual(len(f.calls), 2)
+        observed = enrollment_rules(f, f.repository, f.owner, "trunk")
+        self.assertNotEqual(observed["rules"], "UNKNOWN")
         f = Native(); f.service.inspect_ref(writable=True)
         policy = deepcopy(f.service.personal_policy)
         f.service.personal_policy_binding = (policy,); f.calls.clear()
-        self.assertIsNotNone(f.service.inspect_ref(writable=True, _bounded_personal=True))
+        self.assertIsNotNone(f.service.inspect_ref(writable=True))
         self.assertLessEqual(len(f.calls), 8)
         f = Native(); f.service.personal_policy_binding = (None,)
         path = f.prefix + "/rules/branches/work%2Ftask"
         f.entries[path] = Response(403, {"message": "Access denied"})
-        with self.assertRaises(ADPError):f.service.inspect_ref(writable=True, _bounded_personal=True)
-        self.assertEqual(len(f.calls), 1)
+        with self.assertRaises(ADPError):f.service.inspect_ref(writable=True)
+        self.assertGreaterEqual(len(f.calls), 1)

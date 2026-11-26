@@ -21,7 +21,7 @@ def _historical_grant(stage, subject, now, token, engine):
     fingerprint(engine); fingerprint(subject)
     require(type(token) is str, "Original historical consent is missing")
     parts = token.split(":")
-    require(stage in ("guard", "result", "episode", "reconcile-guard", "reconcile-result")
+    require(stage in ("guard", "result", "episode", "reconcile-guard", "reconcile-result", "adoption")
             and len(parts) == 6 and parts[:2] == ["ae1", stage], "Wrong historical consent purpose")
     try:
         issued, expires, nonce = int(parts[2]), int(parts[3]), parts[4]
@@ -69,7 +69,7 @@ def _anchor(root, memory, descriptor, master, receipt):
     objects = verify(memory, [receipt["result"], activation["checkpoint"]],
         [(master["result_state"], master["result_tasks"]), installed])
     for remote, _, _ in objects:
-        git(memory.pinned_local_remote if remote else memory.config.root, "merge-base", "--is-ancestor",
+        git(memory.pinned_local_remote if remote else memory.config.root, "--no-replace-objects", "merge-base", "--is-ancestor",
             activation["checkpoint"], current["remote_head" if remote else "local_head"])
     fingerprint(master["engine"])
     require(master["engine"] == descriptor["base"]["engine"], "Original descriptor and archive engines differ")
@@ -79,13 +79,38 @@ def _anchor(root, memory, descriptor, master, receipt):
 
 def _reader_binding(capture):
     """Project a successfully consumed cold proof into an existing consent."""
-    from .personal_recovery import engine_digest
+    from .personal_read_frame import reader_engine
     from .policy_schema import sha
     basis = capture["historical_basis"]
     fields(basis, "schema_version checkpoint relation_digest")
     require(type(basis["schema_version"]) is int and basis["schema_version"] == 1, "Unsupported historical basis")
     sha(basis["checkpoint"]); fingerprint(basis["relation_digest"]); fingerprint(capture["historical_engine"])
-    return {"historical_basis": dict(basis), "historical_engine": capture["historical_engine"], "reader_engine": engine_digest()}
+    return {"historical_basis": dict(basis), "historical_engine": capture["historical_engine"], "reader_engine": reader_engine(capture)}
+
+
+def current_history(memory, master, receipt, now, *, basis=None):
+    """Fresh canonical lineage; never authenticate historical bytes twice."""
+    require(now["health"] in ("SYNCED", "RECOVERY_REQUIRED"), "Canonical history is unavailable")
+    task_key = master["view"]["binding"]["task_key"]
+    require(now["state"]["generation"] == master["state"]["generation"]
+            and now["state"]["owner"] in (None, master["state"]["owner"])
+            and now["tasks"][task_key] == master["result_tasks"][task_key], "Archived task/assignment/generation was overwritten")
+    require(now["state"]["progress_guard"]["task_epochs"][task_key] == master["result_state"]["progress_guard"]["task_epochs"][task_key]
+            and all(now["state"]["progress_guard"]["requirements"].get(k) == v for k, v in
+                master["result_state"]["progress_guard"]["requirements"].items()), "Historical guard inventory/epoch changed")
+    relation = entry(now["state"])
+    if relation is not None:
+        old = master["result_state"]["progress_guard"]["requirements"].get(relation["parent_requirement"])
+        require(old is not None and relation["archive"] == digest(receipt) and relation["parent_task"] == task_key
+                and relation["parent_guard"] == digest(old) and relation["parent_task_digest"] == digest(now["tasks"][task_key]),
+                "Canonical historical lineage differs")
+    if basis is not None:
+        require(relation is not None and digest({k: v for k, v in relation.items() if k != "usage"}) == basis["relation_digest"],
+                "Canonical H3 relation changed")
+        for root, head in ((memory.config.root, now["local_head"]), (memory.pinned_local_remote, now["remote_head"])):
+            git(root, "--no-replace-objects", "merge-base", "--is-ancestor", basis["checkpoint"], head)
+    else:
+        git(memory.config.root, "--no-replace-objects", "merge-base", "--is-ancestor", receipt["result"], now["local_head"])
 
 
 def retained(runtime, row):
@@ -118,7 +143,7 @@ def _archived_view(personal, *, memory=None, runtime=None, _child=None, _capture
     for every future effect.
     """
     from .personal_read_frame import archive
-    framed = archive(personal, memory, runtime, _child)
+    framed = archive(personal, memory, runtime, _child, _capture=_capture)
     if framed is not None:
         return framed
     from .personal_recovery import Recovery, engine_digest, grant, submission_provenance
@@ -141,8 +166,7 @@ def _archived_view(personal, *, memory=None, runtime=None, _child=None, _capture
         anchored = _anchor(root, memory, _child.descriptor, master, receipt)
     else:
         from .personal_episode import episode_directory, load_episode
-        from .personal_read_frame import present
-        if present(episode_directory(root) / "activation.json"):
+        if (episode_directory(root) / "activation.json").exists():
             _child = load_episode(episode_directory(root))
             anchored = _anchor(root, memory, _child.descriptor, master, receipt)
     fields(receipt, "schema_version policy master initial guard result consents observations recovery")
@@ -191,14 +215,8 @@ def _archived_view(personal, *, memory=None, runtime=None, _child=None, _capture
         require(all(anchored["subject"][n] == now[n] for n in
             ("health", "local_head", "remote_head", "state", "tasks", "local_owner", "inbox_count",
              "recovery_slots", "recovery_journal")), "Canonical historical subject advanced")
-    git(memory.config.root, "merge-base", "--is-ancestor", heads[-1], now["local_head"])
+    current_history(memory, master, receipt, now, basis=anchored["historical_basis"] if anchored else None)
     task_key = master["view"]["binding"]["task_key"]
-    require(now["state"]["generation"] == master["state"]["generation"]
-            and now["state"]["owner"] in (None, master["state"]["owner"])
-            and now["tasks"][task_key] == master["result_tasks"][task_key], "Archived task/assignment/generation was overwritten")
-    require(now["state"]["progress_guard"]["task_epochs"][task_key] == master["result_state"]["progress_guard"]["task_epochs"][task_key]
-            and all(now["state"]["progress_guard"]["requirements"].get(k) == v for k, v in
-                master["result_state"]["progress_guard"]["requirements"].items()), "Historical guard inventory/epoch changed")
     from .personal_runner import PersonalCoordinator
     actual_runtime = runtime or CodexExecRuntime(root.state / "runtime")
     require(type(actual_runtime) is CodexExecRuntime, "Original genuine runtime observation required")
