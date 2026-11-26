@@ -19,6 +19,66 @@ import test_publication_write_fence as fence_fixtures
 
 
 class AccountingWriterTests(unittest.TestCase):
+    def test_deferred_accounting_proof_refuses_changed_original_before_canonical_effect(self):
+        from dataclasses import replace
+        from adp.discovery_types import Identity, Issue
+        from adp.guard_types import data
+        from adp.personal_runner import PersonalCoordinator
+        from adp.runtime_limits import DEFAULTS
+        from adp.schema import require
+        original = Issue(Identity("17", "issue:1"), 1, "https://example.invalid/issues/1", "Original", "Unchanged",
+                         "OPEN", None, "now", "a" * 64, (), (), (), (), ())
+        for episode in (True, False):
+            with self.subTest(episode=episode):
+                f, p = self.writer()
+                p.c.memory.control = f.claim_path.parent
+                f.invocation["identity"] = ("same-serialized-invocation",)
+                p.c.episode = episode
+                p._live_current = lambda **kw: PersonalProduct._live_current(p, **kw)
+                p.c.revision = lambda: "d" * 40
+                p.c.live = Mock()
+                p.c.workers = SimpleNamespace(fence=Mock())
+                p.c.record = lambda: {"phase": "LOCAL_DRAFT_CODE_REVIEWED"}
+                p.c.original_approval, p.c.verify_local_review = Mock(), Mock()
+                p.personal.plan = {"original_digest": digest(data(original)), "governance_digest": digest(())}
+                p.personal.feature = Path("/synthetic/feature")
+                p.port = SimpleNamespace(_value=lambda *a: "" if a[0] == "status" else "d" * 40)
+                p.review_seal = Mock(return_value="exact")
+                p.history_binding = Mock()
+                observed, events = [original], []
+                def fresh(**kw):
+                    events.append("fresh")
+                    require(PersonalCoordinator.original_matches(p.c, observed[0]), "Original scope changed")
+                p.c.fresh = fresh
+                def facts(**kw):
+                    events.append("facts")
+                    observed[0] = replace(original, body="Unapproved scope")
+                p.facts = facts
+                local = p.local
+                def current_local(*, genuine=True, **kw):
+                    events.append(("local", genuine));return local(genuine=genuine, **kw)
+                p.local = current_local
+                row = {"schema_version": 2 if episode else 1, "intents": []}
+                p.record = lambda: row
+                p.initialize = lambda: row
+                p.save = Mock()
+                p.proposed = lambda *a, **kw: {"approval": "exact", "binding": "bound", "result": {
+                    "operation": "PR", "title": "Original", "body": "Original scope", "method": None,
+                    "runtime_limits": DEFAULTS.values(), "issued_at": 90, "expires_at": 190}}
+                p.journal = SimpleNamespace(upgrade_product_flow=Mock())
+                p.forge.submit = Mock()
+                before = deepcopy(f.snapshot)
+                intent = PersonalProduct.intent
+                while hasattr(intent, "__wrapped__"):intent = intent.__wrapped__
+                with patch("adp.personal_product.governance", return_value=()), self.assertRaisesRegex(ADPError, "Original scope changed"):
+                    intent(p, "PR", reviewed="exact", authorized=True, authorize_memory=True,
+                        assume_quiescence=True, confirm_rules=True)
+                self.assertEqual(events, [("local", False), "facts", ("local", True), "fresh"] if episode else
+                    [("local", True), "fresh", "facts", ("local", True), "fresh"])
+                self.assertEqual(f.snapshot, before)
+                p.journal.upgrade_product_flow.assert_not_called()
+                p.forge.submit.assert_not_called()
+
     def test_completion_late_expiry_or_canonical_change_never_poisons_immutable_slot(self):
         from adp.personal_track import PersonalTrack
         from adp.personal_storage import read_private

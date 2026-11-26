@@ -458,7 +458,10 @@ class PersonalProduct:
             self.active = old
             bind_consent(old["view"])
             with self.service.bounded():
-                self.local(); self.facts(merge=operation == "MERGE")
+                # Accounting entry is already historically qualified. Keep
+                # current local fences here; the full proof follows facts(),
+                # before any canonical registration, reservation or effect.
+                self.local(genuine=not self.c.episode); self.facts(merge=operation == "MERGE")
                 self.live(genuine=True)
             self.journal.upgrade_product_flow(authorized=True)
             if old["requirement"] is None:
