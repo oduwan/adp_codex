@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import re
 import sys
+from urllib.parse import quote, unquote
 
 # This script is launched with -I from the trusted ADP installation.
 if __package__ in (None, ""):
@@ -25,8 +26,19 @@ def validate_request(method, path, body, seconds):
         raise ValueError("Unsupported forge repository")
     tail = match[3]
     if method == "GET":
+        filtered = re.fullmatch(r"/pulls\?state=all&head=([^&]+)&per_page=100&page=([1-9][0-9]*)", tail)
+        if filtered:
+            decoded = unquote(filtered[1])
+            owner, separator, head = decoded.partition(":")
+            if (quote(decoded, safe="") != filtered[1] or owner != match[1] or separator != ":"
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,239}", head) is None
+                    or any(x in head for x in ("..", "//", "@{")) or head.endswith(("/", ".", ".lock"))
+                    or any(part.startswith(".") or part.endswith(".lock") for part in head.split("/"))
+                    or int(filtered[2]) > 20):
+                raise ValueError("Unsupported exact-head PR inventory")
         allowed = (tail == "" or re.fullmatch(r"/pulls/[1-9][0-9]*(?:/reviews\?per_page=100&page=[1-9][0-9]*)?", tail)
             or re.fullmatch(r"/(?:pulls\?state=all&|issues/[1-9][0-9]*/comments\?)per_page=100&page=[1-9][0-9]*", tail)
+            or filtered
             or re.fullmatch(r"/git/commits/[0-9a-f]{40}", tail))
         if body is not None or not allowed:
             raise ValueError("Unsupported forge observation")

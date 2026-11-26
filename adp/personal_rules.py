@@ -135,3 +135,14 @@ def ref_value(repo: dict, branch: str):
     require(type(row) is dict and row.get("prefix") == "refs/heads/" and row.get("name") == branch
             and type(row.get("target")) is dict and row["target"].get("__typename") == "Commit", "UNKNOWN: malformed exact branch")
     return oid(row["target"].get("oid"))
+
+
+def product_refs(service, base_ref):
+    """Current exact feature/default pair; no claim of a complete ref inventory."""
+    repo = service._repository(PERSONAL_REF_QUERY, {"ref": service.target.ref})
+    require(repo.get("viewerPermission") in ("WRITE", "MAINTAIN", "ADMIN")
+            and base_ref.startswith("refs/heads/"), "UNKNOWN: current product ref permission unavailable")
+    source = ref_value(repo, service.target.branch)
+    base = ref_value({"ref": repo.get("defaultBranchRef")}, base_ref.removeprefix("refs/heads/"))
+    require(source is not None and base is not None, "UNKNOWN: exact product refs unavailable")
+    return {service.target.ref: source, base_ref: base}

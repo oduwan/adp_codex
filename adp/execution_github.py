@@ -5,6 +5,7 @@ import json
 import re
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 
 from .discovery_github import API, Response, _NoRedirect
 from .discovery_schema import NAME, digest, json_value
@@ -46,10 +47,15 @@ class GitHubForgeBackend:
     submission, an empty search is UNKNOWN, even if pagination completed. Only
     the actual exact marker/body/HEAD can reconcile a lost response as PRESENT.
     """
-    def __init__(self, repository, repository_id, transport, authority):
+    def __init__(self, repository, repository_id, transport, authority, *, head_ref=None):
         require(type(repository) is str and NAME.fullmatch(repository), "Explicit GitHub repository required")
         self.repository, self.repository_id = repository, str(repository_id)
         self.transport, self.authority = transport, authority
+        if head_ref is not None:
+            from .policy_schema import ref
+            ref(head_ref)
+            require(head_ref.startswith("refs/heads/"), "Exact PR head branch required")
+        self.head_ref = head_ref
 
     @staticmethod
     def marker(key):
@@ -77,7 +83,9 @@ class GitHubForgeBackend:
             return None
         route = self._route(operation, payload)
         suffix = "state=all&" if operation == Operation.PR else ""
-        rows = []
+        if operation == Operation.PR and self.head_ref is not None:
+            suffix += "head=" + quote(self.repository.split("/")[0] + ":" + self.head_ref.removeprefix("refs/heads/"), safe="") + "&"
+        rows, identities = [], set()
         for page in range(1, 21):
             response = self.transport.request("GET", f"{route}?{suffix}per_page=100&page={page}")
             if response.status != 200 or type(response.body) is not list:
@@ -87,6 +95,18 @@ class GitHubForgeBackend:
                 return None
             if any(type(item) is not dict or item.get("body") is not None and type(item.get("body")) is not str for item in response.body):
                 return None
+            if operation == Operation.PR and self.head_ref is not None:
+                for item in response.body:
+                    head = item.get("head")
+                    if (type(head) is not dict or head.get("ref") != self.head_ref.removeprefix("refs/heads/")
+                            or type(head.get("repo")) is not dict
+                            or str(head["repo"].get("id")) != self.repository_id
+                            or type(head["repo"].get("full_name")) is not str
+                            or head["repo"].get("full_name", "").lower() != self.repository.lower()
+                            or type(item.get("id")) is not int or item["id"] <= 0
+                            or item["id"] in identities):
+                        return None
+                    identities.add(item["id"])
             if len(response.body) < 100:
                 return tuple(rows)
         return None

@@ -190,18 +190,21 @@ class PersonalPublication:
             binding["source_origin"] = self.c.source_origin(historical=True)
         return digest(binding)
 
-    def original_bases(self):
+    def original_bases(self, *, prerequisites=None):
         primary = self.target.api + "/issues/" + str(self.personal.plan["issue"])
         # The accepted metadata-only helper needs no execution coordinator.
         # A constructed coordinator still must explicitly expose its track.
         if not hasattr(self, "c") or self.c.track is None:
             return (primary,)
+        # Product passes its same-stage accepted native closure. Publication's
+        # existing full-preflight map remains compatible and independently read.
+        originals = (self.c.track.originals if prerequisites is None else prerequisites)
         return (primary, *(self.target.api + "/issues/" + str(number)
-            for number in sorted(o.issue.number for o in self.c.track.originals.values())
+            for number in sorted(self.c.track.originals[i].issue.number for i in originals)
             if number != self.personal.plan["issue"]))
 
-    def current_original(self, *, _issues=None):
-        bases = self.original_bases()
+    def current_original(self, *, _issues=None, _prerequisites=None):
+        bases = self.original_bases() if _prerequisites is None else self.original_bases(prerequisites=_prerequisites)
         capture = OriginalRead(self.read, bases[0], additional=bases[1:])
         observer = GitHubDiscoveryAdapter(self.personal.plan["repository"]["name"], capture,
             max_requests=self.service.limits.request_limit, clock=self.clock)

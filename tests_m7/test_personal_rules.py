@@ -279,7 +279,7 @@ class PersonalRulesTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             for operation in ("PR", "MERGE"):
                 f = PersonalProduct.__new__(PersonalProduct)
-                f.c = SimpleNamespace(memory=SimpleNamespace(control=Path(directory)))
+                f.c = SimpleNamespace(episode=False, memory=SimpleNamespace(control=Path(directory)))
                 f.service = Native().service
                 f.record = lambda: None
                 f.proposed = lambda *a, **kw: {"approval": "exact", "result": {"plan_disabled_rules_assent": PLAN_ASSENT}}

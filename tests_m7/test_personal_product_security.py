@@ -95,12 +95,14 @@ class PersonalProductSecurityTests(unittest.TestCase):
         # Forge consumers intentionally discard headers; qualify controls before
         # that boundary so an omitted next page cannot appear complete.
         import json
-        for route in ("/pulls?state=all&per_page=100&page=1", "/pulls/10/reviews?per_page=100&page=1"):
+        for route in ("/pulls?state=all&per_page=100&page=1",
+                "/pulls?state=all&head=owned%3Awork%2Ftask&per_page=100&page=1", "/pulls/10/reviews?per_page=100&page=1"):
             path = "/repos/owned/project" + route
             # replace only the page parameter, not per_page=100.
             next_url = "https://api.github.com" + path.removesuffix("page=1") + "page=2"
             for link in ("malformed", ",", ",,", f'<{next_url}>; rel="next",',
                 f'<{next_url}>; rel="next"', f'<{next_url}>; rel="next", <{next_url}>; rel="next"',
+                f'<{next_url.replace("head=owned%3Awork%2Ftask&", "")}>; rel="next"',
                 f'<{next_url.replace("api.github.com", "foreign.example")}>; rel="next"'):
                 t.last_response = (200, b"[]", (("link", link),))
                 with patch.object(PersonalGitHubTransport, "request", return_value=NativeResponse(200, b"[]")):

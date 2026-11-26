@@ -114,6 +114,10 @@ class ObjectServer:
                     "branchProtectionRule": {"id": "protected"} if self.protected else None}
                 repo["branchProtectionRules"] = {"totalCount": self.legacy,
                     "nodes": [] if not self.legacy else [{"id": "legacy"}], "pageInfo": {"hasNextPage": False}}
+                if "defaultBranchRef" in body["query"]:
+                    default = gv(self.root, "symbolic-ref", "HEAD").removeprefix("refs/heads/")
+                    repo["defaultBranchRef"] = {"prefix": "refs/heads/", "name": default,
+                        "target": {"oid": refs.get("refs/heads/" + default), "__typename": "Commit"}}
             return self.response({"data": {"node": repo}})
         if "/rules/branches/" in path:
             return self.response(self.rules)

@@ -85,13 +85,14 @@ class GitHubProductForge(GitHubForgeBackend):
     The native merge API has no atomic base precondition. Only independently
     authenticated HEAD_ATOMIC_BASE_OBSERVED project assent qualifies it.
     """
-    def __init__(self, service, journal, authority):
+    def __init__(self, service, journal, authority, *, personal=False):
         require(type(service) is GitHubCAS and type(journal) is ExecutionJournal,
                 "Actual pinned service and execution journal required")
         target = service.target
         require(journal.memory.config.identity == target.memory_id, "Forge/memory repository differs")
         service.bind_control(journal.memory.control)
-        super().__init__(target.owner + "/" + target.name, str(target.database_id), _Responses(service), authority)
+        super().__init__(target.owner + "/" + target.name, str(target.database_id), _Responses(service), authority,
+            head_ref=target.ref if personal else None)
         self.service, self.journal = service, journal
         self._dispatches = {}
 

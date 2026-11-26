@@ -67,7 +67,7 @@ class PersonalProduct:
         self.c.authority = ProductAuthority(self.c)
         self.c.guard = ProgressGuard(self.c.memory, authority=self.c.authority, clock=self.clock)
         self.guard = ProgressGuard(self.c.memory, authority=self.c.authority, clock=self.clock)
-        self.forge = GitHubProductForge(self.service, self.journal, self.c.authority)
+        self.forge = GitHubProductForge(self.service, self.journal, self.c.authority, personal=True)
         self.cfg = Config.discover(self.personal.feature, remote=self.personal.plan["checkout"]["remote"], repository_id=self.personal.repository_id)
         self.port = self.publication.port
         self.specification = Requirement(self.c.task_id, "personal-product-effects", ("exact-effects-observed",))
@@ -201,16 +201,15 @@ class PersonalProduct:
         """Target the admitted originals; never manufacture complete discovery."""
         from .personal_rules import enrollment_rules
         p, issues = self.personal.plan, []
-        observed = self.publication.current_original(_issues=issues)
+        prerequisites = self.c.track.publication_prerequisites() if self.c.track is not None else None
+        observed = self.publication.current_original(_issues=issues, _prerequisites=prerequisites)
         selected = [i for i in issues if i.identity.issue_id == p["issue_id"]]
         require(len(selected) == 1 and self.c.original_matches(selected[0]), "Original scope or native dependencies changed")
         require([enrollment_rules(self.read, p["repository"], p["owner"], rule["ref"].removeprefix("refs/heads/"))
                  for rule in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")
         if self.c.track is not None:
-            require({i.identity for i in issues} == set(self.c.track.originals), "Incomplete admitted original inventory")
             for issue in issues:
                 self.c.track.original_issue(issue.identity, issue)
-            self.c.track.publication_prerequisites()
         else:
             require(not p["native_prerequisites"], "Native prerequisites require independent accepted completion")
         return observed
@@ -223,8 +222,9 @@ class PersonalProduct:
         require(repo_response.status == 200 and type(repo) is dict and owner == p["owner"] and owner["push_access"]
                 and repo.get("node_id") == self.target.node_id and repo.get("default_branch") == p["repository"]["default_branch"],
                 "Repository, account, permissions or default branch changed")
-        refs = {r.name: r.revision for r in self.service.refs()}
         base_ref = "refs/heads/" + p["repository"]["default_branch"]
+        from .personal_rules import product_refs
+        refs = product_refs(self.service, base_ref)
         require(refs.get(self.target.ref) == self.c.revision() and base_ref in refs,
                 "Exact published HEAD and current base required")
         policy = observe_policy(self.read, self.target, base_ref, personal=(p["repository"], p["owner"]),
@@ -405,7 +405,8 @@ class PersonalProduct:
 
     def provider(self, permit):
         v = self.live()
-        adapter = GitHubPolicyAdapter(self.cfg, self.service, governance=tuple(d["path"] for d in self.personal.intent["governance"]))
+        adapter = GitHubPolicyAdapter(self.cfg, self.service, product_base=v["facts"]["base_ref"],
+            governance=tuple(d["path"] for d in self.personal.intent["governance"]))
         provider = PolicyProvider(adapter, authority=self.c.authority, safety=ReservedSafety(self.c.guard, permit), clock=self.clock)
         snapshot = adapter.inspect()
         claims = [SourceClaim(SourceKind.OPERATOR, "personal:exact-product-policy", digest(v), self.rules(), v["issued_at"], v["expires_at"])]
@@ -481,8 +482,12 @@ class PersonalProduct:
                 self.live()
                 if retained:
                     self.local()  # Explicit cold/restart review qualification.
-                    require(self.original() == old["view"]["original_observation"]
-                            and self.facts(merge=operation == "MERGE") == old["view"]["facts"], "Retained product subject changed")
+                    # A durable action can only be observed below, never sent
+                    # again. Legacy wider receipt maps must not block that
+                    # reconciliation or be rewritten into new write authority.
+                    if old["action"] not in self.journal.inspect()["state"]["execution"]["actions"]:
+                        require(self.original() == old["view"]["original_observation"]
+                                and self.facts(merge=operation == "MERGE") == old["view"]["facts"], "Retained product subject changed")
             self.journal.upgrade_product_flow(authorized=True)
             if old["requirement"] is None:
                 if operation == "PR":

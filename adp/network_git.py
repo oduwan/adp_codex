@@ -316,12 +316,19 @@ def _unchanged():
 
 class GitHubPolicyAdapter(GitPolicyAdapter):
     """Local accepted policy inspection, HTTP-only authenticated remote refs."""
-    def __init__(self, config: Config, service: GitHubCAS, **kwargs):
+    def __init__(self, config: Config, service: GitHubCAS, *, product_base=None, **kwargs):
         super().__init__(config, **kwargs)
         self.service = service
+        self.product_base = product_base
 
     def _remote_refs(self, config):
         _endpoint(config, self.service.target)
+        if self.product_base is not None:
+            # Explicit personal Product projection, not a global absent-ref
+            # inventory. Its selected rules permit only this source/base flow.
+            from .personal_rules import product_refs
+            return tuple(Ref(name, revision) for name, revision in
+                sorted(product_refs(self.service, self.product_base).items()))
         return self.service.refs()
 
 

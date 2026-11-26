@@ -26,7 +26,7 @@ class PersonalProductTransport(PersonalGitHubTransport):
         if checked.status == 0 or checked.status == 200 and parser._halt:
             raise NetworkTransportError("UNKNOWN: native control headers or rate budget unavailable")
         if method == "GET" and response.status == 200 and re.fullmatch(
-                re.escape(self.target.api) + r"/(?:pulls(?:/[1-9][0-9]*/reviews)?|issues/[1-9][0-9]*/comments)\?(?:state=all&)?per_page=100&page=[1-9][0-9]*", path):
+                re.escape(self.target.api) + r"/(?:pulls(?:/[1-9][0-9]*/reviews)?|issues/[1-9][0-9]*/comments)\?(?:state=all&(?:head=[A-Za-z0-9_.%~-]+&)?)?per_page=100&page=[1-9][0-9]*", path):
             try:
                 page = int(parse_qs(path.partition("?")[2])["page"][0])
                 rows = json.loads(response.body)
