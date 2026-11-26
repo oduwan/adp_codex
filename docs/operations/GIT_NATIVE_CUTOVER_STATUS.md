@@ -71,9 +71,10 @@ receipt reads and live canonical fences; they replace the frame/inventory/
 prediction paths above. More lines alone do not establish simplicity, and lower
 component cost alone does not qualify complete publication.
 
-Old10 frame methods and finite-U prediction assertions included expectations now
-excluded by the operator's revised trust boundary. Their old-source outcomes and
-original inventory denominators are preserved. Current replacements retain live
+The original ten frame methods and finite-U prediction assertions included
+expectations now excluded by the revised trust boundary. The original review-gate
+and read-only caller-wiring IDs remain; other IDs require assertion-level mapping.
+Old-source outcomes and original inventory denominators are preserved. Current controls retain live
 source/consent/owner/generation/checkpoint/M2/revocation/claim controls and cold
 receipt/object/permission checks. Malicious same-UID historical mutation within
 an already qualified invocation is RETIRED_MODEL_EXCLUDED, **not security PASS**.

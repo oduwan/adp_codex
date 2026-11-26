@@ -21,6 +21,49 @@ from adp.schema import require
 
 
 class AccountingReadFrameTests(unittest.TestCase):
+    def test_writes_cross_thread_reuse_and_exceptions_cannot_escape_the_read_boundary(self):
+        from adp.memory import Memory
+        from adp.personal_authority import PersonalAuthority
+        from adp.personal_publication import PersonalPublication
+        from adp.personal_runner import PersonalCoordinator
+        from adp.personal_workers import PersonalWorkers
+        from adp.codex_runtime import CodexExecRuntime
+        from adp.network_git import GitHubCAS, GitHubTarget
+        from adp.personal_product import PersonalProduct
+        c, p, _, _ = self.fixture()
+        memory = Memory.__new__(Memory)
+        network = GitHubCAS(GitHubTarget("opaque:fenced", "R_fenced", 1, "owned", "disposable", "work/original"),
+            SimpleNamespace(bind_repository=lambda *identity: None))
+        calls = ((memory.initialize, (), {}), (memory._start, (), {}), (memory._checkpoint, (None, {}, {}), {}),
+            (memory._write_files, ({}, {}), {}), (memory._finish, ({},), {}), (memory.recover, (), {}),
+            (memory.deliver, ({},), {}), (memory._deliver, ({}, {}, {}), {}), (memory.cleanup_inbox, (), {}),
+            (memory.discard_inbox, ("original",), {}),
+            (PersonalAuthority.fence_accounting, (object(),), {}),
+            (PersonalAuthority._proof, (object(), "purpose", "subject", "kind", {}, "principal"), {}),
+            (PersonalCoordinator.requirement, (object(), "develop"), {}),
+            (PersonalCoordinator.save, (object(), {}), {}),
+            (PersonalPublication.save, (object(), {}), {}),
+            (PersonalWorkers.save, (object(), {}), {}),
+            (CodexExecRuntime.dispatch, (object(), object()), {}),
+            (network.request, ("GET", "/synthetic"), {}),
+            (PersonalProduct.save, (object(), {}), {}),
+            (PersonalProduct.write_authorized, (object(),), {}),
+            (PersonalProduct.live, (SimpleNamespace(c=c),), {"genuine": True}),
+            (PersonalPublication.live, (SimpleNamespace(c=c),), {"review": False}))
+        def read(**kwargs):
+            self.assertTrue(_READ_ONLY.get())
+            for function, args, keywords in calls:
+                with self.subTest(caller=function.__qualname__), self.assertRaisesRegex(ADPError, "cannot admit, write or execute"):
+                    function(*args, **keywords)
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(copy_context().run, archive, c.personal.root, c.memory, None, c.personal)
+                with self.assertRaises(ADPError):future.result()
+            raise OSError("Synthetic read interruption")
+        p._live_current = read
+        with self.assertRaises(OSError):publication_live(p)
+        self.assertIsNone(_CURRENT.get())
+        self.assertFalse(_READ_ONLY.get())
+
     def test_existing_episode_gate_refuses_missing_or_changed_baseline_without_admission(self):
         from adp.guard_schema import requirement_id
         from adp.guard_types import data
@@ -219,6 +262,20 @@ class AccountingReadFrameTests(unittest.TestCase):
             source.calls += 1
         source.calls = 0
         with patch("adp.personal_read_frame.current_source", side_effect=source), self.assertRaises(ADPError):publication_live(p)
+        from adp.personal_read_frame import product_live
+        for field in ("view", "binding", "action", "reservation"):
+            with self.subTest(product_context=field):
+                c, p, _, _ = self.fixture()
+                p.active = {"view": {"issued_at": 50, "expires_at": 150}, "binding": "exact",
+                            "action": "original", "reservation": {"permit": "exact"}}
+                def product_read(**kwargs):
+                    if field == "view":p.active["view"]["expires_at"] = 1000
+                    elif field == "reservation":p.active[field]["permit"] = "unapproved"
+                    else:p.active[field] = "changed"
+                    return p.active["view"]
+                p._live_current = product_read
+                with self.assertRaises(ADPError):product_live(p)
+                self.assertIsNone(_CURRENT.get())
 
     def test_new_personal_runtime_receipts_keep_permissions_and_signed_reads_unchanged(self):
         from adp.codex_runtime import CodexExecRuntime
