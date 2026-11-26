@@ -34,8 +34,24 @@ class ProductWorkTests(PersonalFixture):
         run(self.a, "worktree", "add", "-b", plan["feature"]["branch"], str(self.personal.feature))
         self.c = ProductCoordinator(self.personal, self.transport, None, clock=lambda: int(time.time()))
         self.c.initialize_run()
+        # Model an actual in-scope product commit, not a zero-diff PR that the
+        # synthetic forge happens to accept. Canonical M1 follows that SHA.
+        (self.personal.feature / "product").write_text("original task implementation\n")
+        run(self.personal.feature, "add", "--", "product")
+        run(self.personal.feature, "commit", "-m", plan["commit_message"], "-m", plan["commit_body"])
+        revision = run(self.personal.feature, "rev-parse", "HEAD")
+        self.assertNotEqual(revision, plan["checkout"]["head"])
+        self.assertEqual(run(self.a, "rev-parse", "refs/heads/trunk"), plan["checkout"]["head"])
+        self.assertEqual(run(self.a, "rev-parse", "refs/heads/" + plan["feature"]["branch"]), revision)
+        self.assertEqual(run(self.personal.feature, "rev-parse", "HEAD^"), plan["checkout"]["head"])
+        run(self.personal.feature, "merge-base", "--is-ancestor", plan["checkout"]["head"], revision)
+        self.assertEqual(run(self.personal.feature, "diff", "--name-only", plan["checkout"]["head"], revision), "product")
+        self.assertEqual(run(self.personal.feature, "status", "--porcelain"), "")
+        self.c.memory.set_revision(self.c.task_id, revision)
+        task = self.c.memory.inspect()["tasks"][key(self.c.task_id)]
+        self.assertEqual(task["source_revision"], revision)
         row = self.c.record()
-        row.update(phase="LOCAL_DRAFT_CODE_REVIEWED", revision=plan["checkout"]["head"], developer="synthetic-author",
+        row.update(phase="LOCAL_DRAFT_CODE_REVIEWED", revision=revision, developer="synthetic-author",
             feature_administration=administration(self.personal.feature))
         self.c.save(row)
         self.c.original_approval = Mock()
@@ -79,7 +95,7 @@ class ProductWorkTests(PersonalFixture):
         admitted = {"task_id": self.c.task_id, "identity": original["identity"],
             "workspace_key": digest(plan["administration"]), "admission": digest({"synthetic": "scope"}),
             "issue_digest": plan["original_digest"], "revision": row["revision"], "source_ref": target.ref,
-            "product_iteration": 1, "kind": "PRODUCT", "stage": "PUBLISH", "jobs": {}, "review": None}
+            "product_iteration": task["iteration"], "kind": "PRODUCT", "stage": "PUBLISH", "jobs": {}, "review": None}
         p.journal.change(lambda e, s, t: p.publication.admit_task(e, key(self.c.task_id), admitted))
         p.review_seal = Mock(return_value="independently-seeded-exact-review")
         return p

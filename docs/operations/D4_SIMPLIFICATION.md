@@ -149,6 +149,11 @@ Existing Budget latency excludes final service confirmation/JSON processing;
 it is not full HTTP RTT. Operation samples are N=1 per source/interpreter, with
 fresh disposable identities and explicitly synthetic Worker/authority seams.
 No causal speedup, real Developer/Reviewer or full cold H3 proof is inferred.
+The earlier65/413fd1a seeded measurements used the same source and base SHA;
+they qualify those observation boundaries, not a realistic nonempty PR. Final66
+feasibility evidence must use an actual in-scope descendant commit and canonical
+M1 source transition. That corrected fixture differs from the old measurement
+workload; its times cannot establish a causal before/after speedup.
 
 Required controls cover source/review SHA; native original/dependency change;
 duplicate/foreign/partial PRs; source/client/recipient mismatch; current M1/M2,
