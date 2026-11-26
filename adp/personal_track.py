@@ -505,9 +505,19 @@ class PersonalTrack:
             proposal = self.completion_preview(product)
             require(proposal["approval"] == reviewed, "Exact completion evidence changed")
             view, row = proposal["result"], product.record()
+            subject = self.c.memory.inspect()
+            require(subject["local_head"] == view["checkpoint"], "Completion checkpoint advanced")
             intent = next((i for i in reversed(row["intents"]) if i["view"]["operation"] == "MERGE"), None)
             source = intent or next(i for i in row["intents"] if i["view"]["operation"] == "PR")
             v = source["view"]
+            from .personal_read_frame import current_source
+            # Compare the freshly approved completion source, including after
+            # correction/manual merge; retained PR consent is not reauthorized.
+            source_operand = {"view": {"revision": view["source"], "source_tree": view["tree"],
+                "source_ref": "refs/heads/" + self.personal.plan["feature"]["branch"],
+                "administration": digest(self.c.record()["feature_administration"])},
+                "binding": product.transport.credential_binding}
+            source_admin = current_source(product, source_operand, product=True)
             payload = {"pull": {k: row["pull"][k] for k in ("id", "number", "repository_id", "url")},
                 "revision": view["source"], "head_ref": product.target.ref, "base_ref": v["facts"]["base_ref"],
                 "expected_base": v["facts"]["base_sha"], "source_tree": view["tree"],
@@ -517,7 +527,7 @@ class PersonalTrack:
                 for file in (self.personal.state / directory).glob("*.json"):
                     files[directory + "/" + file.name] = digest(read_private(file))
             receipt = {"schema_version": 1, "identity": data(identity), "directory": str(self.personal.directory),
-                "setup": self.personal.intent["approval"], "checkpoint": view["checkpoint"], "accepted_at": self.c.clock(),
+                "setup": self.personal.intent["approval"], "checkpoint": view["checkpoint"], "accepted_at": None,
                 "original": data(self.originals[identity]), "packet": read_private(self.personal.state / "prepared-track.json")["packet"],
                 "source": view["source"], "tree": view["tree"], "merge": view["merge"], "actor": view["actor"], "pull": row["pull"],
                 "merge_payload": payload, "workers": {w["request"]["id"]: digest(w) for w in self.c.workers.records()},
@@ -525,9 +535,20 @@ class PersonalTrack:
                 "files": files, "acceptance": "OPERATOR_CONFIRMED_CURRENT_PROJECT_ACCEPTANCE"}
             if self.c.episode:
                 from .accounting_policy import entry
-                receipt.update(schema_version=2, lineage={k: v for k, v in entry(self.c.memory.inspect()["state"]).items() if k != "usage"},
+                receipt.update(schema_version=2, lineage={k: v for k, v in entry(subject["state"]).items() if k != "usage"},
                                origin=self.c.source_origin())
-            immutable(path, receipt)
+            from .personal_episode import same_observation as same_subject
+            with locked(self.c.memory.control):
+                require(current_source(product, source_operand, product=True) == source_admin,
+                        "Completion source administration changed")
+                if self.c.episode:
+                    self.c.episode_fence()
+                same_subject(subject, self.c.memory.inspect())
+                accepted_at = self.c.clock()
+                require(self.personal.plan["window"]["issued_at"] <= accepted_at < view["expires_at"],
+                        "Completion consent expired before recording acceptance")
+                receipt["accepted_at"] = accepted_at
+                immutable(path, receipt)
             return self.accepted(identity, transport=product.transport, runtime=product.c.runtime)
 
     @read_operation("track.status", transport=lambda self, **k: k.get("transport") or self.c.transport)

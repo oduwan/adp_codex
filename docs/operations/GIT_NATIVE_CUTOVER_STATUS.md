@@ -50,12 +50,18 @@ with fresh correction binding required at new local admission. Historical
 adoption uses its actual recorded post-H3 engine through the non-issuing decoder;
 copy/issuance remains current-engine and live-authorized.
 
+Completion also rechecks the freshly approved source and administration,
+episode revocation, exact canonical subject and actual acceptance time under
+the existing canonical mutation lock before writing its immutable receipt.
+An expired or changed subject leaves no receipt. Corrected manual completion
+uses the approved completion SHA, without renewing the earlier PR consent.
+
 ## Metrics and qualification interpretation
 
 The existing baseline counting rule includes docstrings and all tracked
-adp/*.py. At the current implementation snapshot:100 modules,26333 physical
-lines,23635 code lines,1238 function nodes,248 classes,19395 statements.
-Against frozen13fd this is +123/+136 lines, -2 functions, -1 class and +70
+adp/*.py. At the current implementation snapshot:100 modules,26354 physical
+lines,23654 code lines,1238 function nodes,248 classes,19409 statements.
+Against frozen13fd this is +144/+155 lines, -2 functions, -1 class and +84
 statements. Final exact-source metrics and per-file deltas belong in the handoff.
 Retained additions implement explicit writer compatibility, protected direct
 receipt reads and live canonical fences; they replace the frame/inventory/

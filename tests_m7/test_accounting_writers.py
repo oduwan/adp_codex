@@ -19,6 +19,64 @@ import test_publication_write_fence as fence_fixtures
 
 
 class AccountingWriterTests(unittest.TestCase):
+    def test_completion_late_expiry_or_canonical_change_never_poisons_immutable_slot(self):
+        from adp.personal_track import PersonalTrack
+        from adp.personal_storage import read_private
+        from adp.discovery_types import Identity, Issue
+        f, _ = self.writer()
+        baseline = deepcopy(f.snapshot)
+        original = Issue(Identity("17", "issue:1"), 1, "https://example.invalid/issues/1", "Original", "Unchanged",
+                         "OPEN", None, "now", "a" * 64, (), (), (), (), ())
+        for change in ("none", "expiry", "owner", "generation", "checkpoint", "guard", "source"):
+            with self.subTest(change=change), TemporaryDirectory() as directory:
+                state = Path(directory)
+                create_private(state)
+                track = PersonalTrack.__new__(PersonalTrack)
+                current = deepcopy(baseline)
+                clock = [100]
+                def records():
+                    if change == "expiry":clock[0] = 190
+                    elif change == "owner":current["local_owner"] = False
+                    elif change == "generation":current["state"]["generation"] += 1
+                    elif change == "checkpoint":current["local_head"] = "0" * 40
+                    elif change == "guard":current["state"]["progress_guard"]["changed"] = True
+                    return []
+                memory = SimpleNamespace(control=state, inspect=lambda: deepcopy(current))
+                c = SimpleNamespace(memory=memory, clock=lambda: clock[0], episode=False,
+                    workers=SimpleNamespace(records=records), record=lambda: {"feature_administration": {"original": True}})
+                track.c = c
+                track.personal = SimpleNamespace(state=state,
+                    intent={"original": {}, "approval": "setup"}, directory=state,
+                    plan={"window": {"issued_at": 90, "expires_at": 190}, "feature": {"branch": "work"}})
+                track.originals = {original.identity: original}
+                path = state / "completion.json"
+                track.completion_path = lambda identity: path
+                view = {"checkpoint": current["local_head"], "source": "a" * 40, "tree": "b" * 40,
+                    "merge": "c" * 40, "actor": 1, "expires_at": 190}
+                track.completion_preview = lambda p: {"approval": "exact", "result": view}
+                track.accepted = Mock(return_value={"accepted": True})
+                row = {"pull": {"id": 1, "number": 1, "repository_id": 17, "url": "https://example.invalid/pull/1"},
+                    "intents": [{"view": {"operation": "PR", "revision": "f" * 40,
+                        "facts": {"base_ref": "trunk", "base_sha": "d" * 40}}}],
+                    "gates": [{"status": "PASS"}]}
+                product = SimpleNamespace(record=lambda: row, target=SimpleNamespace(ref="refs/heads/work"),
+                    transport=SimpleNamespace(credential_binding="exact"), c=SimpleNamespace(runtime=None))
+                atomic(state / "prepared-track.json", encode({"packet": "original"}))
+                complete = PersonalTrack.complete
+                while hasattr(complete, "__wrapped__"):complete = complete.__wrapped__
+                with patch("adp.personal_track.typed", return_value=original), \
+                     patch("adp.personal_read_frame.current_source", side_effect=["same", "changed" if change == "source" else "same"]) as source_fence:
+                    if change == "none":
+                        self.assertEqual(complete(track, product, reviewed="exact", authorized=True,
+                            confirm_acceptance=True), {"accepted": True})
+                        self.assertEqual(read_private(path)["accepted_at"], 100)
+                        self.assertEqual(source_fence.call_args.args[1]["view"]["revision"], view["source"])
+                    else:
+                        with self.assertRaises(ADPError):complete(track, product, reviewed="exact", authorized=True,
+                            confirm_acceptance=True)
+                        self.assertFalse(path.exists())
+                        track.accepted.assert_not_called()
+
     def writer(self, operation="PR"):
         # Reuse the existing direct-fence fixture. Cold proof and source seals
         # are separately qualified; only these explicit seams are mocked here.
