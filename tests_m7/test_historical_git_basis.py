@@ -252,6 +252,20 @@ class HistoricalEpisodeBasisTests(AccountingFixture):
         try:
             with self.assertRaises((ADPError, OSError)):child.active(memory=memory, runtime=self.runtime)
         finally:atomic(stop, original)
+        # Optional NEW runtime absence is not permission to lose REQUIRED
+        # original Worker/stop evidence at the next cold qualification.
+        from adp.codex_runtime import CodexExecRuntime
+        from adp.personal_runner import PersonalCoordinator
+        from adp.personal_read_frame import qualification
+        parked = self.runtime.directory.with_name("runtime-held-for-negative")
+        self.runtime.directory.rename(parked)
+        try:
+            with self.assertRaises((ADPError, OSError)):
+                coordinator = PersonalCoordinator(child, self.transport, self.native,
+                    runtime=CodexExecRuntime(child.state / "runtime"), clock=lambda: self.now)
+                with qualification(coordinator):
+                    self.fail("Required original runtime absence was accepted")
+        finally:parked.rename(self.runtime.directory)
         branch = "refs/heads/" + memory.branch
         h2, h3 = read_private(root.state / "accounting-recovery" / "archive.json")["result"], basis["checkpoint"]
         for target in (h2, None):

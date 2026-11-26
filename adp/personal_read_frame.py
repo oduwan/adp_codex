@@ -31,7 +31,11 @@ def protected_runtime(directory=None):
     if active and directory is not None:
         import stat
         from .config import safe_path
-        info = safe_path(directory).stat()
+        path = safe_path(directory)
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            return active  # Optional new runtime has no evidence yet; never create it here.
         require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022,
                 "Runtime evidence directory is not owned and protected")
     return active

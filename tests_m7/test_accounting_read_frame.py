@@ -21,6 +21,23 @@ from adp.schema import require
 
 
 class AccountingReadFrameTests(unittest.TestCase):
+    def test_absent_new_runtime_is_not_started_without_creating_evidence(self):
+        from adp.codex_runtime import CodexExecRuntime
+        from adp.execution_types import RuntimeStatus
+        c, _, _, _ = self.fixture()
+        with TemporaryDirectory() as directory:
+            root = Path(directory);runtime = CodexExecRuntime(root / "runtime");identifier = "f" * 64
+            with qualification(c):
+                self.assertEqual(runtime.observe(identifier).status, RuntimeStatus.NOT_STARTED)
+                self.assertIsNone(runtime._stop_receipt(identifier, {}))
+                self.assertFalse(runtime.directory.exists())
+                runtime.directory.mkdir(mode=0o777);runtime.directory.chmod(0o777)
+                with self.assertRaises(ADPError):runtime.observe(identifier)
+                runtime.directory.rmdir();runtime.directory.symlink_to(root / "absent")
+                with self.assertRaises(ADPError):runtime.observe(identifier)
+                runtime.directory.unlink();runtime.directory.write_text("not a directory")
+                with self.assertRaises(ADPError):runtime.observe(identifier)
+
     def test_writes_cross_thread_reuse_and_exceptions_cannot_escape_the_read_boundary(self):
         from adp.memory import Memory
         from adp.personal_authority import PersonalAuthority
