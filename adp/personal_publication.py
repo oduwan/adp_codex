@@ -134,9 +134,7 @@ class PersonalPublication:
         require(existing is None or existing == task, "Canonical publication task differs")
         execution["tasks"][task_key] = task
 
-    @measured("publication.local")
-    def local(self, *, _history_capture=None, _qualification=None):
-        self.c.live()
+    def checkout(self):
         self.c.check_administration(self.c.record())
         from .enrollment import local_checkout
         from .personal_enrollment import governance
@@ -147,6 +145,11 @@ class PersonalPublication:
         require(local_checkout(Path(expected["path"]), expected["remote"]) == expected
                 and digest(governance(Path(expected["path"]))) == p["governance_digest"],
                 "Original checkout, source or committed governance changed")
+
+    @measured("publication.local")
+    def local(self, *, _history_capture=None, _qualification=None):
+        self.c.live()
+        self.checkout()
         self.c.workers.fence()
         require(self.c.record()["phase"] == "LOCAL_DRAFT_CODE_REVIEWED" and self.c.record()["coordination"] is None,
                 "Finish the actual reviewed local draft and reconcile its original guard work")

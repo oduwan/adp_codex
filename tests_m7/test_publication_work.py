@@ -118,13 +118,6 @@ class PublicationWorkTests(unittest.TestCase):
             f.transport.api.responses[f.prefix + "/branches/trunk"].body["commit"] = {"sha": run(f.a, "rev-parse", "HEAD")}
             f.transport.api.responses[f.prefix + "/rules/branches/trunk"] = denied()
         p = f.seeded(publication=True)
-        def accepted(identity, **kw):
-            if p.c.track.originals[identity].issue.number >= number:
-                return None
-            if kw.get("_capture") is not None:
-                kw["_capture"][identity] = ("synthetic historical admission seam",)
-            return {"qualification": "SYNTHETIC_ACCEPTANCE_SEAM"}
-        p.c.track.accepted = Mock(side_effect=accepted)
         row = f.c.record(); row.update(original_review="seeded-original", code_review="seeded-code")
         f.c.save(row)
         f.c.worker = Mock(return_value={"observation": {"receipt": "synthetic:stopped-independent-code"}})
@@ -137,6 +130,8 @@ class PublicationWorkTests(unittest.TestCase):
         target = GitHubTarget(f.rid, "R_personal", 17, *f.name.split("/"), f.personal.plan["feature"]["branch"])
         http = PersonalObjectTransport(f, root, target)
         pub = PersonalPublication(f.c, transport=http)
+        from personal_product_fixtures import accepted_native_fixture
+        accepted_native_fixture(f, p, number)
         pub.review_binding = Mock(return_value="synthetic-independent-exact-sha-review")
         http.authorize_write = pub.write_authorized
         if plan_disabled:
@@ -182,6 +177,7 @@ class PublicationWorkTests(unittest.TestCase):
         self.assertEqual(pub.journal.inspect()["state"]["execution"]["actions"][pub.record()["action_id"]]["status"], "OBSERVED")
         self.assertEqual(pub.service.measurements[-1]["boundaries"]["effect.settled"], 1)
         self.assertLessEqual(len(calls), 112)
+        self.assertLessEqual(pub.service.measurements[-1]["transport_calls"], 112)
         f.c.fresh.assert_not_called()
         self.assertFalse(any("/issues?" in path or "/pulls?" in path for _, path in calls))
         for future in range(number + 1, 4):

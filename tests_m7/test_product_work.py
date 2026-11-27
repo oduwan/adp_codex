@@ -25,12 +25,12 @@ from test_guard import SyntheticAuthority
 
 
 class ProductWorkTests(PersonalFixture):
-    def seeded(self, product_type=PersonalProduct, *, publication=False):
+    def seeded(self, product_type=PersonalProduct, *, publication=False, ci_transport=None):
         """Seed an admitted, already reviewed SHA; do not pretend to run Codex."""
         self.now = int(time.time())
-        plan, original, docs = self.plan()
+        plan, original, docs = self.plan(ci_transport=ci_transport)
         self.personal = apply_personal(plan, original, docs, approved=approval(plan), authorized=True,
-            transport=self.transport, clock=lambda: self.now)
+            transport=self.transport, ci_transport=ci_transport, clock=lambda: self.now)
         run(self.a, "worktree", "add", "-b", plan["feature"]["branch"], str(self.personal.feature))
         self.c = ProductCoordinator(self.personal, self.transport, None, clock=lambda: int(time.time()))
         self.c.initialize_run()
@@ -70,9 +70,9 @@ class ProductWorkTests(PersonalFixture):
                 raise
         self.http.authorize_write = write
         final = p.final_boundary
-        def boundary():
+        def boundary(**kwargs):
             try:
-                return final()
+                return final(**kwargs)
             except BaseException as exc:
                 print("PRODUCT_FINAL_REFUSAL " + type(exc).__name__ + ": " + str(exc), flush=True)
                 raise
@@ -101,9 +101,14 @@ class ProductWorkTests(PersonalFixture):
         p.review_seal = Mock(return_value="independently-seeded-exact-review")
         return p
 
-    def test_seeded_three_issue_pr_fits_original_budget(self):
+    def pr_stage(self, number=1):
+        from dataclasses import replace
+        self.choices = replace(self.choices, issue=number, branch="work/issue-" + str(number))
         p = self.seeded()
-        proposal = p.proposed("PR", title="Original task", body="Refs #1")
+        from personal_product_fixtures import accepted_native_fixture
+        accepted_native_fixture(self, p, number)
+        body = "Refs #" + str(number)
+        proposal = p.proposed("PR", title="Original task", body=body)
         calls = []
         actual = self.http.request
         def counted(method, path, body, *, seconds):
@@ -119,22 +124,34 @@ class ProductWorkTests(PersonalFixture):
               patch.object(p, "original", wraps=p.original) as originals,
               patch.object(p.publication, "current_original", wraps=p.publication.current_original) as native_originals):
             result = p.intent("PR", reviewed=proposal["approval"], authorized=True, authorize_memory=True,
-                assume_quiescence=True, confirm_rules=True, title="Original task", body="Refs #1")
+                assume_quiescence=True, confirm_rules=True, title="Original task", body=body)
             counts = {"plan": plans.call_count, "decide": decisions.call_count, "policy_inspect": inspections.call_count,
                 "facts": facts.call_count, "original": originals.call_count, "current_original": native_originals.call_count,
                 "fresh": p.c.fresh.call_count}
-            self.assertEqual(counts, {"plan": 4, "decide": 2, "policy_inspect": 5,
+            self.assertEqual(counts, {"plan": 3, "decide": 1, "policy_inspect": 3,
                 "facts": 3, "original": 2, "current_original": 2, "fresh": 0})
             print("PRODUCT_LOGICAL_CALLS " + json.dumps(counts, sort_keys=True), flush=True)
         self.assertEqual(result["status"], "PR_PRESENT")
         self.assertEqual(len(self.http.effects), 1)
         p.c.fresh.assert_not_called()
         records = list(p.service.measurements)
+        print("PRODUCT_ISSUE " + str(number), flush=True)
         print("PRODUCT_STAGE_COSTS " + json.dumps(records, sort_keys=True), flush=True)
         print("PRODUCT_HTTP_CALLS " + json.dumps(calls), flush=True)
         self.assertLessEqual(len(calls), 128)
+        self.assertLessEqual(records[-1]["transport_calls"], 112)
         self.assertFalse(any("/issues?state=" in path or "/pulls?state=all&per_page=" in path for _, path in calls))
-        self.assertFalse(any("/issues/2" in path or "/issues/3" in path for _, path in calls))
+        for future in range(number + 1, 4):
+            self.assertFalse(any("/issues/" + str(future) in path for _, path in calls))
+
+    def test_seeded_three_issue_pr_fits_original_budget(self):
+        self.pr_stage()
+
+    def test_second_original_pr_fits_original_budget(self):
+        self.pr_stage(2)
+
+    def test_third_original_pr_fits_original_budget(self):
+        self.pr_stage(3)
 
     def test_final_m3_reobserves_permission_after_submitted_and_prevents_post(self):
         p = self.seeded()
@@ -156,4 +173,57 @@ class ProductWorkTests(PersonalFixture):
         action = p.journal.inspect()["state"]["execution"]["actions"][intent["action"]]
         self.assertEqual(action["status"], "SUBMITTED")
         self.assertEqual(self.http.pulls, [])
+
+    def test_seeded_post_pr_ci_uses_native_exact_sha_and_one_cold_admission(self):
+        """Seed only PR acceptance, then exercise the actual #21 CI stages."""
+        from dataclasses import replace
+        from adp.network_http import Response
+        self.choices = replace(self.choices, checks=("unit",), accept_native_job_records=True)
+        from personal_fixtures import NativePersonalReads
+        p = self.seeded(ci_transport=NativePersonalReads(self))
+        proposal = p.proposed("PR", title="Original task", body="Refs #1")
+        row = p.initialize()
+        action = digest({"personal-product": proposal["result"]})
+        repository = {"id": 17, "node_id": p.target.node_id, "full_name": self.name}
+        pull = {"id": 2010, "node_id": "PR-seeded", "number": 10, "html_url": "https://github.com/" + self.name + "/pull/10",
+            "title": "Original task", "body": "Refs #1\n\n" + p.forge.marker(action), "draft": True,
+            "state": "open", "merged": False, "head": {"sha": self.c.revision(), "ref": p.target.branch, "repo": repository},
+            "base": {"sha": proposal["result"]["facts"]["base_sha"], "ref": "trunk", "repo": repository}}
+        self.http.pulls.append(pull)
+        row["pull"] = {"id": "2010", "node_id": "PR-seeded", "number": 10, "repository_id": self.rid, "url": pull["html_url"]}
+        row["intents"].append({"view": proposal["result"], "approval": proposal["approval"], "binding": proposal["binding"],
+            "action": action, "requirement": None, "reservation": None, "observation": None})
+        p.save(row)
+        request = self.http.request
+        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 10))
+        completed = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 5))
+        def current_checks(method, path, body, **kw):
+            result = request(method, path, body, **kw)
+            if "/check-runs?" in path:
+                result_body = json.loads(result.body)
+                for check in result_body["check_runs"]:
+                    check["started_at"] = started
+                    check["completed_at"] = completed
+                raw = json.dumps(result_body).encode()
+                self.http.last_response = result.status, raw, ()
+                return Response(result.status, raw)
+            return result
+        self.http.request = current_checks
+        preview = p.execution_preview("CI", accept_native=True)
+        with patch.object(p, "local", wraps=p.local) as local, patch.object(p, "original", wraps=p.original) as originals:
+            result = p.execute("CI", reviewed=preview["approval"], authorized=True, accept_native=True)
+            print("PRODUCT_CI_STAGE_COSTS " + json.dumps(list(p.service.measurements), sort_keys=True), flush=True)
+            self.assertEqual(result["status"], "PASS", result)
+            self.assertTrue(result["qualified"])
+            self.assertEqual(sum(call.kwargs.get("genuine", True) for call in local.call_args_list), 1)
+            self.assertEqual(local.call_count, 2)  # Cold entry plus current nested M3 live fence.
+            self.assertEqual(originals.call_count, 1)
+        self.assertEqual(result["gate"]["request"]["revision"], self.c.revision())
+        self.assertEqual(result["gate"]["request"]["pull"]["id"], "PR-seeded")
+        self.assertEqual(self.c.record()["observations"], 1)
+        retained = p.execute("CI", reviewed=preview["approval"], authorized=True, accept_native=True)
+        self.assertEqual(retained["status"], "RETAINED_OBSERVATION")
+        self.assertEqual(retained["freshness"], "NOT_REOBSERVED")
+        self.assertEqual(self.c.record()["observations"], 1)
+        self.assertEqual(self.http.effects, [])
 

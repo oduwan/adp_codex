@@ -126,13 +126,18 @@ class PersonalWorkers:
         require(type(self.c.runtime) is CodexExecRuntime, "Genuine Codex runtime provenance is required")
         request = typed(WorkerRequest, row["request"])
         observed = self.c.runtime.observe(request.id)
-        state = self.c.memory.inspect()
+        relation, historical_contexts = None, ()
+        if self.c.episode:
+            relation, historical_contexts, state = self.c.personal._active_view(memory=self.c.memory)
+        else:
+            state = self.c.memory.inspect()
         assignment = state["tasks"][key(self.c.task_id)]["assignments"].get(row["assignment"]["assignment_id"])
         require(type(observed) is RuntimeObservation and observed.request_id == request.id
                 and observed.request_digest == digest(request) and observed.host == row["host"] == self.c.runtime.host
                 and observed.status == RuntimeStatus.COMPLETED and observed.stopped is True
                 and observed.result is not None and observed.context_id is not None
                 and data(observed) == row["observation"] and observed.result.forensic is None
+                and (not accounted or state["health"] == "SYNCED")
                 and request.generation == state["state"]["generation"] and state["local_owner"]
                 and assignment is not None and assignment["worker"] == "worker:" + request.id
                 and assignment["generation"] == request.generation and assignment["source_revision"] == request.revision,
@@ -145,7 +150,6 @@ class PersonalWorkers:
                         and other["observation"]["context_id"] == observed.context_id for other in self.records()),
                 "Codex role contexts are not independent")
         if self.c.episode:
-            relation, historical_contexts = self.c.personal.active(memory=self.c.memory)
             require(observed.host == relation["host"] and observed.context_id not in historical_contexts
                     and relation["usage"]["requests"].get(request.id) == {"purpose": row["purpose"]},
                     "Episode context, host or canonical lifetime role charge differs")
@@ -156,14 +160,17 @@ class PersonalWorkers:
         if accounted:
             require(row["phase"] == "ACCOUNTED" and assignment["status"] == "accepted"
                     and assignment["result"] == self.result(row), "Actual M1 delivery is not accepted")
-            state, task, item = self.c.guard._snapshot(self.c.task_id, row["requirement"])
+            current = state
+            state, task = current["state"], current["tasks"][key(self.c.task_id)]
+            item = self.c.guard._get(state, task, row["requirement"])
             if item["active"] is None:
-                self.c.allowed(row["requirement"])
+                self.c.allowed(row["requirement"], _observed=current)
             else:
                 # Reusing already observed source evidence inside one actual
                 # coordinator reservation does not reserve a new guard attempt.
                 coordination = self.c.record()["coordination"]
                 require(coordination is not None and row["purpose"] in ("develop", "code", "product")
+                        and self.c.guard._qualified_accounting(state, task)
                         and item["mode"] in ("normal", "running")
                         and coordination["permit"]["token"] == item["active"]["id"]
                         and task["source_revision"] == row["request"]["revision"]

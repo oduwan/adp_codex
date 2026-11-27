@@ -268,7 +268,7 @@ class TrustedProductStageTests(unittest.TestCase):
         pub = self.originals()
         originals = []
         pub.current_original(_issues=originals)
-        pub.original_bases = lambda: ("/repos/owned/project/issues/1",)
+        pub.original_bases = lambda **kw: ("/repos/owned/project/issues/1",)
         base = "/repos/owned/project"
         pub.read.responses[base + "/branches/trunk"] = Response(200, {"name": "trunk", "protected": False})
         pub.read.responses[base + "/rules/branches/trunk"] = Response(200, [])
@@ -276,11 +276,12 @@ class TrustedProductStageTests(unittest.TestCase):
         p.publication, p.read = pub, pub.read
         from adp.guard_types import data
         expected = digest(data(originals[0]))
-        p.personal = SimpleNamespace(plan={"repository": {"name": "owned/project"}, "owner": {},
+        p.personal = SimpleNamespace(repository_id="17", plan={"repository": {"name": "owned/project"}, "owner": {}, "issue": 1,
             "issue_id": originals[0].identity.issue_id, "native_prerequisites": [], "branch_rules": [{
             "ref": "refs/heads/trunk", "protected": False, "rules": "OBSERVED",
             "required_check_contexts": [], "rules_digest": digest([])}]})
         p.c = SimpleNamespace(track=None, original_matches=lambda issue: digest(data(issue)) == expected)
+        pub.c, pub.personal = p.c, p.personal
         p.original()
         route = base + "/rules/branches/trunk"
         for response in (Response(403, {"message": "forbidden"}), Response(200, [{"type": "deletion"}])):

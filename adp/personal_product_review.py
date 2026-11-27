@@ -175,13 +175,14 @@ class ProductCoordinator(PersonalCoordinator):
 
 
 class ProductAuthority(PersonalAuthority):
-    def _validate(self, body):
+    def _validate(self, body, *, _observed=None, _history_capture=None):
         fields(body, "schema_version purpose subject kind payload principal approval generation expires_at")
         require(type(body["schema_version"]) is int and body["schema_version"] == 1, "Unsupported personal authority")
         kind = body.get("kind", "")
         if kind == "progress" and self.c.worker(body["payload"]["request_id"])["purpose"] == "product":
             row = self.c.worker(body["payload"]["request_id"])
-            self.c.live()
+            if _observed is None:
+                self.c.live()
             self.c.workers.actual(row, approval=True)
             require(row["context"] == self.c.product.review_context(), "Product acceptance review/CI is stale")
             measured = typed(Observation, body["payload"]["observation"])
@@ -200,11 +201,11 @@ class ProductAuthority(PersonalAuthority):
                         and item["approval"]["subject"] == body["subject"], "Current canonical product approval missing")
             return
         if not kind.startswith("product-"):
-            return super()._validate(body)
-        self.c.live()
+            return super()._validate(body, _observed=_observed, _history_capture=_history_capture)
+        observed = self.c.live() if _observed is None else _observed
         flow = self.c.product
         require(body["approval"] == self.c.personal.intent["approval"]
-                and body["generation"] == self.c.memory.inspect()["state"]["generation"]
+                and body["generation"] == observed["state"]["generation"]
                 and self.c.clock() < body["expires_at"] == self.c.personal.plan["window"]["expires_at"], "Expired product authority")
         purpose, subject, p = (body[k] for k in ("purpose", "subject", "payload"))
         kind = kind.removeprefix("product-")
@@ -230,7 +231,7 @@ class ProductAuthority(PersonalAuthority):
         elif kind == "operation":
             plan = typed(Plan, p["plan"])
             qualifications = typed(ProjectQualifications if "required" in p["qualifications"] else Qualifications, p["qualifications"])
-            flow.live()
+            flow.live(_observed=observed, _history_capture=_history_capture)
             require(plan.policy_effect == "ALLOW" and plan.task.repository_id == self.c.personal.repository_id
                     and plan.task.task_id == self.c.task_id and plan.task.revision == self.c.revision()
                     and plan.task.source_ref == flow.target.ref and plan.request.operation in (flow.active["view"]["operation"], Operation.VALIDATE)
@@ -249,7 +250,7 @@ class ProductAuthority(PersonalAuthority):
                         and plan.payload.target == v["target"] == self.c.personal.intent["original"]["url"]
                         and plan.payload.body == v["body"], "Separate exact target/body REPORT authority required")
         elif kind == "effect":
-            flow.live()
+            flow.live(_observed=observed, _history_capture=_history_capture)
             row = flow.journal.inspect()["state"]["execution"]["actions"].get(p["id"])
             require(purpose == "execution/effect" and p["id"] == flow.active["action"] and row is not None
                     and row["status"] == "SUBMITTED" and row["payload"] == p["payload"]
@@ -284,7 +285,7 @@ class ProductAuthority(PersonalAuthority):
                         and body["principal"] == value.reviewer and subject == PolicyProvider(None).review_subject(plan, value), "Independent exact-SHA review differs")
         elif kind == "report-delegation":
             value, plan = typed(DelegationProfile, p["profile"]), typed(Plan, p["plan"])
-            v = flow.live()
+            v = flow.live(_observed=observed, _history_capture=_history_capture)
             require(plan.request.operation == Operation.REPORT and v["operation"] == "REPORT"
                     and plan.task.repository_id == self.c.personal.repository_id and plan.task.task_id == self.c.task_id
                     and plan.task.revision == self.c.revision() and plan.task.source_ref == flow.target.ref

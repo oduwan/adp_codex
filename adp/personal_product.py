@@ -205,29 +205,15 @@ class PersonalProduct:
         return digest({"reviews": reviews, "source": task["source_revision"], "generation": state["state"]["generation"],
             "epoch": state["state"]["progress_guard"]["task_epochs"][key(self.c.task_id)]})
 
-    def original(self):
-        """Target the admitted originals; never manufacture complete discovery."""
-        from .personal_rules import enrollment_rules
-        p, issues = self.personal.plan, []
-        prerequisites = self.c.track.publication_prerequisites() if self.c.track is not None else None
-        observed = self.publication.current_original(_issues=issues, _prerequisites=prerequisites)
-        selected = [i for i in issues if i.identity.issue_id == p["issue_id"]]
-        require(len(selected) == 1 and self.c.original_matches(selected[0]), "Original scope or native dependencies changed")
-        require([enrollment_rules(self.read, p["repository"], p["owner"], rule["ref"].removeprefix("refs/heads/"))
-                 for rule in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")
-        if self.c.track is not None:
-            for issue in issues:
-                self.c.track.original_issue(issue.identity, issue)
-        else:
-            require(not p["native_prerequisites"], "Native prerequisites require independent accepted completion")
-        return observed
+    def original(self, *, _capture=None, _qualified=None):
+        return self.publication.original(_capture=_capture, _qualified=_qualified)
 
+    @measured("product.facts")
     def facts(self, *, merge=False):
         p = self.personal.plan
-        owner = owned_repository(self.read, p["repository"]["name"], self.personal.repository_id)
-        repo_response = self.read.get(self.target.api)
-        repo = repo_response.body
-        require(repo_response.status == 200 and type(repo) is dict and owner == p["owner"] and owner["push_access"]
+        repo = {}
+        owner = owned_repository(self.read, p["repository"]["name"], self.personal.repository_id, _repository=repo)
+        require(type(repo) is dict and owner == p["owner"] and owner["push_access"]
                 and repo.get("node_id") == self.target.node_id and repo.get("default_branch") == p["repository"]["default_branch"],
                 "Repository, account, permissions or default branch changed")
         base_ref = "refs/heads/" + p["repository"]["default_branch"]
@@ -236,7 +222,7 @@ class PersonalProduct:
         require(refs.get(self.target.ref) == self.c.revision() and base_ref in refs,
                 "Exact published HEAD and current base required")
         policy = observe_policy(self.read, self.target, base_ref, personal=(p["repository"], p["owner"]),
-            expected_sha=refs[base_ref], service=self.service, expected_head=self.c.revision())
+            expected_sha=refs[base_ref], service=self.service, expected_head=self.c.revision(), _identity=(repo, owner))
         names = sorted(set(p["required_check_names"]) | set(policy["checks"]))
         require(len(names) <= 32, "Project checks exceed accepted capacity")
         methods = []
@@ -270,7 +256,7 @@ class PersonalProduct:
 
     @network_operation("product.proposed")
     @historical_operation
-    def proposed(self, operation, *, approved=None, title=None, body=None, method=None, delegate=False):
+    def proposed(self, operation, *, approved=None, title=None, body=None, method=None, delegate=False, _original=None):
         require(operation in ("PR", "MERGE"), "Unsupported product operation")
         now = self.clock()
         if approved is None:
@@ -286,7 +272,7 @@ class PersonalProduct:
             capture = {} if self.c.episode else None
             seal = self.local(_history_capture=capture)
             facts = self.facts(merge=operation == "MERGE")
-            original = self.original()
+            original = self.original(_capture=_original)
             retained = self.record()
             if operation == "PR":
                 product_text(title, body)
@@ -340,20 +326,26 @@ class PersonalProduct:
 
     @measured("product.live")
     @historical_operation
-    def live(self):
+    def live(self, *, _observed=None, _history_capture=None):
         if self.c.episode:
             from .personal_read_frame import product_live
-            return product_live(self)
+            return product_live(self, _observed=_observed, _history_capture=_history_capture)
         from .personal_read_frame import forbid_writes
         forbid_writes()
-        return self._live_current()
+        return self._live_current(_observed=_observed, _history_capture=_history_capture)
 
-    def _live_current(self):
+    def _live_current(self, *, _observed=None, _history_capture=None):
         require(self.active is not None, "Exact operation consent required")
         view = self.active["view"]
         bind_consent(view, self.clock())
-        capture = {} if self.c.episode else None
-        observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
+        capture = _history_capture if _history_capture is not None else ({} if self.c.episode else None)
+        observed = _observed
+        if observed is None:
+            observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
+        elif self.c.episode and _history_capture is None:
+            # A caller without the actual historical capture cannot replace
+            # that live qualification by supplying a canonical dictionary.
+            observed = self.c.live(_history_capture=capture)
         seal = self.local(genuine=False, _observed=observed)
         self.history_binding(capture=capture, view=view, _observed=observed)
         require(view["issued_at"] <= self.clock() < view["expires_at"]
@@ -436,7 +428,7 @@ class PersonalProduct:
     def proof(self, purpose, subject, kind, payload, *, principal="personal:operator"):
         return self.c.authority._proof(purpose, subject, "product-" + kind, payload, principal)
 
-    def provider(self, permit):
+    def provider(self, permit, request):
         v = self.live()
         adapter = GitHubPolicyAdapter(self.cfg, self.service, product_base=v["facts"]["base_ref"],
             governance=tuple(d["path"] for d in self.personal.intent["governance"]))
@@ -457,15 +449,15 @@ class PersonalProduct:
         task = Task(self.personal.repository_id, self.c.task_id, self.target.branch.split("/")[-1], self.c.revision(), self.target.ref,
             permit.decision.baseline.requirement_id, state["state"]["generation"], state["state"]["progress_guard"]["task_epochs"][key(self.c.task_id)],
             state["tasks"][key(self.c.task_id)]["iteration"], self.c.source_authors())
-        return provider, task
+        return provider, provider.plan(task, request, _snapshot=snapshot)
 
     def authorize(self, provider, plan, qualifications=Qualifications()):
         return Authorization(self.proof("policy/operation", provider.authorization_subject(plan, qualifications), "operation",
             {"plan": data(plan), "qualifications": data(qualifications)}), qualifications)
 
-    def final_boundary(self):
+    def final_boundary(self, *, _original=None):
         v = self.live()
-        require(self.original() == v["original_observation"]
+        require(self.original(_qualified=_original) == v["original_observation"]
                 and self.facts(merge=v["operation"] == "MERGE") == v["facts"], "Current original ticket/project policy/head/base changed")
         if v["operation"] == "MERGE":
             item = self.pull(expected_base=v["facts"]["base_sha"])
@@ -487,6 +479,7 @@ class PersonalProduct:
         require(operation != "MERGE" or delegate is True and accept_envelope is True,
                 "Merge defaults MANUAL; separately delegate the observed-base envelope")
         with invocation_lock(self.c.memory.control):
+            original = {}
             row = self.record()
             require(not self.c.episode or row is None or row["schema_version"] == 2, "Legacy Product effects are observation-only")
             old = next((r for r in row["intents"] if r["approval"] == reviewed), None) if row else None
@@ -496,7 +489,8 @@ class PersonalProduct:
                         and self.c.record()["coordination"] is None, "Observe original effect only; no replacement authorization")
             retained = old is not None
             if old is None:
-                proposed = self.proposed(operation, approved=reviewed, title=title, body=body, method=method, delegate=delegate)
+                proposed = self.proposed(operation, approved=reviewed, title=title, body=body, method=method, delegate=delegate,
+                    _original=original)
                 require(proposed["approval"] == reviewed and proposed.get("result") is not None, "Product proposal changed")
                 require("plan_disabled_rules_assent" not in proposed["result"] or accept_plan_unavailable is True,
                         "PLAN_UNAVAILABLE: separately accept this exact operation's plan-disabled rules warrant")
@@ -551,11 +545,12 @@ class PersonalProduct:
                 with self.service.bounded():
                     self.native_reviews(self.pull(expected_base=old["view"]["facts"]["base_sha"]), old["view"]["facts"])
             with self.service.bounded():
-                provider, task = self.provider(permit)
-                plan = provider.plan(task, Request(Operation(operation), summary=old["view"]["title"] or ""))
+                provider, plan = self.provider(permit, Request(Operation(operation), summary=old["view"]["title"] or ""))
+                task = plan.task
                 qualifications = self.qualifications(provider, plan) if operation == "MERGE" else Qualifications()
                 authorization = self.authorize(provider, plan, qualifications)
-                require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Actual M3 refused product operation")
+                require(provider._decide(plan, replace(plan, safety=provider._safety(task)), authorization).effect == Effect.ALLOW,
+                        "Actual M3 refused product operation")
                 payload = data(plan.payload)
                 if operation == "PR":
                     payload.update(body=old["view"]["body"], revision=task.revision)
@@ -585,13 +580,12 @@ class PersonalProduct:
                     "effect", {"id": old["action"], "plan": digest(plan), "payload": payload})
                 self._policy_final = lambda: provider.decide(plan, authorization).effect == Effect.ALLOW
             from .personal_read_frame import current_source
-            self.c.workers.fence()
             current_source(self, old, product=True)  # One immutable handoff.
             self._writing = (old["action"], {**action, "status": "SUBMITTED"}, self.c.memory.inspect())
             try:
                 # Accepted forge owns its unchanged dispatch bound.
                 observation = self.forge.submit(old["action"], Operation(operation), payload, authorization=effect,
-                    plan_digest=digest(plan), dispatch=dispatch, validate=self.final_boundary)
+                    plan_digest=digest(plan), dispatch=dispatch, validate=lambda: self.final_boundary(_original=original or None))
             except (ADPError, OSError):
                 observation = None
             finally:
@@ -703,6 +697,7 @@ class PersonalProduct:
             row = self.record()
             require(row is not None and row["pull"] is not None, "Original PR required")
             entry = next((r for r in row["execution"] if r["approval"] == reviewed), None)
+            admitted = entry is None
             if entry is None:
                 require(not self.c.episode or row["schema_version"] == 2, "Legacy execution is observation-only")
                 proposal = self.execution_preview(operation, approved=reviewed, accept_native=accept_native, confirm_no_checks=confirm_no_checks)
@@ -720,11 +715,11 @@ class PersonalProduct:
             self.history_binding(view=entry["view"])
             require(entry["view"]["issued_at"] <= self.clock() < entry["view"]["expires_at"], "Original execution consent expired")
             with consent_scope(entry["view"]):
-                return self._execute_selected(operation, entry, reviewed)
+                return self._execute_selected(operation, entry, reviewed, _admitted=admitted)
 
-    def _execute_selected(self, operation, entry, reviewed):
+    def _execute_selected(self, operation, entry, reviewed, *, _admitted=False):
         if operation == "CI":
-            if entry["phase"] == "PREPARED":
+            if entry["phase"] == "PREPARED" and not _admitted:
                 self.local()
                 self.original()  # A new check consumes current original scope.
             require(entry["view"]["revision"] == self.c.revision(), "Original CI consent source changed")
@@ -739,8 +734,9 @@ class PersonalProduct:
                     require(self.validation_binding() == entry["view"]["validation"], "Approved CI binding changed")
                     worker = self.c.resume_product_review(entry)
                     if worker is None:
-                        self.local()  # New role handoff; retained stopped review uses its exact recovery path.
-                        self.original()
+                        if not _admitted:
+                            self.local()  # Restart needs its own cold qualification.
+                            self.original()
                         context = self.review_context()
                         worker = self.c.workers.execute("product", context, self.personal.feature)
                     self.local(genuine=False)  # Fresh canonical approval after accounting.
@@ -749,7 +745,7 @@ class PersonalProduct:
                     row["review"] = worker["request"]["id"]; self.save(row)
                     result = {"status": "PRODUCT_REVIEWED" if observed.result.approved else "REQUIRES_CORRECTION", "revision": self.c.revision()}
                 else:
-                    if self.record()["correction"] is None:
+                    if self.record()["correction"] is None and not _admitted:
                         self.local()
                         self.original()
                     result = self.correct(entry)
@@ -767,8 +763,8 @@ class PersonalProduct:
         bind_consent(v, self.clock())
         view = {**v, "operation": "VALIDATE", "method": None}
         self.active = {"view": view, "binding": entry["binding"], "action": None}
-        provider, task = self.provider(permit)
-        plan = provider.plan(task, Request(Operation.VALIDATE))
+        provider, plan = self.provider(permit, Request(Operation.VALIDATE))
+        task = plan.task
         auth = self.authorize(provider, plan)
         rules = self.checks()
         policy = EvidencePolicy(plan.policy_digest, rules, v["issued_at"], v["expires_at"], result_maximum_age=300)
@@ -933,8 +929,8 @@ class PersonalProduct:
                 and state["request"] == digest(gate.request) and state["original_request"] == data(gate.request), "Actual #21 evidence receipt differs")
         return latest
 
-    def validation_binding(self):
-        latest = self.qualified()
+    def validation_binding(self, *, _latest=None):
+        latest = self.qualified() if _latest is None else _latest
         if latest["status"] == "NOT_REQUIRED":
             return digest({"status": "NOT_REQUIRED", "policy": latest["policy"], "revision": latest["revision"]})
         gate = typed(EvidenceGate, latest["gate"])
@@ -942,11 +938,11 @@ class PersonalProduct:
             "results": [data(result) for result in gate.results], "checks": [data(c) for c in self.checks()]})
 
     def review_context(self):
-        self.qualified()
         context = self.c.context("code")
+        latest = self.qualified()
         return {**context, "purpose": "product", "criterion": self.personal.plan["criterion"],
-            "pull": self.record()["pull"], "validation_binding": self.validation_binding(),
-            "actual_post_pr_evidence": self.record()["gates"][-1],
+            "pull": self.record()["pull"], "validation_binding": self.validation_binding(_latest=latest),
+            "actual_post_pr_evidence": latest,
             "original_relation_delta": getattr(self.c, "original_relation_delta", [])}
 
     def verify_review(self):

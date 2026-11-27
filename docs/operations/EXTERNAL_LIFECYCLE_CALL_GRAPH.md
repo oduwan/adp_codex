@@ -33,6 +33,62 @@ are UNKNOWN until observed. Inclusive spans overlap and cannot be added.
 | ProductAuthority._validate178 / PersonalAuthority._proof58 / verify77 → c.live / Memory.inspect / flow.live | Nested proof projections | Same-stage source/generation/approval derivations can share their actual canonical observation; no reuse across M2 or journal transitions |
 | CI / REVIEW / CORRECT / MERGE / REPORT / completion / NEXT | Conditional; actual CI, role and recovery branches vary | Independent semantic gates and finite original windows remain. No Worker dispatch, acceptance, merge or successor admission is implied by a historical observation |
 
+## Product lifecycle consolidation
+
+`PersonalProduct.original` delegates to the publication original/closure decoder;
+there is no second Product interpretation of native scope. A fresh consent
+reconstruction captures only immutable original/prerequisite operands in a local
+variable. Final authorization still obtains new selected/closure GETs and native
+rules, compares their exact content, and observes each accepted predecessor's
+current PR and canonical Memory. Retained/restarted intents start cold or take
+their existing observation-only recovery route. No capture is persisted.
+
+`facts` consumes the actual response authenticated by `owned_repository` rather
+than immediately fetching that repository again. Only the same stage's exact
+response is supplied to the existing Free-private-plan validator. Ordinary
+standalone/signed observations remain independent. Personal PR detail validates
+both head/base numeric ID, node ID and name itself; the redundant preceding
+repository GET is removed only for the explicit personal forge mode.
+
+Product `provider` constructs its initial plan from its actual adapter snapshot.
+The initial exact decision evaluates that plan with a late actual M1/M2 safety
+observation; the post-SUBMITTED plan and final default `decide` remain new
+observations. PR intent therefore has three plans/three adapter inspections,
+instead of four/five. No ALLOW verdict is cached.
+
+PersonalAuthority proof creation and verification each obtain their own actual
+`c.live` observation and pass it through the existing ProductAuthority validator.
+Accounting `flow.live` still has its read-only wrapper, independent closing
+Memory/identity/consent comparison and late expiry fence. Worker receipt checking
+uses the one canonical snapshot obtained after runtime observation (the actual
+episode view in accounting mode); assignment and Guard use that same subject.
+Accounted receipts still require SYNCED ownership, generation, assignment result,
+independent stopped context and current permitted Guard state.
+
+New CI/REVIEW/CORRECT confirmation reuses its immediately completed cold preview
+admission through an invocation-local argument. It still performs the native
+current policy/base/PR/check observations and role-specific handoff. A retained
+entry defaults to cold or its original stopped-stage recovery path. CI is
+qualified once after review-context callbacks, then its deterministic binding
+uses that exact result. A changed SHA, missing CI or rejected review still refuses.
+
+Completion replaces whole-future-inventory `c.fresh` with the existing checkout,
+administration/governance, cold Product review and selected native-closure checks.
+Its final subject is taken after merge status observation, which may checkpoint.
+REPORT preview consumes the acceptance already established by track status,
+preserving the selected explicit runtime; confirmation consumes that same actual
+original observation instead of discovering the track again. REPORT's later
+after-reservation historical acceptance remains a full check: the active overlay
+cannot borrow a pre-reservation subject. Its pre-effect/in-flight distinction,
+actual comment observation and no-duplicate recovery remain unchanged.
+
+Status consumes a successful acceptance's actual closing canonical subject;
+unfinished windows still inspect actual Memory. NEXT keeps its independent
+current native readiness, separate consent/window, base checks around owner
+release and restart/handoff checks. No accepted snapshot is carried across that
+canonical transition. The separate cold `accepted`, current late `accepted` and
+REPORT-overlay judgments are retained because they have different subjects.
+
 ## Request bounds
 
 Let K be selected original plus actual native prerequisite count. The existing

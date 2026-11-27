@@ -133,14 +133,15 @@ def current_source(owner, consent, *, product=False):
                 "Unsupported hidden index flags")
 
 
-def _live(owner, *, product=False, _capture=None):
+def _live(owner, *, product=False, _capture=None, _observed=None, _history_capture=None):
     with qualification(owner.c):
         token = _READ_ONLY.set(True)
         try:
-            before = owner.c.memory.inspect()
+            before = owner.c.memory.inspect() if _observed is None else _observed
             consent = deepcopy(owner.active) if product else owner.record(_observed=before)
             require(consent is not None, "Exact operation consent required")
-            result = owner._live_current(**({} if product else {"review": True}))
+            result = (owner._live_current(_observed=before, _history_capture=_history_capture)
+                      if product else owner._live_current(review=True))
             from .personal_episode import same_observation
             closing = owner.c.memory.inspect()
             same_observation(before, closing)
@@ -168,5 +169,5 @@ def publication_live(publication, *, _capture=None):
     return _live(publication, _capture=_capture)
 
 
-def product_live(product):
-    return _live(product, product=True)
+def product_live(product, *, _observed=None, _history_capture=None):
+    return _live(product, product=True, _observed=_observed, _history_capture=_history_capture)

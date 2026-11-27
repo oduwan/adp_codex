@@ -488,7 +488,11 @@ class PersonalTrack:
         from .personal_episode import settled_guards
         c = product.c
         capture = {} if c.episode else None
-        c.live(); c.fresh(_history_capture=capture); c.workers.fence(); c.original_approval(); c.verify_local_review()
+        # Completion has no publication consent to revive. Qualify the owned
+        # checkout and selected native closure, not all future work again.
+        product.publication.checkout()
+        product.local(_history_capture=capture)
+        product.original()
         product.qualified(); product.verify_review()
         require(read_private(self.personal.state / "prepared-track.json", optional=True) is not None,
                 "Accepted TicketPreparer packet is required")
@@ -585,11 +589,13 @@ class PersonalTrack:
         active = []
         for link in links:
             identity = typed(Identity, link["identity"])
+            qualified = {}
             accepted = self.accepted(identity, transport=transport, runtime=(runtimes or {}).get(identity),
+                _capture=qualified,
                 **({"_history_capture": _history_capture} if _history_capture is not None
                    and link["identity"] == self.link["identity"] else {}))
             personal = load_state(Path(link["directory"]))
-            state = personal.memory().inspect()
+            state = qualified[identity][1] if accepted is not None else personal.memory().inspect()
             require(state["health"] == "SYNCED", "Track M1 history is not synchronized")
             require(all(a["status"] == "OBSERVED" for a in state["state"]["execution"]["actions"].values())
                     and settled_guards(personal, state["state"])

@@ -92,7 +92,7 @@ class PersonalReport(PersonalProduct):
 
     @network_operation("product.report_preview")
     @historical_operation
-    def report_preview(self, *, approved=None):
+    def report_preview(self, *, approved=None, _observation=None):
         now = self.clock()
         if approved is None:
             issued, expires, nonce = now, min(now + 300, self.personal.plan["window"]["expires_at"]), secrets.token_hex(16)
@@ -106,13 +106,15 @@ class PersonalReport(PersonalProduct):
         track = self.c.track
         identity = typed(Identity, track.link["identity"])
         with self.service.bounded():
-            accepted = track.accepted(identity, transport=self.transport, runtime=self.c.runtime)
-            require(accepted is not None, "Only actual accepted completion can produce a product report")
             capture = {} if self.c.episode else None
             seal = self.local(_history_capture=capture)
             facts = self.facts()
             original = self.original()
-            current, _, _ = track.status(transport=self.transport)
+            current, observation, completed = track.status(transport=self.transport, runtimes={identity: self.c.runtime})
+            accepted = completed.get(identity)
+            require(accepted is not None, "Only actual accepted completion can produce a product report")
+            if _observation is not None:
+                _observation.append(observation)
             body = ("Implemented original Issue " + str(self.personal.plan["issue"]) + ": " + self.personal.intent["original"]["title"]
                 + "\n\nReviewed source: `" + accepted["source"] + "`. " + accepted["pull"]["url"]
                 + "\nProject checks at acceptance: " + accepted["ci"]["status"]
@@ -151,8 +153,8 @@ class PersonalReport(PersonalProduct):
     @historical_operation
     def observed_report(self, row):
         bind_consent(row["view"])
-        owner = owned_repository(self.read, self.forge.repository, self.personal.repository_id)
-        metadata = self.service.request("GET", self.target.api)
+        metadata = {}
+        owner = owned_repository(self.read, self.forge.repository, self.personal.repository_id, _repository=metadata)
         require(owner == self.personal.plan["owner"] and type(metadata) is dict and metadata.get("node_id") == self.target.node_id,
                 "Current report repository/account identity or permissions changed")
         action = self.journal.inspect()["state"]["execution"]["actions"].get(row["action"])
@@ -194,9 +196,10 @@ class PersonalReport(PersonalProduct):
             row = self.report_record()
             retained = row is not None
             if row is None:
-                proposal = self.report_preview(approved=reviewed)
+                observation = []
+                proposal = self.report_preview(approved=reviewed, _observation=observation)
                 require(proposal["approval"] == reviewed, "Exact report proposal changed")
-                current = self.c.track.current()
+                current = observation[0]
                 issue = next(i for i in current.snapshot.issues if data(i.identity) == self.c.track.link["identity"])
                 row = {"view": proposal["result"], "approval": reviewed, "binding": proposal["binding"],
                     "action": self.report_key(), "requirement": None, "reservation": None, "observation": None,
@@ -218,8 +221,8 @@ class PersonalReport(PersonalProduct):
                 row["requirement"] = permit.decision.baseline.requirement_id
                 self.save_report(row)
                 with self.service.bounded():
-                    provider, task = self.provider(permit)
-                    plan = provider.plan(task, Request(Operation.REPORT, report_target=row["view"]["target"], report_body=row["view"]["body"]))
+                    provider, plan = self.provider(permit, Request(Operation.REPORT, report_target=row["view"]["target"], report_body=row["view"]["body"]))
+                    task = plan.task
                     q = self.qualifications(provider, plan)
                     profile = DelegationProfile(self.personal.repository_id, self.personal.plan["issue_id"], self.c.task_id,
                         plan.task.iteration, self.target.ref, row["view"]["facts"]["base_ref"], self.c.revision(), plan.policy_digest,
@@ -230,7 +233,8 @@ class PersonalReport(PersonalProduct):
                     require(self.c.authority.verify(profile.evidence, purpose="github-product/delegation", subject=delegation_subject(profile)),
                             "Separate operation-specific REPORT delegation required")
                     authorization = self.authorize(provider, plan, q)
-                    require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Actual M3 refused the exact REPORT")
+                    require(provider._decide(plan, replace(plan, safety=provider._safety(task)), authorization).effect == Effect.ALLOW,
+                            "Actual M3 refused the exact REPORT")
                     payload = {**data(plan.payload), "revision": task.revision}
                     action = {"task_key": key(self.c.task_id), "generation": task.generation, "operation": "REPORT",
                         "revision": task.revision, "source_ref": task.source_ref, "target": plan.target_ref,
@@ -248,7 +252,6 @@ class PersonalReport(PersonalProduct):
                         "effect", {"id": row["action"], "plan": digest(plan), "payload": payload})
                     self._policy_final = lambda: provider.decide(plan, authorization).effect == Effect.ALLOW
                 from .personal_read_frame import current_source
-                self.c.workers.fence()
                 current_source(self, row, product=True)  # One immutable handoff.
                 self._writing = (row["action"], {**action, "status": "SUBMITTED"}, self.c.memory.inspect())
                 try:

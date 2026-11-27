@@ -50,7 +50,10 @@ class AccountingWriterTests(unittest.TestCase):
                     _issues.extend(observed)
                     return {"map": "actual-current"}
                 p.facts = facts
-                p.publication = SimpleNamespace(current_original=originals)
+                from adp.personal_publication import PersonalPublication
+                p.publication = PersonalPublication.__new__(PersonalPublication)
+                p.publication.c, p.publication.personal = p.c, p.personal
+                p.publication.current_original = originals
                 p.record = lambda **kw: None
                 p.proposed = lambda *a, **kw: proposal(p, *a, **kw)
                 p.journal = SimpleNamespace(upgrade_product_flow=Mock())

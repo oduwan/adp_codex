@@ -132,7 +132,9 @@ class GitHubProductForge(GitHubForgeBackend):
         """Fresh current PR observation, distinct from historical create intent."""
         require(type(identity) is dict, "Exact PR identity required")
         integer(identity["number"], 1)
-        if not self._identity():
+        # Personal detail validates both exact repository identities below;
+        # generic/signed callers retain their independent identity request.
+        if self.head_ref is None and not self._identity():
             return None
         response = self.transport.request("GET", f"/repos/{self.repository}/pulls/{identity['number']}")
         item = response.body

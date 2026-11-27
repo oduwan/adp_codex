@@ -59,12 +59,13 @@ class PersonalAuthority:
         from .personal_read_frame import forbid_writes
         forbid_writes()
         self.c.require_development_protocol()
-        self.c.live()
+        capture = {} if self.c.episode else None
+        observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
         body = {"schema_version": 1, "purpose": purpose, "subject": subject, "kind": kind,
             "payload": payload, "principal": principal, "approval": self.c.personal.intent["approval"],
-            "generation": self.c.memory.inspect()["state"]["generation"],
+            "generation": observed["state"]["generation"],
             "expires_at": self.c.personal.plan["window"]["expires_at"]}
-        self._validate(body)
+        self._validate(body, _observed=observed, _history_capture=capture)
         evidence = Attestation(principal, "personal:" + digest(body), subject)
         create_private(self.directory)
         path = self.directory / (digest(body) + ".json")
@@ -76,22 +77,23 @@ class PersonalAuthority:
 
     def verify(self, evidence, *, purpose, subject):
         try:
-            self.c.live()
+            capture = {} if self.c.episode else None
+            observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
             require(type(evidence) is Attestation and evidence.reference.startswith("personal:"), "Expected local personal evidence")
             reference = evidence.reference.removeprefix("personal:")
             require(len(reference) == 64 and all(c in "0123456789abcdef" for c in reference), "Unsafe evidence reference")
             body = read_private(self.directory / (reference + ".json"))
             require(digest(body) == reference and evidence == Attestation(body["principal"], "personal:" + reference, body["subject"])
                     and body["purpose"] == purpose and body["subject"] == subject, "Evidence purpose or subject differs")
-            self._validate(body)
+            self._validate(body, _observed=observed, _history_capture=capture)
             return True
         except (ADPError, OSError, KeyError, ValueError, TypeError):
             return False
 
-    def _validate(self, body):
+    def _validate(self, body, *, _observed=None, _history_capture=None):
         fields(body, "schema_version purpose subject kind payload principal approval generation expires_at")
         require(body["schema_version"] == 1 and body["approval"] == self.c.personal.intent["approval"]
-                and body["generation"] == self.c.memory.inspect()["state"]["generation"]
+                and body["generation"] == (_observed if _observed is not None else self.c.memory.inspect())["state"]["generation"]
                 and self.c.clock() < body["expires_at"] == self.c.personal.plan["window"]["expires_at"],
                 "Personal authority expired or ownership changed")
         kind, payload, purpose, subject = (body[name] for name in ("kind", "payload", "purpose", "subject"))

@@ -11,6 +11,82 @@ from personal_publication_fixtures import PersonalObjectTransport, PublicationFi
 from network_fixtures import gv
 
 
+def accepted_native_fixture(f, product, number):
+    """Synthetic immutable acceptance; real cold/late native read validators.
+
+    No genuine Worker/history qualification is implied. Native GETs consume the
+    owning operation's actual Budget, including predecessor reads.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from adp.discovery_schema import digest
+    from adp.github_product import GitHubProductForge
+    from adp.network_git import GitHubCAS, GitHubTarget
+    from adp.personal_track import PersonalTrack
+    from adp.ticket_types import OriginalTicket
+    from adp.guard_types import data
+    records = {}
+    actual_accepted = PersonalTrack.accepted
+    product.c.track.originals = {identity: (original if type(original) is OriginalTicket else
+        OriginalTicket(product.c.track.seed().repository, original.issue, f.now))
+        for identity, original in product.c.track.originals.items()}
+    for identity, original in product.c.track.originals.items():
+        n = original.issue.number
+        if n >= number:continue
+        source, merge = digest({"source": n})[:40], digest({"merge": n})[:40]
+        base, tree = "b"*40, "c"*40
+        branch = "work/issue-" + str(n)
+        target = GitHubTarget(f.rid, product.target.node_id, 17, *f.name.split("/"), branch)
+        repo = {"id": 17, "node_id": target.node_id, "full_name": f.name}
+        pull = {"id": str(3000+n), "node_id": "PR-accepted-"+str(n), "number": 20+n,
+            "repository_id": f.rid, "url": "https://github.com/"+f.name+"/pull/"+str(20+n)}
+        item = {"id": int(pull["id"]), "node_id": pull["node_id"], "number": pull["number"], "html_url": pull["url"],
+            "draft": False, "state": "closed", "merged": True, "title": "Accepted original", "body": "Accepted scope",
+            "merge_commit_sha": merge, "merged_by": {"id": 91},
+            "head": {"ref": branch, "sha": source, "repo": repo}, "base": {"ref": "trunk", "sha": base, "repo": repo}}
+        calls = []
+        def request(method, path, body, *, seconds, item=item, merge=merge, source=source, base=base, tree=tree, target=target):
+            calls.append((method, path))
+            assert method == "GET" and body is None
+            if path == target.api:value = repo
+            elif "/git/commits/" in path:value = {"sha": merge, "tree": {"sha": tree}, "parents": [{"sha": base}, {"sha": source}]}
+            elif "/pulls?" in path:value = [item]
+            elif path == target.api+"/pulls/"+str(item["number"]):value = item
+            else:raise AssertionError("Unexpected accepted native route: "+path)
+            return Response(200, json.dumps(value).encode())
+        def bind(node_id, database_id, target=target):
+            assert (node_id, database_id) == (target.node_id, target.database_id)
+        service = GitHubCAS(target, SimpleNamespace(request=request, bind_repository=bind))
+        forge = GitHubProductForge.__new__(GitHubProductForge)
+        forge.repository, forge.repository_id, forge.head_ref = f.name, "17", target.ref
+        forge.service = service
+        from adp.github_product import _Responses
+        forge.transport = _Responses(service)
+        # Cold native acceptance: exact merge/source ancestry plus unique PR.
+        payload = {"pull": pull, "revision": source, "head_ref": target.ref, "base_ref": "refs/heads/trunk",
+            "expected_base": base, "source_tree": tree, "method": "merge"}
+        receipt = {"identity": data(identity), "original": data(original), "source": source, "merge": merge,
+            "actor": 91, "pull": pull, "merge_payload": payload}
+        subject = {"health": "SYNCED", "state": {"generation": 1}, "tasks": {}}
+        memory = SimpleNamespace(inspect=lambda subject=subject: copy.deepcopy(subject))
+        records[identity] = (memory, subject, SimpleNamespace(forge=forge), receipt, item)
+    def accepted(identity, **kwargs):
+        if identity not in records:return None
+        qualified = records[identity]
+        if kwargs.get("_qualified") is not None:
+            return actual_accepted(product.c.track, identity, _qualified=qualified)
+        memory, subject, previous, receipt, item = qualified
+        observed = previous.forge.observe(digest(receipt), "MERGE", receipt["merge_payload"], attempted=True)
+        assert observed.status == "PRESENT"
+        actual = previous.forge.pull(receipt["pull"], revision=receipt["source"], source_ref=receipt["merge_payload"]["head_ref"],
+            base_ref="refs/heads/trunk", expected_base=item["base"]["sha"])
+        inventory = previous.forge.inventory("PR", {"body": item["body"]})
+        assert actual == item and inventory is not None and len(inventory) == 1
+        if kwargs.get("_capture") is not None:kwargs["_capture"][identity] = qualified
+        return receipt
+    product.c.track.accepted = Mock(side_effect=accepted)
+
+
 class ProductTransport(PersonalObjectTransport):
     def __init__(self, f, root, target):
         super().__init__(f, root, target)
