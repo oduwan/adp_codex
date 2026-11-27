@@ -258,6 +258,8 @@ class PersonalCoordinator:
             detail = decision.kind.value
             if item["active"] is not None and decision.kind == DecisionKind.FORENSIC_REQUIRED:
                 detail = "EXPIRED_RESERVATION" if self.guard._now() > item["active"]["deadline"] else "ACTIVE_RESERVATION"
+            elif item["campaign"] and item["campaign"]["stopped"] is None and None in item["campaign"]["results"] and decision.kind == DecisionKind.FORENSIC_REQUIRED:
+                detail = "ACTIVE_CAMPAIGN"
             raise PersonalBlocked(code, "Follow the retained M2 disposition.",
                 subreason=detail)
 

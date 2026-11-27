@@ -151,3 +151,42 @@ class LogicalDevelopmentTests(PersonalFixture):
             self.runtime.dispatch.assert_not_called()
             self.assertEqual(self.c.memory.inspect(), before)
             self.assertEqual(stop.read_bytes(), stop_bytes)
+
+    def test_lost_m1_and_stage_replies_reconcile_original_developer_without_double_charge(self):
+        run(self.a, "checkout", "-b", "work/issue-1")
+        self.enroll()
+        self.runtime.dispatch.side_effect = existing.PersonalExecutionTests.dispatch.__get__(self)
+        self.c.initialize_run()
+        review = self.c.workers.execute("original", self.c.context("original"), self.a)
+        row = self.c.record(); row.update(original_review=review["request"]["id"], phase="FEATURE")
+        self.c.save(row); self.c.prepare_feature()
+        context = self.c.context("develop")
+        accept = self.c.memory.accept
+        def lost_accept(identity):
+            accept(identity)
+            raise OSError("Synthetic lost M1 accept reply")
+        with patch.object(self.c.memory, "accept", side_effect=lost_accept), self.assertRaises(OSError):
+            self.c.workers.execute("develop", context, self.personal.feature)
+        worker = next(r for r in self.c.workers.records() if r["purpose"] == "develop")
+        assignment = worker["assignment"]["assignment_id"]
+        self.assertEqual(worker["phase"], "STOPPED")
+        self.assertEqual(self.c.memory.inspect()["tasks"][key(self.c.task_id)]["assignments"][assignment]["status"], "accepted")
+        save = self.c.workers.save
+        def lost_stage(row):
+            if row["purpose"] == "develop" and row["phase"] == "ACCOUNTED":
+                raise OSError("Synthetic lost stage-accounting reply")
+            return save(row)
+        with patch.object(self.c.workers, "save", side_effect=lost_stage), self.assertRaises(OSError):
+            self.c.workers.execute("develop", context, self.personal.feature)
+        before = self.c.guard._snapshot(self.c.task_id, worker["requirement"])[2]
+        self.assertIsNone(before["active"])
+        self.assertEqual((before["counters"]["stalls"], before["counters"]["corrections"]), (0, 0))
+        self.runtime.dispatch.reset_mock()
+        with patch.object(self.c.guard, "observe_stage", side_effect=AssertionError("Never account the stage twice")):
+            recovered = self.c.workers.execute("develop", context, self.personal.feature)
+        self.runtime.dispatch.assert_not_called()
+        self.assertEqual(recovered["request"]["id"], worker["request"]["id"])
+        self.assertEqual(self.c.guard._snapshot(self.c.task_id, worker["requirement"])[2], before)
+        self.assertEqual(self.c.record()["developer"], worker["request"]["id"])
+        self.assertEqual(self.c.record()["phase"], "STAGE")
+        self.assertEqual(len(self.requests), 2)

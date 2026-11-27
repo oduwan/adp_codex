@@ -68,3 +68,9 @@ class RefusalDiagnosticsTests(fixtures.GuardFixture):
             blocker = self.command(error)
             self.assertEqual(blocker["code"], "PERSONAL_STATE_OR_AUTHORITY_UNVERIFIED")
             self.assertEqual(blocker["subreason"], "UNKNOWN")
+
+    def test_operator_decision_wording_does_not_invent_exhaustion_or_its_cause(self):
+        blocker = self.command(PersonalBlocked("PROGRESS_GUARD_STOPPED", "PRIVATE_HOST", subreason="OPERATOR_DECISION_REQUIRED"))
+        self.assertEqual(blocker["subreason"], "OPERATOR_DECISION_REQUIRED")
+        self.assertNotIn("exhaust", blocker["action"])
+        self.assertNotIn("expired", blocker["action"])

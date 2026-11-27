@@ -36,7 +36,8 @@ REFUSALS = {
     "EXPIRED_RESERVATION": "The original reservation is overdue. Preserve its deadline and stop evidence for supported accounting; do not backdate, renew or redispatch it.",
     "FORENSIC_REQUIRED": "Independent bounded forensic disposition is required. Preserve the failed evaluations and original counters; do not retry development.",
     "STOP_UNSAFE": "The original safety stop is terminal. Preserve its evidence and obtain the supported operator disposition; do not reset budgets.",
-    "OPERATOR_DECISION_REQUIRED": "The finite guard recovery is exhausted. Preserve its history and request an explicit operator decision.",
+    "OPERATOR_DECISION_REQUIRED": "The guard requires an explicit operator decision. Preserve its original disposition, evidence and finite budgets; do not reset or retry.",
+    "ACTIVE_CAMPAIGN": "Finish or reconcile the original finite diagnostic campaign before ordinary development; preserve all outcomes and limits.",
     "UNSETTLED_GUARD": "Historical acceptance has an unfinished or terminal guard. Observe its original disposition; do not infer accepted completion or advance dependencies.",
     "ROLE_BUDGET_EXHAUSTED": "The original finite role allowance is consumed. Preserve all requests and results; do not allocate a replacement or renew the window.",
 }
