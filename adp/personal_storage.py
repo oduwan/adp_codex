@@ -40,6 +40,7 @@ REFUSALS = {
     "ACTIVE_CAMPAIGN": "Finish or reconcile the original finite diagnostic campaign before ordinary development; preserve all outcomes and limits.",
     "UNSETTLED_GUARD": "Historical acceptance has an unfinished or terminal guard. Observe its original disposition; do not infer accepted completion or advance dependencies.",
     "ROLE_BUDGET_EXHAUSTED": "The original finite role allowance is consumed. Preserve all requests and results; do not allocate a replacement or renew the window.",
+    "REVIEW_PURPOSE_MISMATCH": "The stopped Reviewer did not approve this exact code-review purpose. Preserve the original result and accounting; do not advance checks or allocate a replacement.",
 }
 
 

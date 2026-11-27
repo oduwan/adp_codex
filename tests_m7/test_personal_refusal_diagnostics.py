@@ -58,7 +58,8 @@ class RefusalDiagnosticsTests(fixtures.GuardFixture):
 
     def test_known_historical_and_legacy_refusals_do_not_disclose_arbitrary_text(self):
         for reason, subreason in (("PERSONAL_HISTORY_GUARD_UNSETTLED", "UNSETTLED_GUARD"),
-                ("LEGACY_DEVELOPMENT_OBSERVATION_ONLY", "LEGACY_PROTOCOL")):
+                ("LEGACY_DEVELOPMENT_OBSERVATION_ONLY", "LEGACY_PROTOCOL"),
+                ("INDEPENDENT_REVIEW_PURPOSE_MISMATCH", "REVIEW_PURPOSE_MISMATCH")):
             with self.subTest(subreason=subreason):
                 blocker = self.command(PersonalBlocked(reason, "PRIVATE_HOST /private ghp_SECRET", subreason=subreason))
                 self.assertEqual((blocker["code"], blocker["subreason"]), (reason, subreason))

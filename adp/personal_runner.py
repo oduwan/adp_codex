@@ -430,6 +430,10 @@ class PersonalCoordinator:
                 and item["last"]["context"] == worker["guard_context"]
                 and worker["observation"]["receipt"] in item["last"]["observation"]["evidence"], "Exact accounted logical result is missing")
         result = worker["observation"]["result"]
+        if (worker["purpose"] == "code" and result["outcome"] == Outcome.PASS and result["approved"] is True
+                and result["criteria"] != ["code"]):
+            raise PersonalBlocked("INDEPENDENT_REVIEW_PURPOSE_MISMATCH", "The stopped Reviewer approved another purpose.",
+                subreason="REVIEW_PURPOSE_MISMATCH")
         if worker["purpose"] == "develop":
             require(item["last"]["action"]["kind"] == self.development_kind(worker)
                     and item["last"]["action"]["exit_criteria"] == self.development_stage(worker, "DEVELOP"),
