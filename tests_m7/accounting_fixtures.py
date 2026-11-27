@@ -66,6 +66,10 @@ class AccountingFixture(StoppedNotRunFixture):
             if purpose == "develop":
                 (Path(request.workspace) / "product").write_text("Synthetic original Issue " + str(self.personal.plan["issue"]) + " implementation\n")
             result = WorkerResult(Outcome.PASS, purpose != "develop", () if purpose == "develop" else (purpose,), "Synthetic independent episode judgment; NOT genuine runtime")
+            if purpose == "develop":
+                result = replace(result, summary=json.dumps({"change": "Synthetic in-scope fixture change",
+                    "checks": [{"command": "fixture-local-check", "outcome": "PASS", "result": "Synthetic validation; not real Codex or CI"}],
+                    "limitations": "Patched runtime fixture only"}))
             create_private(self.runtime.directory)
             raw = {"host": self.runtime.host, "request_digest": digest(request), "status": "COMPLETED",
                 "pid": 51000 + len(self.requests), "start_time": "synthetic-only", "context": "synthetic:" + request.id,

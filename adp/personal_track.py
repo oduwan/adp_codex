@@ -300,8 +300,8 @@ class PersonalTrack:
                 and all(a["status"] == "accepted" for a in task["assignments"].values()),
                 "Historical source, generation or assignments changed/incomplete")
         from .personal_episode import settled_guards
-        require(settled_guards(personal, state),
-                "Historical M2 has an unfinished/terminal reservation")
+        if not settled_guards(personal, state):
+            raise PersonalBlocked("PERSONAL_HISTORY_GUARD_UNSETTLED", "Historical M2 is not settled.", subreason="UNSETTLED_GUARD")
         for relative, hashed in receipt["files"].items():
             require(relative.startswith(("evidence/", "product-checks/")) and ".." not in Path(relative).parts
                     and digest(read_private(personal.state / relative)) == hashed, "Historical private check/policy proof missing")

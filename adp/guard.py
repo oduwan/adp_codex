@@ -339,6 +339,19 @@ class ProgressGuard:
 
     def observe(self, task_id: str, identifier: str, permit: Permit,
                 measured: Observation, *, evidence: Attestation | None = None) -> Decision:
+        return self._observe(task_id, identifier, permit, measured, evidence=evidence)
+
+    def observe_stage(self, task_id: str, identifier: str, permit: Permit, measured: Observation) -> Decision:
+        """Close a verified internal personal stage, not a progress verdict.
+
+        The default is refusal. The owning authority must verify the fixed
+        prospective stage and actual receipt/effect at this exact checkpoint.
+        All context, hazard, deadline and lifetime accounting paths still run.
+        """
+        return self._observe(task_id, identifier, permit, measured, stage=True)
+
+    def _observe(self, task_id: str, identifier: str, permit: Permit,
+                 measured: Observation, *, evidence: Attestation | None = None, stage=False) -> Decision:
         require(isinstance(measured, Observation), "Expected a typed guard observation")
         input_error = None
         try:
@@ -378,8 +391,23 @@ class ProgressGuard:
                 measured_data = supplied
                 subject = digest({"baseline": asdict(self._baseline(identifier, state, task, item)),
                                   "permit": permit.token, "observation": measured_data})
-                meaningful = self._progress(state, task, item, measured_data, evidence, subject)
-            self._account(item, active["action"], measured_data, meaningful)
+                if stage:
+                    qualify = getattr(self.authority, "qualify_stage", None)
+                    require(not active["bounded"] and measured.outcome == Outcome.PASS and measured.progress is None and measured.finding is None
+                            and measured.risk is None and measured.unresolved == tuple(item["unresolved"])
+                            and callable(qualify)
+                            and qualify(state, task, identifier, permit, measured) is True,
+                            "Internal stage lacks exact prospective authority and observed completion")
+                    # Qualification is observational but may take time. The
+                    # original permit must still be live when it finishes.
+                    if not active["started"] <= self._now() <= active["deadline"]:
+                        unsafe = True
+                        measured_data = {**measured_data, "outcome": Outcome.UNKNOWN, "risk": "containment"}
+                    meaningful = False
+                else:
+                    meaningful = self._progress(state, task, item, measured_data, evidence, subject)
+            if not stage or unsafe:
+                self._account(item, active["action"], measured_data, meaningful)
             item["last_event"] = "attempt"
             item["last"] = {"context": active["context"], "action": active["action"],
                             "observation": measured_data, "counters": copy.deepcopy(item["counters"])}
@@ -394,7 +422,7 @@ class ProgressGuard:
                     item["reason"] = "Bounded proof did not narrow uncertainty; one renewed independent reassessment remains"
                     item["request"] = None
                     item["plan"] = None
-            else:
+            elif not stage:
                 self._threshold(item)
         _, decision = self._change(task_id, identifier, transition)
         return decision

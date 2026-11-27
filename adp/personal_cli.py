@@ -284,10 +284,15 @@ def _run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, p
                         "qualification": "NOTRUN"}
         assert_public(report)
     except (PersonalBlocked, Blocked) as exc:
-        report.update(status=exc.status, blockers=[{"code": getattr(exc, "reason", getattr(exc, "code", "BLOCKED")), "action": str(exc)}])
+        blocker = {"code": getattr(exc, "reason", getattr(exc, "code", "BLOCKED")), "action": str(exc)}
+        if getattr(exc, "subreason", None) is not None:
+            blocker.update(subreason=exc.subreason,
+                operation=action if action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY else "UNKNOWN")
+        report.update(status=exc.status, blockers=[blocker])
     except (ADPError, OSError, ValueError, TypeError, KeyError):
         # Never disclose raw transport, policy, filesystem or worker exceptions.
         report.update(status="BLOCKED", blockers=[{"code": "PERSONAL_STATE_OR_AUTHORITY_UNVERIFIED",
+            "subreason": "UNKNOWN", "operation": action if action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY else "UNKNOWN",
             "action": "Reconcile the exact original plan, source, private state, permissions and retained receipts; do not reset or retry unknown effects."}])
     try:
         assert_public(report)

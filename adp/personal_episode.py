@@ -140,14 +140,14 @@ def load_episode(directory):
     private_directory(directory)
     d = read_private(directory / FILE)
     fields(d, "schema_version kind root base episode plan original governance approval")
-    require(d["schema_version"] == 1 and type(d["schema_version"]) is int and d["kind"] == "ACCOUNTING_EPISODE", "Unsupported episode descriptor")
+    require(d["schema_version"] in (1, 2) and type(d["schema_version"]) is int and d["kind"] == "ACCOUNTING_EPISODE", "Unsupported episode descriptor")
     require(directory.name == NAME and directory.parent.name == "episodes"
             and d["root"] == str(directory.parent.parent), "Episode must belong to its fixed original ancestor")
     require(not (directory.parent.parent / FILE).exists(), "Original root cannot recursively select another episode")
     root = load_state(directory.parent.parent)
     base = d["base"]
     fields(base, "schema_version policy root archive blueprint choices window checks discovery_digest snapshot admission engine")
-    require(base["schema_version"] == 1 and base["policy"] == POLICY and base["root"] == digest(root.intent)
+    require(type(base["schema_version"]) is int and base["schema_version"] == d["schema_version"] and base["policy"] == POLICY and base["root"] == digest(root.intent)
             and d["episode"] == digest(base)
             and d["original"] == root.intent["original"] and d["governance"] == root.intent["governance"]
             and d["plan"] == make_plan(root, base), "Episode immutable identity or original scope changed")
@@ -220,7 +220,7 @@ class Continuation:
         require(expires - issued == choices["seconds"], "Episode window changed")
         observed, owner = selection(Path(self.root.plan["checkout"]["path"]), self.root.plan["checkout"]["remote"], self.root.repository_id, self.c.transport)
         checks = qualified_checks(self.root, choices, self.c.ci_transport)
-        base = {"schema_version": 1, "policy": POLICY, "root": digest(self.root.intent), "archive": digest(archive),
+        base = {"schema_version": 2, "policy": POLICY, "root": digest(self.root.intent), "archive": digest(archive),
             "blueprint": digest(m["blueprint"]), "choices": choices, "window": window, "checks": checks,
             "discovery_digest": observed.facts["discovery_digest"], "snapshot": data(replace(observed.snapshot, observed_at=issued)),
             "admission": None, "engine": engine_digest()}
@@ -240,7 +240,7 @@ class Continuation:
         # not include admission or episode identity (acyclic derivation).
         plan_valid(self.root, plan, self.directory)
         token, proof = grant("episode", digest(base), now, reviewed, window=window)
-        descriptor = {"schema_version": 1, "kind": "ACCOUNTING_EPISODE", "root": str(self.root.directory), "base": base,
+        descriptor = {"schema_version": 2, "kind": "ACCOUNTING_EPISODE", "root": str(self.root.directory), "base": base,
             "episode": digest(base), "plan": plan, "original": self.root.intent["original"], "governance": self.root.intent["governance"], "approval": token}
         return descriptor
 
@@ -279,7 +279,7 @@ class Continuation:
     def seed(self, d, *, reconciliation=None):
         from .personal_track import LINK, content
         c = self.c
-        run = {"schema_version": 1, "approval": d["approval"], "generation": c.record()["generation"], "phase": "SCOPE",
+        run = {"schema_version": d["base"]["schema_version"], "approval": d["approval"], "generation": c.record()["generation"], "phase": "SCOPE",
             "revision": self.root.plan["checkout"]["head"], "original_review": None, "developer": None, "candidate": None,
             "code_review": None, "actions": {}, "coordination": None, "gates": [], "feedback": [], "observations": 0, "feature_administration": None}
         self.consent(d, reconciliation)

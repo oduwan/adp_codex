@@ -153,84 +153,10 @@ class ProductCoordinator(PersonalCoordinator):
         # delivery; a SUBMITTED request may never be dispatched again.
         return self.workers.execute("product", context, self.personal.feature)
 
-    def context(self, purpose):
-        context = super().context(purpose)
-        product = getattr(self, "product", None)
-        if purpose == "develop" and product is not None and product.record() is not None and product.record()["correction"] is not None:
-            context["compound_correction"] = "One Developer result, scoped staging and one local commit under the original deadline; conclude before source transition."
-        return context
-
-    @staticmethod
-    def compound(row):
-        return row["purpose"] == "develop" and "compound_correction" in row["context"]
-
-    def worker_action(self, row, action):
-        if self.compound(row):
-            require(row["context"] == self.context("develop"), "Original prospective correction scope changed")
-            return replace(action, exit_criteria=row["context"]["compound_correction"])
-        return action
-
     def authorize_worker(self, row):
         if row["purpose"] == "product":
             require(row["context"] == self.product.review_context(), "Product review context/CI changed before dispatch")
         super().authorize_worker(row)
-        if self.compound(row):
-            current = self.record()
-            state, task, item = self.guard._snapshot(self.task_id, row["requirement"])
-            active = self.guard._active(state, task, item, row["permit"]["token"])
-            require(active["action"]["exit_criteria"] == row["context"]["compound_correction"], "Compound scope was not reserved before dispatch")
-            coordination = {"label": "commit:" + row["request"]["id"], "requirement": row["requirement"],
-                "permit": row["permit"], "action": active["action"], "context": row["guard_context"], "sequence": item["sequence"],
-                "observation": None, "next_phase": None, "check_state": None}
-            require(current["coordination"] in (None, coordination), "Another original operation is reserved")
-            current["coordination"] = coordination
-            self.save(current)  # Before SUBMITTED/dispatch, not retroactive coalescing.
-
-    def defer_developer_guard(self, row, observed):
-        if not self.compound(row) or observed.result.outcome != "PASS":
-            return False
-        coordination = self.record()["coordination"]
-        require(coordination is not None and coordination["permit"] == row["permit"]
-                and coordination["label"] == "commit:" + row["request"]["id"], "Durable original compound accounting missing")
-        state, task, item = self.guard._snapshot(self.task_id, row["requirement"])
-        active = self.guard._active(state, task, item, row["permit"]["token"])
-        require(self.clock() < active["deadline"] and active["action"]["exit_criteria"] == row["context"]["compound_correction"], "Compound deadline/definition changed")
-        return True
-
-    def worker_accounted(self, row):
-        if self.compound(row) and row["observation"]["result"]["outcome"] != "PASS":
-            current = self.record()
-            require(current["coordination"] is not None and current["coordination"]["permit"] == row["permit"], "Original failed correction missing")
-            current["coordination"] = None
-            self.save(current)
-
-    def _run(self):
-        current = self.record()
-        if current is not None and current["phase"] == "DEVELOP" and current["coordination"] is not None:
-            worker = self.worker(current["coordination"]["label"].removeprefix("commit:"))
-            require(self.compound(worker), "Only the exact retained compound correction can resume")
-            worker = self.workers.execute("develop", worker["context"], self.personal.feature)
-            current = self.record()
-            current.update(developer=worker["request"]["id"], phase="STAGE" if worker["observation"]["result"]["outcome"] == "PASS" else "DEVELOP")
-            self.save(current)
-        return super()._run()
-
-    def conclude(self, permit, reference, outcome="PASS", *, next_phase=None):
-        current = self.record()
-        coordination = current["coordination"]
-        if coordination is not None and coordination["label"].startswith("commit:") and coordination["observation"] is None:
-            identifier = coordination["label"].removeprefix("commit:")
-            worker = None if self.episode and identifier.startswith("adoption-") else self.worker(identifier)
-            if worker is not None and self.compound(worker):
-                actual = self.workers.actual(worker, accounted=True)
-                state, task, item = self.guard._snapshot(self.task_id, worker["requirement"])
-                active = self.guard._active(state, task, item, permit.token)
-                elapsed = max(actual.elapsed_seconds, self.clock() - active["started"])
-                coordination["observation"] = data(Observation(outcome, (reference,), tuple(item["unresolved"]),
-                    elapsed_seconds=elapsed, samples=actual.samples, payload_bytes=actual.payload_bytes))
-                coordination["next_phase"] = next_phase
-                self.save(current)
-        return super().conclude(permit, reference, outcome, next_phase=next_phase)
 
     def check_stage(self):
         product = getattr(self, "product", None)

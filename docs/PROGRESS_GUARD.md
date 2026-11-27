@@ -90,6 +90,29 @@ an admitted pending dependency. CORRECTION_APPROVED binds the exact source SHA,
 task iteration, incarnation and ownership generation. Source drift, including a
 change away and back to the same SHA, invalidates current approval.
 
+Personal development protocol 2 prospectively identifies one logical attempt
+using the existing Developer request and canonical actions. Initial implementation
+is CHECK; CORRECTION requires retained concrete failed evaluation evidence. The
+Developer's locally validated, unapproved PASS and the observed independently
+scoped local commit are internal stages, not independent progress. The narrow
+`observe_stage` entry refuses by default: the personal authority must authenticate
+one of those fixed stages, its accepted M1 result or observed Git effect, and its
+exact active canonical subject while the original mutation lock is held. A
+successful stage closes its reservation without charging a failed correction or
+stall, resetting counters, removing acceptance criteria, or issuing approval.
+It still records the real observation and lifetime resource usage. All unsafe,
+overdue and exceeded-resource paths retain ordinary terminal accounting.
+
+Each stage has its own finite original permit; a Developer deadline is never
+extended through review. Commit accounting closes before the actual M1 source
+transition; exact-SHA review receives a new current-source permit within the same
+original role/window ceilings. A failed Developer, staged review or exact-SHA
+evaluation charges the corresponding logical attempt normally. Only verified
+independent progress resets counters. Once an evaluation reaches a threshold,
+no subsequent Developer may dispatch. Interrupted stage delivery reconciles the
+same original context/receipt and preserves the accounted result pointer before
+returning a terminal refusal. No second ledger or recovery grant is introduced.
+
 The first forensic request admits at most one reviewed discriminating action. If
 it produces no verified narrowing, one renewed independent review can admit one
 final bounded action. A second inconclusive proof produces the terminal

@@ -29,11 +29,25 @@ ROLE_LIMITS = {"maximum_tasks": 1, "maximum_rounds": 1, "maximum_parallel": 1,
                "code_reviewers": 2, "forensic_reviewers": 2,
                "maximum_check_observations": 3, "worker_seconds": 300}
 
+# Public wording is selected by known domain facts, never exception text.
+REFUSALS = {
+    "LEGACY_PROTOCOL": "Preserve the original window and receipts. Changed development instructions require separate prospective consent; do not replay or upgrade old grants.",
+    "ACTIVE_RESERVATION": "Reconcile the original active reservation and confirmed stop before new work; do not allocate a replacement.",
+    "EXPIRED_RESERVATION": "The original reservation is overdue. Preserve its deadline and stop evidence for supported accounting; do not backdate, renew or redispatch it.",
+    "FORENSIC_REQUIRED": "Independent bounded forensic disposition is required. Preserve the failed evaluations and original counters; do not retry development.",
+    "STOP_UNSAFE": "The original safety stop is terminal. Preserve its evidence and obtain the supported operator disposition; do not reset budgets.",
+    "OPERATOR_DECISION_REQUIRED": "The finite guard recovery is exhausted. Preserve its history and request an explicit operator decision.",
+    "UNSETTLED_GUARD": "Historical acceptance has an unfinished or terminal guard. Observe its original disposition; do not infer accepted completion or advance dependencies.",
+    "ROLE_BUDGET_EXHAUSTED": "The original finite role allowance is consumed. Preserve all requests and results; do not allocate a replacement or renew the window.",
+}
+
 
 class PersonalBlocked(ADPError):
-    def __init__(self, code, action, *, status="BLOCKED"):
-        super().__init__(action)
+    def __init__(self, code, action, *, status="BLOCKED", subreason=None):
+        require(subreason is None or subreason in REFUSALS, "Unsupported public refusal detail")
+        super().__init__(REFUSALS[subreason] if subreason is not None else action)
         self.reason, self.status = code, status
+        self.subreason = subreason
 
 
 def disjoint(a: Path, b: Path) -> bool:

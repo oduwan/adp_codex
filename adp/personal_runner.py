@@ -115,7 +115,7 @@ class PersonalCoordinator:
         row = read_private(self.path, optional=True)
         if row is not None:
             fields(row, "schema_version approval generation phase revision original_review developer candidate code_review actions coordination gates feedback observations feature_administration")
-            require(row["schema_version"] == 1 and type(row["schema_version"]) is int
+            require(row["schema_version"] in (1, 2) and type(row["schema_version"]) is int
                     and row["approval"] == self.personal.intent["approval"]
                     and type(row["generation"]) is int and row["generation"] > 0,
                     "Personal execution journal or generation changed")
@@ -125,6 +125,12 @@ class PersonalCoordinator:
                     and type(row["feedback"]) is list and len(row["feedback"]) <= 8
                     and type(row["gates"]) is list and len(row["gates"]) <= 3, "Malformed personal phase or finite accounting")
         return row
+
+    def require_development_protocol(self):
+        row = self.record()
+        if row is not None and row["schema_version"] != 2:
+            raise PersonalBlocked("LEGACY_DEVELOPMENT_OBSERVATION_ONLY",
+                "Preserve this original window and receipts; changed development policy requires separate prospective consent, not replay or upgrade.", subreason="LEGACY_PROTOCOL")
 
     def check_administration(self, row=None, *, _reader=None):
         reader = _reader or administration
@@ -240,14 +246,20 @@ class PersonalCoordinator:
 
     def allowed(self, requirement, *, _observed=None):
         if _observed is None:
-            decision = self.guard.inspect(self.task_id, requirement)
+            state, task, item = self.guard._snapshot(self.task_id, requirement)
+            decision = self.guard._decision(requirement, state, task, item)
         else:
             require(_observed["health"] == "SYNCED" and _observed["local_owner"], "Current owning canonical snapshot required")
             state, task = _observed["state"], _observed["tasks"][key(self.task_id)]
-            decision = self.guard._decision(requirement, state, task, self.guard._get(state, task, requirement))
+            item = self.guard._get(state, task, requirement)
+            decision = self.guard._decision(requirement, state, task, item)
         if decision.kind != DecisionKind.ALLOW:
             code = "PERSONAL_FORENSIC_RECOVERY_UNSUPPORTED" if decision.kind == DecisionKind.FORENSIC_REQUIRED else "PROGRESS_GUARD_STOPPED"
-            raise PersonalBlocked(code, "Follow the retained M2 disposition; this minimal backend cannot bypass or automatically replace its forensic/terminal recovery boundary.")
+            detail = decision.kind.value
+            if item["active"] is not None and decision.kind == DecisionKind.FORENSIC_REQUIRED:
+                detail = "EXPIRED_RESERVATION" if self.guard._now() > item["active"]["deadline"] else "ACTIVE_RESERVATION"
+            raise PersonalBlocked(code, "Follow the retained M2 disposition.",
+                subreason=detail)
 
     @historical_operation
     def fresh(self, *, _history_capture=None):
@@ -301,13 +313,31 @@ class PersonalCoordinator:
             "supported_operations": "Read-only original review; then local feature preparation, edits, staging and commit. Manual merge; no push, PR, issue edits or reporting.",
             "evidence_limit": "Native GitHub checks only; any required precommit check unsupported by this port MUST block COMMIT. Never waive a governance requirement. Missing/pending/403 are not PASS or absence.",
             "revision": self.revision()}
+        if row["schema_version"] == 2:
+            context["development_protocol"] = 2
+            context["scope_limit"] = "Only original-ticket behavior and its scoped tests in admitted paths; no unrelated features, suites or infrastructure."
+            context["local_validation"] = "Developer must run newly written tests and affected focused regressions locally; temporary workspace artifacts must be removed. Local PASS is not independent approval or CI."
         if purpose != "original":
             context["feedback"] = row["feedback"]
             context["project_gates"] = row["gates"]
+        if purpose == "develop" and row["schema_version"] == 2:
+            previous = row["developer"]
+            finding = row["feedback"][-1] if row["feedback"] else None
+            require(previous is None or finding is not None, "A correction requires a retained finding or failure")
+            if previous is None and finding is not None:
+                require(self.episode, "A finding without its source origin cannot authorize correction")
+                from .personal_adoption import adopted
+                previous = adopted(self, historical=True)["label"]
+            context["development_attempt"] = {"kind": "INITIAL" if finding is None else "CORRECTION",
+                "predecessor": previous, "finding": None if finding is None else digest(finding)}
         if purpose in ("candidate", "code"):
             context["developer"] = row["developer"]
+            if row["schema_version"] == 2 and row["developer"] is not None:
+                context["developer_local_result"] = self.worker(row["developer"])["observation"]["result"]
             if self.episode:
-                context["source_origin"] = self.source_origin()
+                # Immutable authorship evidence only. A new-SHA CODE permit
+                # must not ask the old-SHA author for current authorization.
+                context["source_origin"] = self.source_origin(historical=True)
             root = self.personal.feature
             context["diff"] = git(root, "diff", "--no-ext-diff", "--no-textconv", "--binary",
                 *( ("--cached",) if purpose == "candidate" else (self.personal.plan["checkout"]["head"], "HEAD")), limit=16384).decode("utf-8", "strict")
@@ -331,6 +361,154 @@ class PersonalCoordinator:
                    if row["request"]["id"] == request_id]
         require(len(matches) == 1, "The genuine purpose-bound worker record is missing")
         return matches[0]
+
+    def development_kind(self, worker):
+        """The original prospective logical attempt, never inferred from PASS."""
+        context = worker["context"]
+        require(context.get("development_protocol") == 2 and worker["purpose"] == "develop",
+                "Prospective Developer definition required")
+        attempt = context["development_attempt"]
+        fields(attempt, "kind predecessor finding")
+        if attempt["kind"] == "INITIAL":
+            require(attempt["predecessor"] is None and attempt["finding"] is None, "Initial implementation is not a correction")
+            return ActionKind.CHECK
+        require(attempt["kind"] == "CORRECTION" and context["feedback"]
+                and attempt["finding"] == digest(context["feedback"][-1]), "Correction needs its concrete retained feedback")
+        if type(attempt["predecessor"]) is str and attempt["predecessor"].startswith("adoption-"):
+            require(self.episode, "Adoption correction requires the original accounting episode")
+            from .personal_adoption import adopted
+            require(adopted(self, historical=True)["label"] == attempt["predecessor"], "Original retained candidate identity changed")
+        else:
+            prior = self.worker(attempt["predecessor"])
+            require(prior["phase"] == "ACCOUNTED" and prior["purpose"] == "develop"
+                    and prior["request"]["id"] != worker["request"]["id"], "Correction predecessor is not accounted")
+        finding = context["feedback"][-1]
+        recorded = any(r["observation"] is not None and r["phase"] == "ACCOUNTED"
+            and r["purpose"] in ("develop", "candidate", "code", "product")
+            and r["observation"]["result"] == finding
+            and (finding["outcome"] != Outcome.PASS or r["purpose"] != "develop" and finding["approved"] is not True)
+            for r in self.workers.records())
+        product = getattr(self, "product", None)
+        product_record = product.record() if product is not None else None
+        recorded = recorded or any(g == finding and g["status"] in ("FAIL", "ERROR", "TIMEOUT", "CANCELLED")
+            for g in self.record()["gates"] + (product_record["gates"] if product_record else []))
+        require(recorded, "Correction feedback has no actual retained failed evaluation")
+        return ActionKind.CORRECTION
+
+    @staticmethod
+    def development_stage(worker, stage):
+        return "personal-development/2:" + worker["request"]["id"] + ":" + stage
+
+    def worker_action(self, worker, action):
+        if worker["context"].get("development_protocol") != 2:
+            return action
+        if worker["purpose"] == "develop":
+            require(worker["context"] == self.context("develop"), "Original prospective development scope changed")
+            return replace(action, kind=self.development_kind(worker), exit_criteria=self.development_stage(worker, "DEVELOP"))
+        if worker["purpose"] == "code" and worker["context"]["developer"] is not None:
+            current = self.record()
+            require(current["phase"] == "CODE" and current["developer"] == worker["context"]["developer"]
+                    and worker["context"] == self.context("code") and worker["request"]["revision"] == current["revision"],
+                    "Exact current logical Developer and committed review context required")
+            developer = self.worker(worker["context"]["developer"])
+            return replace(action, kind=self.development_kind(developer), exit_criteria=self.development_stage(developer, "CODE"))
+        return action
+
+    def worker_accounted(self, worker):
+        """Save the actual result pointer before a terminal M2 decision returns."""
+        if worker["context"].get("development_protocol") != 2 or worker["purpose"] not in ("develop", "code"):
+            return
+        row = self.record()
+        if row["phase"] != ("DEVELOP" if worker["purpose"] == "develop" else "CODE"):
+            return  # A retained read must never rewind a later phase.
+        _, task, item = self.guard._snapshot(self.task_id, worker["requirement"])
+        assignment = task["assignments"].get(worker["assignment"]["assignment_id"])
+        require(worker["phase"] == "ACCOUNTED" and assignment is not None and assignment["status"] == "accepted"
+                and assignment["result"] == self.workers.result(worker) and item["last"] is not None
+                and item["last"]["context"] == worker["guard_context"]
+                and worker["observation"]["receipt"] in item["last"]["observation"]["evidence"], "Exact accounted logical result is missing")
+        result = worker["observation"]["result"]
+        if worker["purpose"] == "develop":
+            require(item["last"]["action"]["kind"] == self.development_kind(worker)
+                    and item["last"]["action"]["exit_criteria"] == self.development_stage(worker, "DEVELOP"),
+                    "Accounted result belongs to another prospective logical attempt")
+            predecessor = worker["context"]["development_attempt"]["predecessor"]
+            if self.episode and type(predecessor) is str and predecessor.startswith("adoption-"):
+                predecessor = None  # Exact retained adoption was checked above, never a fabricated Developer.
+            require(row["developer"] in (predecessor, worker["request"]["id"]),
+                    "Another Developer already owns this transition")
+            row.update(developer=worker["request"]["id"], phase="STAGE" if result["outcome"] == Outcome.PASS else "DEVELOP")
+        elif result["outcome"] == Outcome.PASS and result["approved"] is True:
+            row.update(code_review=worker["request"]["id"], phase="CHECKS")
+        else:
+            row.update(code_review=None, phase="DEVELOP")
+        if row["phase"] == "DEVELOP" and (not row["feedback"] or row["feedback"][-1] != result):
+            row["feedback"].append(result)
+        self.save(row)
+
+    def qualify_development_stage(self, state, task, identifier, permit, measured):
+        """Read-only, lock-held qualification of two fixed intermediate stages.
+
+        No review verdict is fabricated here. CODE and failed stages always
+        use ordinary M2 accounting; this only settles observed local progress
+        on the way to the independent exact-SHA evaluation.
+        """
+        row = self.record()
+        from .guard_schema import requirement_id
+        spec = self.specification("develop")
+        item = self.guard._get(state, task, identifier)
+        active = self.guard._active(state, task, item, permit.token)
+        require(row["schema_version"] == 2 and row["generation"] == state["generation"]
+                and task["key"] == key(self.task_id) and identifier == requirement_id(spec.contract, spec.gate)
+                and item["mode"] == "normal" and active["bounded"] is False,
+                "Only the current normal prospective personal attempt can close an internal stage")
+        hypothesis = active["action"]["hypothesis"]
+        stage = "DEVELOP" if hypothesis.startswith("worker:") else "COMMIT"
+        identifier = hypothesis.removeprefix("worker:") if stage == "DEVELOP" else hypothesis.removeprefix("personal:commit:")
+        developer = self.worker(identifier)
+        require(active["action"]["exit_criteria"] == self.development_stage(developer, stage)
+                and active["action"]["kind"] == self.development_kind(developer)
+                and developer["request"]["generation"] == state["generation"]
+                and developer["request"]["revision"] == task["source_revision"], "Logical stage/source identity differs")
+        actual = self.workers.actual(developer)
+        assignment = task["assignments"].get(developer["assignment"]["assignment_id"])
+        require(assignment is not None and assignment["status"] == "accepted"
+                and assignment["result"] == self.workers.result(developer)
+                and actual.result.outcome == Outcome.PASS and actual.result.approved is False,
+                "Internal stage requires the actual stopped, accepted, unapproved Developer result")
+        if stage == "DEVELOP":
+            root = self.personal.feature
+            predecessor = developer["context"]["development_attempt"]["predecessor"]
+            if self.episode and type(predecessor) is str and predecessor.startswith("adoption-"):
+                predecessor = None
+            require(row["phase"] == "DEVELOP" and row["developer"] == predecessor
+                    and row["revision"] == task["source_revision"]
+                    and row["feedback"] == developer["context"]["feedback"] and row["gates"] == developer["context"]["project_gates"]
+                    and developer["phase"] == "STOPPED" and developer["permit"]["token"] == permit.token
+                    and measured.evidence == (actual.receipt,)
+                    and value(root, "rev-parse", "HEAD") == task["source_revision"]
+                    and source_seal(root) == developer["result_source"] and admin_seal(root) == developer["result_admin"],
+                    "Developer completion/source receipt differs")
+        else:
+            coordination = row["coordination"]
+            commit = row["actions"].get("commit:" + identifier)
+            candidate = self.worker(row["candidate"])
+            self.workers.actual(candidate, approval=True, accounted=True)
+            require(row["phase"] == "SOURCE_TRANSITION" and coordination is not None
+                    and coordination["label"] == "commit:" + identifier and coordination["permit"]["token"] == permit.token
+                    and coordination["action"] == active["action"] and coordination["context"] == active["context"]
+                    and row["developer"] == identifier and developer["phase"] == "ACCOUNTED"
+                    and candidate["purpose"] == "candidate" and candidate["context"]["developer"] == identifier
+                    and candidate["request"]["revision"] == task["source_revision"]
+                    and commit is not None and commit["operation"] == Operation.COMMIT and commit["status"] == "OBSERVED"
+                    and commit["payload"]["index_digest"] == candidate["context"]["index_digest"]
+                    and commit["source_ref"] == commit["target"] == "refs/heads/" + self.personal.plan["feature"]["branch"]
+                    and commit["revision"] == task["source_revision"] and commit["observation"]["status"] == "PRESENT"
+                    and commit["observation"]["revision"] == row["revision"] == value(self.personal.feature, "rev-parse", "HEAD")
+                    and measured.evidence == ("personal:commit:" + row["revision"],), "Original reviewed Git commit is not observed")
+        if self.episode:
+            self.episode_fence()
+        return True
 
     def original_approval(self):
         row = self.record()
@@ -498,7 +676,7 @@ class PersonalCoordinator:
         row = self.record()
         if row is None:
             require(key(self.task_id) not in self.memory.inspect()["tasks"], "Lost private execution journal cannot reset existing M1 work")
-            row = {"schema_version": 1, "approval": self.personal.intent["approval"],
+            row = {"schema_version": 2, "approval": self.personal.intent["approval"],
                 "generation": self.memory.inspect()["state"]["generation"], "phase": "SCOPE", "revision": self.revision(),
                 "original_review": None, "developer": None, "candidate": None, "code_review": None,
                 "actions": {}, "coordination": None, "gates": [], "feedback": [], "observations": 0,
@@ -515,6 +693,10 @@ class PersonalCoordinator:
         if row["coordination"] is None:
             action = Action("personal:coordinator", ActionKind.CHECK, "personal:" + label,
                 "One observed local operation and project-check disposition", seconds=min(300, self.seconds_left()))
+            if row["schema_version"] == 2 and label.startswith("commit:") and row["developer"] is not None:
+                developer = self.worker(row["developer"])
+                require(label == "commit:" + developer["request"]["id"], "Commit belongs to another logical attempt")
+                action = replace(action, kind=self.development_kind(developer), exit_criteria=self.development_stage(developer, "COMMIT"))
             row["coordination"] = {"label": label, "requirement": requirement, "permit": None,
                 "action": data(action), "context": self.guard._context(state, task), "sequence": item["sequence"],
                 "observation": None, "next_phase": None, "check_state": None}
@@ -554,10 +736,15 @@ class PersonalCoordinator:
         require(measured.evidence == (reference,) and measured.outcome == outcome and coordination["next_phase"] == next_phase,
                 "Retained coordinator result differs")
         if item["active"] is not None:
-            self.guard.observe(self.task_id, requirement, permit, measured)
+            internal = (row["schema_version"] == 2 and row["phase"] == "SOURCE_TRANSITION"
+                and row["developer"] is not None and coordination["label"] == "commit:" + row["developer"]
+                and measured.outcome == Outcome.PASS)
+            observe = self.guard.observe_stage if internal else self.guard.observe
+            observe(self.task_id, requirement, permit, measured)
         else:
             require(item["last"] is not None and item["last"]["observation"] == coordination["observation"]
-                    and item["last"]["context"] == coordination["context"], "Local operation guard observation is missing")
+                    and item["last"]["context"] == coordination["context"] and item["last"]["action"] == coordination["action"],
+                    "Local operation guard observation is missing")
         row["coordination"] = None
         if next_phase is not None:
             row["phase"] = next_phase
@@ -627,6 +814,7 @@ class PersonalCoordinator:
         self.save(row)
 
     def _run(self):
+        self.require_development_protocol()
         self.fresh()
         self.workers.fence()
         caps = self.runtime.capabilities()
@@ -661,7 +849,7 @@ class PersonalCoordinator:
                 row = self.record()
                 row["developer"] = developer["request"]["id"]
                 row["phase"] = "STAGE" if developer["observation"]["result"]["outcome"] == Outcome.PASS else "DEVELOP"
-                if row["phase"] == "DEVELOP":
+                if row["phase"] == "DEVELOP" and (not row["feedback"] or row["feedback"][-1] != developer["observation"]["result"]):
                     row["feedback"].append(developer["observation"]["result"])
                 self.save(row)
                 if row["phase"] == "DEVELOP":
@@ -678,7 +866,8 @@ class PersonalCoordinator:
                     row.update(code_review=reviewer["request"]["id"], phase="CHECKS")
                 else:
                     row.update(code_review=None, phase="DEVELOP")
-                    row["feedback"].append(result)
+                    if not row["feedback"] or row["feedback"][-1] != result:
+                        row["feedback"].append(result)
                 self.save(row)
                 if row["phase"] == "DEVELOP":
                     continue
@@ -810,6 +999,7 @@ class PersonalCoordinator:
         state = self.memory.inspect()
         root = self.personal.feature if self.personal.feature.exists() else Path(self.personal.plan["checkout"]["path"])
         view = {"mode": "PERSONAL", "operation": operation, "approval": self.personal.intent["approval"],
+            "development_protocol": row["schema_version"] if row else 2,
             "checkpoint": state["local_head"], "generation": state["state"]["generation"],
             "journal": digest(row), "worker_inventory": digest(self.workers.records()),
             "workspace": str(self.personal.feature), "revision": self.revision(),
@@ -823,6 +1013,8 @@ class PersonalCoordinator:
     @historical_operation
     def run(self, *, reviewed, authorized, operation="run"):
         require(authorized, "Separately approve the exact finite personal invocation")
+        if operation != "handoff":
+            self.require_development_protocol()
         _, initial_token = self.invocation(operation)
         require(reviewed == initial_token, "Personal invocation changed; review it again without renewing the enrollment")
         with invocation_lock(self.memory.control):

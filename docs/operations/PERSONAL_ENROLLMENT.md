@@ -89,6 +89,26 @@ CAS. A fresh exact-committed-SHA Reviewer supplies code approval. Requests,
 results, context IDs and bound stop receipts remain private and generation
 fenced. Unknown delivery or stop evidence never permits replacement dispatch.
 
+New execution consents bind personal development protocol 2. The Developer
+implements original-ticket behavior and scoped tests in admitted paths, executes
+new/changed tests and affected focused regressions, corrects actual findings and
+revalidates within the unchanged Worker bounds. Existing tools only: no installs,
+network, unrelated suites or acceptance claims. Scratch belongs in a temporary
+directory inside the granted workspace and must be removed; disable bytecode and
+persistent caches. Non-admitted source and Git administration remain protected.
+PASS is a locally validated candidate ready for independent review, always
+`approved=false`, `criteria=[]`. Its existing bounded summary contains JSON
+`change`, `checks` (command, actual PASS outcome and result), and `limitations`.
+Unavailable/failed local validation retains FAIL or NOTRUN; a summary cannot
+replace independent review or project-owned CI. No universal test runner is added.
+
+The run journal's version 2 and invocation consent bind this prospective policy.
+Version-1 historical prompts/results remain authentic as originally issued and
+readable; old live run/resume or new dispatch explicitly refuses rather than
+upgrading an old grant. Fresh accounting-episode descriptors likewise bind
+version 2 before consent; existing version-1 episodes remain observation-only.
+Neither path renews a window, changes old counters, nor rewrites old receipts.
+
 The original setup/run delegation produces **local drafts only**. M10-A adds a
 separate [feature publication approval](PERSONAL_PUBLICATION.md), requiring its
 explicit project-policy assent and personal administrative-quiescence warrant;

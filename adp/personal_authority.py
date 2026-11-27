@@ -39,6 +39,9 @@ class PersonalAuthority:
         self.c.episode_fence()  # Fresh UTC/revocation after the complete proof.
         return True
 
+    def qualify_stage(self, state, task, identifier, permit, measured):
+        return self.c.qualify_development_stage(state, task, identifier, permit, measured)
+
     def fence_accounting(self):
         from .personal_read_frame import forbid_writes
         forbid_writes()
@@ -55,6 +58,7 @@ class PersonalAuthority:
     def _proof(self, purpose, subject, kind, payload, principal):
         from .personal_read_frame import forbid_writes
         forbid_writes()
+        self.c.require_development_protocol()
         self.c.live()
         body = {"schema_version": 1, "purpose": purpose, "subject": subject, "kind": kind,
             "payload": payload, "principal": principal, "approval": self.c.personal.intent["approval"],
