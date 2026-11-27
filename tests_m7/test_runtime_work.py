@@ -302,7 +302,7 @@ class RuntimeWorkTests(unittest.TestCase):
         for kind in ("publication","product","report"):
             with self.subTest(kind=kind):
                 client=service(RuntimeSettings(RuntimeLimits(30,300,256)))
-                view={"operation":"PR","title":None,"body":None,"method":None,"expires_at":1}
+                view={"operation":"PR","title":None,"body":None,"method":None,"issued_at":999,"expires_at":2000}
                 stopped=RuntimeError("stop after first actual read")
                 def first_read(*a,**k):
                     budget=current_budget()
@@ -310,25 +310,27 @@ class RuntimeWorkTests(unittest.TestCase):
                     self.assertEqual((budget.request_seconds,budget.maximum_calls),(LEGACY.request_timeout_seconds,LEGACY.request_limit))
                     self.assertLessEqual(budget.end-budget.started,LEGACY.operation_timeout_seconds)
                     raise stopped
+                observed_read=Mock(side_effect=first_read)
                 if kind=="publication":
                     obj=self.publication(); obj.service=client
-                    obj.record.return_value={"approval":"exact","view":view}; obj.local.side_effect=first_read
+                    obj.record.return_value={"approval":"exact","view":view}; obj.local.side_effect=observed_read
                     call=lambda:obj.publish(reviewed="exact",authorized=True,assume_quiescence=True,confirm_project_rules=True)
                 elif kind=="product":
-                    obj=PersonalProduct.__new__(PersonalProduct); obj.service=client
-                    obj.c=SimpleNamespace(episode=False,memory=SimpleNamespace(control=self.root))
+                    obj=PersonalProduct.__new__(PersonalProduct); obj.service=client; obj.clock=lambda:1000
+                    obj.c=SimpleNamespace(episode=False,memory=SimpleNamespace(control=self.root),live=observed_read)
                     obj.record=Mock(return_value={"intents":[{"approval":"exact","view":view}]})
-                    obj.local=Mock(side_effect=first_read)
+                    obj.local=Mock(side_effect=AssertionError("Canonical live read must come first"))
                     call=lambda:obj.intent("PR",reviewed="exact",authorized=True,authorize_memory=True,assume_quiescence=True,confirm_rules=True)
                 else:
                     obj=PersonalReport.__new__(PersonalReport); obj.service=client
                     obj.c=SimpleNamespace(episode=False,memory=SimpleNamespace(control=self.root),live=Mock())
                     obj.report_record=Mock(return_value={"approval":"exact","view":view,"action":"retained"})
                     obj.journal=SimpleNamespace(inspect=lambda:{"state":{"execution":{"actions":{"retained":{}}}}})
-                    obj.observed_report=Mock(side_effect=first_read)
+                    obj.observed_report=observed_read
                     call=lambda:obj.report(reviewed="exact",authorized=True,authorize_memory=True,assume_quiescence=True,confirm_rules=True)
                 with self.assertRaises(RuntimeError) as raised: call()
                 self.assertIs(raised.exception,stopped)
+                observed_read.assert_called_once()
 
     def test_recorded_review_and_correction_inherit_resource_caps_without_a_worker_deadline(self):
         from adp.personal_product import PersonalProduct

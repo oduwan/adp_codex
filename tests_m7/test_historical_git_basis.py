@@ -150,14 +150,14 @@ class HistoricalConsentTests(unittest.TestCase):
             "historical_engine": "c" * 64}
         p = PersonalProduct.__new__(PersonalProduct)
         p.c = SimpleNamespace(episode=True)
-        p.record = lambda: {"schema_version": 2}
+        p.record = lambda *, _observed=None: {"schema_version": 2}
         with patch("adp.personal_recovery.engine_digest", return_value="d" * 64):
             binding = _reader_binding(capture)
             self.assertEqual(p.history_binding(capture=capture, view=binding), binding)
             for k in binding:
                 wrong = {**binding, k: "foreign"}
                 with self.assertRaises(ADPError):p.history_binding(capture=capture, view=wrong)
-            p.record = lambda: {"schema_version": 1}
+            p.record = lambda *, _observed=None: {"schema_version": 1}
             with self.assertRaises(ADPError):p.history_binding(capture=capture, view=binding)
             view = dict(binding, issued_at=100, expires_at=200, nonce="a" * 32)
             self.assertTrue(PersonalProduct.token(view, "credential").startswith("product2."))

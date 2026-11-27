@@ -9,27 +9,20 @@ import sys
 from pathlib import Path
 import unittest
 
-from qualification_support import HonestResult,accounting,private_directory,private_file,sha256,test_ids,write_evidence
+from qualification_support import HonestResult,accounting,private_directory,private_file,sha256,test_ids,verify_test_sources,write_evidence
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))  # Test the pinned source; wheel isolation is a separate procedure.
 
 
-def main():
-    parser=argparse.ArgumentParser()
-    parser.add_argument('--evidence-dir',type=Path,required=True)
-    args=parser.parse_args()
-    directory=private_directory(args.evidence_dir,ROOT)
+def preflight():
+    """Validate pinned sources/inventory without executing any test or effect."""
     source=subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip()
     if subprocess.check_output(['git','-C',str(ROOT),'status','--porcelain']):raise ValueError('Qualify a clean committed source')
     baseline=json.loads((ROOT/'docs/qualification/M1_M5_TEST_INVENTORY.json').read_text())
     plan=json.loads((ROOT/'docs/qualification/M6_PLAN.json').read_text())
-    originals=subprocess.check_output(['git','-C',str(ROOT),'ls-tree','-rz',plan['accepted_base'],'tests'])
-    for record in filter(None,originals.split(b'\0')):
-        metadata,path=record.split(b'\t',1);mode,kind,blob=metadata.split()
-        current=subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD:'+path.decode()],text=True).strip()
-        if current!=blob.decode():raise ValueError('Accepted regression/fixture source changed; do not weaken qualification')
-    suite=unittest.defaultTestLoader.discover(str(ROOT/'tests'))
+    verify_test_sources(ROOT,plan['accepted_base'])
+    suite=unittest.TestLoader().discover(str(ROOT/'tests'))
     inventory=sorted(test_ids(suite))
     if len(baseline)!=193 or not set(baseline)<=set(inventory):raise ValueError('Accepted 193-test denominator changed')
     procedures=json.loads((ROOT/'docs/qualification/M6_PROCEDURES.json').read_text())
@@ -38,6 +31,15 @@ def main():
             or procedures['plan_sha256']!=sha256(ROOT/'docs/qualification/M6_PLAN.json')
             or any(not set(row['tests'])<=set(inventory) for row in procedures['scenarios'])):
         raise ValueError('Frozen scenario/procedure inventory changed')
+    return source,plan,inventory,suite
+
+
+def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--evidence-dir',type=Path,required=True)
+    args=parser.parse_args()
+    source,plan,inventory,suite=preflight()
+    directory=private_directory(args.evidence_dir,ROOT)
     write_evidence(directory/'inventory.json',{'source':source,'inventory':inventory,'accepted_denominator':193})
     with private_file(directory/'unittest.log','w') as output:
         result=unittest.TextTestRunner(stream=output,verbosity=2,failfast=False,resultclass=HonestResult).run(suite)

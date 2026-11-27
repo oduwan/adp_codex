@@ -3,7 +3,7 @@
   "plan_sha256": "70e1a4aa476ebb0ffe952a590181be29b4fdb57356dbc4000dfb26f1ce31cf9c",
   "original_scenario_denominator": 42,
   "accepted_test_denominator": 193,
-  "current_test_denominator": 210,
+  "current_test_denominator": 211,
   "scenarios": [
     {
       "id": "Q01.host-enabled-skill-discovery",

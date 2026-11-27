@@ -6,6 +6,7 @@ from adp.errors import ADPError
 from adp.personal_publication import OriginalRead, PersonalPublication
 from adp.runtime_limits import DEFAULTS
 from personal_fixtures import PersonalFixture
+from discovery_fixtures import issue
 
 
 class PersonalPublicationObservationTests(PersonalFixture):
@@ -18,7 +19,7 @@ class PersonalPublicationObservationTests(PersonalFixture):
         self.assertEqual(len(capture.observed), 5)
         self.transport = transport
         pub = PersonalPublication.__new__(PersonalPublication)
-        pub.personal = SimpleNamespace(plan={"issue": 1, "repository": {"name": self.name}})
+        pub.personal = SimpleNamespace(repository_id=self.rid, plan={"issue": 1, "repository": {"name": self.name}})
         pub.target = SimpleNamespace(api=self.prefix)
         pub.read, pub.clock = transport, lambda: self.now
         pub.service = SimpleNamespace(limits=DEFAULTS)
@@ -29,10 +30,11 @@ class PersonalPublicationObservationTests(PersonalFixture):
         self.assertEqual(pub.current_original(), baseline)
         base = self.prefix + "/issues/1"
         for path, changed in ((base, {**self.transport.api.responses[base].body, "body": "Unapproved scope; same timestamp"}),
-                (base + "/comments?per_page=100&page=1", [{"id": 90, "body": "Unapproved amendment"}]),
-                (base + "/dependencies/blocked_by?per_page=100&page=1", [{"id": 91, "number": 3}]),
+                (base + "/comments?per_page=100&page=1", [{"id": 90, "body": "Unapproved amendment",
+                    "updated_at": "2026-11-09T08:00:00Z", "user": {"id": 71, "node_id": "U-author"}}]),
+                (base + "/dependencies/blocked_by?per_page=100&page=1", [issue(3, name=self.name)]),
                 (base + "/timeline?per_page=100&page=1", [{"event": "marked_as_duplicate"}]),
-                (base + "/sub_issues?per_page=100&page=1", [{"id": 92, "number": 2}])):
+                (base + "/sub_issues?per_page=100&page=1", [issue(2, name=self.name)])):
             original = self.transport.api.responses[path]
             self.transport.api.responses[path] = Response(200, changed)
             with self.subTest(path=path):
@@ -50,6 +52,15 @@ class PersonalPublicationObservationTests(PersonalFixture):
             with self.subTest(response=response), self.assertRaises(ADPError):
                 pub.current_original()
         self.transport.api.responses[route] = original
+        for endpoint, malformed in (("comments", {"id": False}),
+                ("dependencies/blocked_by", {"id": 91, "number": 3}),
+                ("sub_issues", {"id": 92, "number": 2}),
+                ("timeline", {"event": "cross-referenced", "source": {}})):
+            path = base + "/" + endpoint + "?per_page=100&page=1"
+            before = self.transport.api.responses[path]
+            self.transport.api.responses[path] = Response(200, [malformed])
+            with self.subTest(endpoint=endpoint), self.assertRaises(ADPError):pub.current_original()
+            self.transport.api.responses[path] = before
         first = self.transport.api.responses[base]
         second = Response(200, {**first.body, "body": "Changed between reads"})
         self.transport.api.responses[base] = (first, second)

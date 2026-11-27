@@ -44,23 +44,29 @@ class AccountingGitFactTests(unittest.TestCase):
         self.action, self.revision = action, revision
         self.port, self.native = HistoryReadPort(config, bound_git_directory=bound), GitExecutionPort(config, bound_git_directory=bound)
 
-    def test_current_source_credential_index_head_ref_and_worktree_fences(self):
+    def handoff(self):
         from types import SimpleNamespace
-        from adp.personal_read_frame import current_source
         from adp.personal_enrollment import governance
         from adp.discovery_schema import digest
+        physical = administration(self.root)
         source = {"revision": self.revision, "tree": value(self.root, "rev-parse", "HEAD^{tree}"),
-            "source_ref": "refs/heads/work/original", "administration": digest(administration(self.root))}
+            "source_ref": "refs/heads/work/original", "administration": digest(physical)}
         consent = {"view": deepcopy(source), "credential_binding": "synthetic-only"}
         personal = SimpleNamespace(feature=self.root, plan={"feature": {"branch": "work/original"},
             "governance_digest": digest(governance(self.root))})
         c = SimpleNamespace(personal=personal, revision=lambda: self.revision)
         owner = SimpleNamespace(c=c, port=self.native, transport=SimpleNamespace(credential_binding="synthetic-only"))
-        baseline = current_source(owner, consent)
-        git(self.root, "config", "adp.negative", "changed")
-        self.assertNotEqual(current_source(owner, consent), baseline)
-        git(self.root, "config", "--unset", "adp.negative")
-        self.assertEqual(current_source(owner, consent), baseline)
+        return owner, consent, physical
+
+    def test_current_source_credential_index_head_ref_and_worktree_fences(self):
+        from adp.personal_read_frame import current_source
+        owner, consent, _ = self.handoff()
+        # This is the actual immutable handoff, not a returned/cached seal.
+        # Continuous same-UID config/history attacker detection was retired by
+        # the trusted dedicated-worktree contract; it is not a passing control.
+        before = tuple((self.root / p).read_bytes() for p in ("product", ".git/index", ".git/config"))
+        current_source(owner, consent)
+        self.assertEqual(tuple((self.root / p).read_bytes() for p in ("product", ".git/index", ".git/config")), before)
         owner.transport.credential_binding = "changed"
         with self.assertRaises(ADPError):current_source(owner, consent)
         owner.transport.credential_binding = "synthetic-only"
@@ -85,31 +91,27 @@ class AccountingGitFactTests(unittest.TestCase):
         current_source(owner, consent)
 
     def test_original_source_engine_and_physical_administration_remain_fixed(self):
-        from types import SimpleNamespace
-        from adp.personal_read_frame import historical_source
-        from adp.execution_containment import source_seal
-        from adp.personal_recovery import administration_snapshot, engine_digest
-        from adp.schema import encode
-        from adp.storage import atomic
-        state = self.root.parent / "historical-private";state.mkdir(mode=0o700)
-        physical = administration(self.root)
-        personal = SimpleNamespace(feature=self.root, state=state, plan={"paths": ["product"],
-            "checkout": {"path": str(self.root)}, "administration": deepcopy(physical)})
-        atomic(state / "run.json", encode({"feature_administration": physical}))
-        master = {"engine": engine_digest(), "administration": administration_snapshot(personal),
-            "view": {"binding": {"evidence": {"seals": {"feature": source_seal(self.root),
-            "outside": source_seal(self.root, ("product",)), "outer": source_seal(self.root)}}}}}
-        c = SimpleNamespace(personal=SimpleNamespace(root=personal, descriptor={"base": {"engine": master["engine"]}}))
-        observed = {"state": {"progress_guard": {"schema_version": 1}}}
-        historical_source(c, master, observed)
+        from adp.discovery_schema import digest
+        from adp.personal_read_frame import current_source
+        from adp.personal_history import _historical_grant
+        from adp.personal_recovery import engine_digest, grant
+        owner, consent, physical = self.handoff()
+        current_source(owner, consent)
         raw = (self.root / "product").read_bytes();(self.root / "product").write_bytes(b"Changed candidate\n")
-        with self.assertRaises(ADPError):historical_source(c, master, observed)
+        with self.assertRaises(ADPError):current_source(owner, consent)
         (self.root / "product").write_bytes(raw)
-        personal.plan["administration"]["root"]["inode"] += 1
-        with self.assertRaises(ADPError):historical_source(c, master, observed)
-        personal.plan["administration"] = deepcopy(physical)
-        master["engine"] = "0" * 64
-        with self.assertRaises(ADPError):historical_source(c, master, observed)
+        wrong = deepcopy(physical);wrong["root"]["inode"] += 1
+        consent["view"]["administration"] = digest(wrong)
+        with self.assertRaises(ADPError):current_source(owner, consent)
+        consent["view"]["administration"] = digest(physical)
+        current_source(owner, consent)
+        # Cold history uses the literal original engine-bound consent decoder.
+        # This is its unit boundary, not a replay of the entire H3 proof or the
+        # deleted per-helper historical_source path.
+        engine, subject = engine_digest(), digest(consent)
+        token, body = grant("guard", subject, 100)
+        self.assertEqual(_historical_grant("guard", subject, 100, token, engine), body)
+        with self.assertRaises(ADPError):_historical_grant("guard", subject, 100, token, "0" * 64)
 
     def test_stateless_native_facts_preserve_files_refs_and_actual_integrity(self):
         expected = self.native.observe(self.action)
