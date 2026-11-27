@@ -242,6 +242,7 @@ def _retain_measurements(personal, capture, elapsed, *, command=None):
                 if not records:
                     raise
                 records.pop(0); body["truncated"] = True
+                body["operations_dropped"] += 1
         private_directory(personal.state)
         atomic(safe_path(personal.state / "runtime-diagnostics.json"), payload)
         return {"status": "RETAINED", "sha256": hashlib.sha256(payload).hexdigest(),

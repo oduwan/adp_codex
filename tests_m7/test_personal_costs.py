@@ -117,6 +117,12 @@ class PersonalCostTests(unittest.TestCase):
             self.assertNotIn(b"private path", raw)
             self.assertTrue(json.loads(raw)["truncated"])
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            capture = {"rows": [client.measurements[-1]] * 64, "dropped": 2, "errors": 0}
+            retained = _retain_measurements(personal, capture, 1)
+            body = json.loads(path.read_bytes())
+            self.assertEqual(retained["status"], "RETAINED")
+            self.assertLess(len(body["operations"]), 64)
+            self.assertEqual(body["operations_dropped"], 2 + 64 - len(body["operations"]))
             # A corrupt old diagnostic is replaced, never parsed for a gate.
             path.write_text("not authority")
             self.assertEqual(_retain_measurements(personal, {"rows": [], "dropped": 0, "errors": 0}, 2)["status"], "RETAINED")
