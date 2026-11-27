@@ -13,6 +13,14 @@ from test_runtime_limits import Clock, service
 
 
 class PersonalCostTests(unittest.TestCase):
+    def test_unknown_typed_reason_cannot_disclose_private_text_in_cli_output(self):
+        from adp.personal_cli import _run
+        error = limits.BudgetRefusal("/private/host-identity", "private payload")
+        with patch("adp.personal_cli.require", side_effect=error):
+            report, code = _run(SimpleNamespace(enroll_command="publish"))
+        self.assertEqual((report["blockers"][0]["code"], code), ("UNKNOWN", 4))
+        self.assertNotIn("private", json.dumps(report))
+
     def test_failed_scope_entry_keeps_measurement_and_resets_context(self):
         client = service()
         with self.assertRaises(ADPError), client.bounded(seconds=0):

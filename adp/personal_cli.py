@@ -22,7 +22,7 @@ from .personal_runner import PersonalCoordinator
 from .personal_storage import PersonalBlocked, approval, assert_public, load_state, read_private
 from .project_validation_github import GitHubValidationHTTP
 from .schema import require
-from .runtime_limits import BudgetRefusal, capture_measurements, load_runtime_limits
+from .runtime_limits import BUDGET_REFUSALS, BudgetRefusal, capture_measurements, load_runtime_limits
 
 ACTIONS = ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect", "run", "resume", "handoff")
 
@@ -205,8 +205,7 @@ def _retain_measurements(personal, capture, elapsed, *, command=None):
         boundaries = {"transport.entered", "transport.stop_confirmed", "transport.stop_unconfirmed", "response.validated", "http.supervision_requested", "http.supervision_returned",
             "object.requested", "object.acknowledged", "cas.requested", "cas.acknowledged",
             "intent.prepared", "intent.submitted", "dispatch.claimed", "target.present", "effect.settled"}
-        reasons = {"OPERATION_AND_REQUEST_COUNT_EXHAUSTED", "OPERATION_TIME_EXHAUSTED", "REQUEST_COUNT_EXHAUSTED",
-            "REQUEST_DEADLINE_EXHAUSTED", "CONSENT_EXPIRED"}
+        reasons = BUDGET_REFUSALS
         configuration = {"MISSING_FILE", "CONFIGURATION_FAILURE", "INVALID_VALUE"}
         def number(value):
             require(type(value) in (int, float) and math.isfinite(value), "Invalid diagnostic measurement")

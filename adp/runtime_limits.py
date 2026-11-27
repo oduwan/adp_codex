@@ -149,6 +149,8 @@ def request_allowance(seconds):
 _CURRENT = ContextVar("adp_runtime_operation", default=None)
 _CONSENT_CAPS = ContextVar("adp_runtime_consent_caps", default=())
 _MEASUREMENTS = ContextVar("adp_runtime_measurements", default=None)
+BUDGET_REFUSALS = frozenset({"OPERATION_AND_REQUEST_COUNT_EXHAUSTED", "OPERATION_TIME_EXHAUSTED",
+    "REQUEST_COUNT_EXHAUSTED", "REQUEST_DEADLINE_EXHAUSTED", "CONSENT_EXPIRED"})
 
 
 class BudgetRefusal(ADPError):
@@ -156,7 +158,7 @@ class BudgetRefusal(ADPError):
 
     def __init__(self, code, message):
         super().__init__(message)
-        self.reason = code
+        self.reason = code if type(code) is str and code in BUDGET_REFUSALS else "UNKNOWN"
 
 
 def _refuse(budget, code, message):
