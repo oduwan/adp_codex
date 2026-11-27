@@ -39,7 +39,7 @@ from .project_validation_github import GitHubEvidenceSource
 from .project_validation_types import EvidenceGate, EvidencePolicy, Phase, PullIdentity, RequiredCheck
 from .schema import encode, fields, key, require, string
 from .storage import atomic
-from .runtime_limits import bind_consent, consent_limits, consent_scope, current_budget, measured, network_operation
+from .runtime_limits import bind_consent, consent_limits, consent_scope, current_budget, measured, network_operation, reached
 
 TOKEN = re.compile(r"product[12]\.([0-9]{1,12})\.([0-9]{1,12})\.([0-9a-f]{32})\.([0-9a-f]{64})\Z")
 ASSENT = "I reviewed the current supplied project governance and approve this exact operation without waiving any project requirement."
@@ -568,8 +568,11 @@ class PersonalProduct:
                     "revision": task.revision, "source_ref": task.source_ref, "target": plan.target_ref,
                     "expected_target": plan.expected_target, "payload": payload, "status": "PREPARED", "observation": None, "plan_digest": digest(plan)}
                 self.journal.change(lambda e, s, t: e["actions"].update({old["action"]: action}))
+                reached("intent.prepared")
                 dispatch = self.forge.prepare_dispatch(old["action"], action)
+                reached("dispatch.claimed")
                 self.journal.change(lambda e, s, t: e["actions"][old["action"]].update(status="SUBMITTED"))
+                reached("intent.submitted")
                 current = provider.plan(task, plan.request)
                 require(replace(current, safety=plan.safety) == plan, "Product plan changed after durable checkpoint")
                 plan = current
@@ -634,6 +637,7 @@ class PersonalProduct:
             else:
                 require(item["last"] is not None and item["last"]["observation"] == data(measured), "Original PR accounting missing")
         intent["observation"] = data(observation); self.save_intent(intent)
+        reached("effect.settled")
         disposition = self.guard.inspect(self.c.task_id, intent["requirement"]).kind
         return {"status": ("PR_PRESENT" if disposition == DecisionKind.ALLOW else "PR_PRESENT_GUARD_STOPPED") if v["operation"] == "PR" else "MERGED_DELEGATED_VERIFIED",
             "progress_guard": disposition,

@@ -31,7 +31,7 @@ from .policy_schema import branch
 from .policy_types import Effect, Operation, Ref
 from .schema import decode, encode, require, string
 from .runtime_limits import (Budget as _Budget, current_budget, operation_scope,
-                            measurements_for, network_operation, settings_for, work_span)
+                            measurements_for, network_operation, settings_for, work_span, reached)
 
 ZERO = "0" * 40
 REF_QUERY = """query ADPRef($id: ID!, $ref: String!) {
@@ -150,6 +150,7 @@ class GitHubCAS:
         except OSError:
             raise ADPError("UNKNOWN: cannot confirm durable transport stop boundary") from None
         self._live_unknown = False
+        reached("transport.stop_confirmed")
 
     @contextmanager
     def bounded(self, *, name="network", seconds=None):
@@ -178,12 +179,15 @@ class GitHubCAS:
         left = budget.end - time.monotonic()
         self._start_request()
         try:
-            remaining = deadline - time.monotonic()
-            require(remaining > 0, "Network request exhausted its fixed budget")
+            now = time.monotonic()
+            remaining = deadline - now
+            budget.check_request(deadline, now=now)
             budget.transport_calls += 1
+            reached("transport.entered")
             with work_span("network.transport"):
                 response = self.transport.request(method, path, payload, seconds=remaining)
         except UnconfirmedValidation as exc:
+            reached("transport.stop_unconfirmed")
             raise ADPError("UNKNOWN: unconfirmed network transport stop requires operator reconciliation") from None
         except NetworkTransportError:
             # The qualified transport raises this only after confirmed stop or
@@ -191,12 +195,13 @@ class GitHubCAS:
             self._confirmed_stop()
             raise NetworkUncertain("UNKNOWN: stopped trusted transport did not confirm delivery") from None
         except Exception:
+            reached("transport.stop_unconfirmed")
             # An arbitrary transport exception does not prove a process stopped.
             raise NetworkUncertain("UNKNOWN: trusted network transport did not confirm a response") from None
         finally:
             budget.latencies.append(time.monotonic() - started)
         self._confirmed_stop()
-        require(time.monotonic() < deadline, "Network request exhausted its fixed budget")
+        budget.check_request(deadline)
         budget.check()
         require(type(response.status) is int and type(response.body) is bytes and len(response.body) <= 1048576,
                 "UNKNOWN: malformed or oversized network response")
@@ -209,7 +214,8 @@ class GitHubCAS:
             require(set(wrapped) == {"value"}, "Invalid response envelope")
         except ADPError:
             raise NetworkUncertain("UNKNOWN: malformed GitHub JSON response") from None
-        require(time.monotonic() < deadline, "Network request exhausted its fixed budget")
+        budget.check_request(deadline)
+        reached("response.validated")
         return wrapped["value"]
 
     def _repository(self, query, variables):
@@ -294,11 +300,14 @@ class GitHubCAS:
     @network_operation("network.upload", service=lambda self, *a, **k: self)
     def upload(self, objects):
         for item in objects:
+            reached("object.requested")
             response = self.request("POST", self.target.api + "/git/" + {"blob": "blobs", "tree": "trees", "commit": "commits"}[item.kind], item.payload)
             require(type(response) is dict and response.get("sha") == item.oid,
                     "UNSUPPORTED_ATOMIC_REF: provider changed immutable object identity")
+            reached("object.acknowledged")
 
     def cas(self, expected, revision, intent_id):
+        reached("cas.requested")
         payload = {"repositoryId": self.target.node_id, "clientMutationId": intent_id,
                    "refUpdates": [{"name": self.target.ref, "beforeOid": expected or ZERO,
                                    "afterOid": oid(revision), "force": False}]}
@@ -307,6 +316,7 @@ class GitHubCAS:
                 and type(raw["data"].get("updateRefs")) is dict
                 and raw["data"]["updateRefs"].get("clientMutationId") == intent_id,
                 "UNKNOWN: GraphQL CAS acknowledgement incomplete")
+        reached("cas.acknowledged")
 
 
 @contextmanager

@@ -119,7 +119,11 @@ class PersonalGitHubTransport:
             require(remaining > 0, "Credential lookup exhausted request budget")
             payload = json.dumps({"kind": "http", "method": method, "path": path, "body": body,
                 "seconds": remaining, "token": token}, separators=(",", ":"), allow_nan=False).encode()
-            reply = decode(supervised_output(payload, remaining, child=self.http_child), 2097152)
+            from .runtime_limits import reached
+            reached("http.supervision_requested")
+            raw_reply = supervised_output(payload, remaining, child=self.http_child)
+            reached("http.supervision_returned")
+            reply = decode(raw_reply, 2097152)
             fields(reply, "status body_base64 headers")
             require(type(reply["status"]) is int and 100 <= reply["status"] <= 599 and not 300 <= reply["status"] <= 399
                     and type(reply["body_base64"]) is str and type(reply["headers"]) is list and len(reply["headers"]) <= 128,

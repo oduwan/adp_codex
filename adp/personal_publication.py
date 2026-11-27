@@ -30,7 +30,7 @@ from .policy import PolicyProvider
 from .policy_types import Authorization, Effect, Operation, Permission, Plan, Protection, Qualifications, RepositorySnapshot, Request, Rules, SourceClaim, SourceKind, Task
 from .schema import encode, fields, key, require
 from .storage import atomic
-from .runtime_limits import bind_consent, consent_limits, measured, network_operation
+from .runtime_limits import bind_consent, consent_limits, measured, network_operation, reached
 from .github_rules import PLAN_ASSENT
 from .personal_rules import enrollment_rules
 
@@ -611,6 +611,7 @@ class PersonalPublication:
         require(observation.status == "PRESENT" and observation.revision == row["view"]["revision"] and not self.service.unconfirmed_contexts(),
                 "Publication outcome is uncertain; never retry the write")
         self.journal.change(lambda execution, state, tasks: execution["actions"][row["action_id"]].update(status="OBSERVED", observation=data(observation)))
+        reached("target.present")
         permit = typed(Permit, row["reservation"]["permit"])
         _, _, item = self.guard._snapshot(self.c.task_id, row["requirement"])
         if row["pending_observation"] is None:
@@ -626,6 +627,7 @@ class PersonalPublication:
         else:
             require(item["last"] is not None and item["last"]["observation"] == row["pending_observation"], "Original publication accounting missing")
             decision = self.guard.inspect(self.c.task_id, row["requirement"])
+        reached("effect.settled")
         return {"status": "PUBLISHED_UNACCEPTED" if decision.kind == DecisionKind.ALLOW else "PUBLISHED_GUARD_STOPPED",
             "progress_guard": decision.kind, "independent_publication_progress": "NOT_CLAIMED", "repository_id": self.personal.repository_id,
             "ref": self.target.ref, "revision": observation.revision, "product_acceptance": "NOT_ACCEPTED", "other_external_rights": "NOT_DELEGATED"}
@@ -667,8 +669,11 @@ class PersonalPublication:
                     "expected_target": plan.expected_target, "payload": data(plan.payload), "status": "PREPARED", "observation": None,
                     "plan_digest": digest(plan)}
                 self.journal.change(lambda execution, state, tasks: execution["actions"].update({row["action_id"]: action}))
+                reached("intent.prepared")
                 dispatch = self.port.prepare_dispatch(row["action_id"], action)
+                reached("dispatch.claimed")
                 self.journal.change(lambda execution, state, tasks: execution["actions"][row["action_id"]].update(status="SUBMITTED"))
+                reached("intent.submitted")
                 plan, authorization = self.reauthorize(provider, plan)
             # The native port shares this outer operation's remaining budget.
             # Internal phases cannot renew it or the original M2 permit.

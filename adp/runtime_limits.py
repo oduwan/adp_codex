@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import time
 from types import MappingProxyType
+from .errors import ADPError
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,22 @@ def request_allowance(seconds):
 
 _CURRENT = ContextVar("adp_runtime_operation", default=None)
 _CONSENT_CAPS = ContextVar("adp_runtime_consent_caps", default=())
+_MEASUREMENTS = ContextVar("adp_runtime_measurements", default=None)
+
+
+class BudgetRefusal(ADPError):
+    """A known resource predicate; never a claim about external delivery."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.reason = code
+
+
+def _refuse(budget, code, message):
+    error = BudgetRefusal(code, message)
+    budget.refusals.append(code)
+    budget.refusal_count += 1
+    raise error
 
 
 def settings_for(owner=None, settings=None):
@@ -174,6 +191,12 @@ class Budget:
     execution_seconds: float = 0.0
     execution_depth: int = 0
     transport_calls: int = 0
+    refusals: deque = field(default_factory=lambda: deque(maxlen=16))
+    refusal_count: int = 0
+    boundaries: dict = field(default_factory=dict)
+    cpu_started: float = field(default_factory=time.process_time)
+    failure_stage: str | None = None
+    final_refusal: str | None = None
 
     def __post_init__(self):
         if self.request_seconds is None:
@@ -182,9 +205,18 @@ class Budget:
             self.maximum_calls = self.settings.limits.request_limit
 
     def check(self):
-        from .schema import require
-        require(time.monotonic() < self.end and self.calls <= self.maximum_calls,
-                "Network operation exhausted its fixed budget")
+        time_exhausted = time.monotonic() >= self.end
+        count_exhausted = self.calls > self.maximum_calls
+        if time_exhausted or count_exhausted:
+            code = ("OPERATION_AND_REQUEST_COUNT_EXHAUSTED" if time_exhausted and count_exhausted else
+                    "OPERATION_TIME_EXHAUSTED" if time_exhausted else "REQUEST_COUNT_EXHAUSTED")
+            _refuse(self, code, "Network operation exhausted its fixed budget")
+
+    def check_request(self, deadline, *, now=None):
+        now = time.monotonic() if now is None else now
+        if now >= deadline:
+            code = "OPERATION_TIME_EXHAUSTED" if now >= self.end else "REQUEST_DEADLINE_EXHAUSTED"
+            _refuse(self, code, "Network request exhausted its fixed budget")
 
     def request_deadline(self, seconds=None):
         self.calls += 1
@@ -209,6 +241,15 @@ class Budget:
         elapsed = time.monotonic() - self.started
         return {"name": self.name, "outcome": outcome, "wall_seconds": elapsed,
                 "request_attempts": self.calls, "transport_calls": self.transport_calls,
+                "parent_cpu_seconds": max(0.0, time.process_time() - self.cpu_started),
+                "operation_allowance_seconds": self.end - self.started,
+                "operation_remaining_seconds": self.end - time.monotonic(),
+                "request_timeout_seconds": self.request_seconds, "request_limit": self.maximum_calls,
+                "requests_remaining": self.maximum_calls - self.calls,
+                "observed_refusals": tuple(self.refusals),
+                "refusals_dropped": max(0, self.refusal_count - len(self.refusals)),
+                "final_refusal": self.final_refusal, "failure_stage": self.failure_stage,
+                "boundaries": dict(self.boundaries),
                 "request_latencies_seconds": tuple(self.latencies),
                 "configuration_loading_seconds": self.work.get("configuration.load", {}).get("seconds", 0.0),
                 "profile_initial_loading_seconds": self.settings.loading_seconds,
@@ -232,6 +273,27 @@ def measurements_for(owner):
 
 
 @contextmanager
+def capture_measurements():
+    """One invocation's existing summaries, selected at scope entry, not authority.
+
+    Does not start a clock or attach a collector to an injected/long-lived port.
+    """
+    capture = {"rows": deque(maxlen=64), "dropped": 0, "errors": 0}
+    token = _MEASUREMENTS.set(capture)
+    try:
+        yield capture
+    finally:
+        _MEASUREMENTS.reset(token)
+
+
+def reached(name):
+    """Count an actually reached internal boundary, never infer a remote effect."""
+    current = current_budget()
+    if current is not None:
+        current.boundaries[name] = current.boundaries.get(name, 0) + 1
+
+
+@contextmanager
 def operation_scope(settings, *, name="network", seconds=None, budget=None, measurements=None):
     parent = _CURRENT.get()
     current = budget or parent
@@ -240,19 +302,34 @@ def operation_scope(settings, *, name="network", seconds=None, budget=None, meas
         started = time.monotonic()
         current = Budget(started + settings.limits.operation_timeout_seconds,
                          settings=settings, started=started, name=name)
-    current.tighten(settings.limits, seconds)
-    for profile in _CONSENT_CAPS.get():
-        current.tighten(profile)
     token = _CURRENT.set(current)
     outcome = "ERROR"
     try:
+        current.tighten(settings.limits, seconds)
+        for profile in _CONSENT_CAPS.get():
+            current.tighten(profile)
         yield current
         current.check()
         outcome = "RETURNED"
+    except BudgetRefusal as error:
+        if root:
+            current.final_refusal = error.reason
+        raise
     finally:
         _CURRENT.reset(token)
-        if root and measurements is not None:
-            measurements.append(current.summary(outcome))
+        capture = _MEASUREMENTS.get()
+        selected = measurements if capture is None else capture["rows"]
+        if root and selected is not None:
+            try:
+                summary = current.summary(outcome)
+                if capture is not None and len(selected) == selected.maxlen:
+                    capture["dropped"] += 1
+                selected.append(summary)
+            except Exception:
+                # Observational failure cannot replace a product exception,
+                # cancellation or its original result. No authority is changed.
+                if capture is not None:
+                    capture["errors"] += 1
 
 
 def network_operation(name, *, service=lambda self, *a, **k: self.service,
@@ -292,8 +369,7 @@ def http_request(function):
             budget.transport_calls += 1
             try:
                 result = function(self, *args, seconds=deadline - time.monotonic(), **kwargs)
-                from .schema import require
-                require(time.monotonic() < deadline, "Network request exhausted its fixed budget")
+                budget.check_request(deadline)
                 return result
             finally:
                 budget.latencies.append(time.monotonic() - started)
@@ -315,6 +391,8 @@ def bind_consent(view, now=None):
     profile = consent_limits(view)
     current = current_budget()
     if current is not None:
+        if now is not None and view["expires_at"] <= now:
+            _refuse(current, "CONSENT_EXPIRED", "Original runtime allowance is expired")
         current.tighten(profile, view["expires_at"] - now if now is not None else None)
     return profile
 
@@ -343,6 +421,10 @@ def work_span(name, *, execution=False):
         current.execution_depth += 1
     try:
         yield
+    except BaseException:
+        if current.failure_stage is None:
+            current.failure_stage = name
+        raise
     finally:
         elapsed = time.monotonic() - started
         row = current.work.setdefault(name, {"calls": 0, "seconds": 0.0})

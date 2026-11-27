@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import hashlib
+import time
+import math
 
 from .discovery_schema import digest
 from .enrollment import Blocked, local_checkout
@@ -19,7 +22,7 @@ from .personal_runner import PersonalCoordinator
 from .personal_storage import PersonalBlocked, approval, assert_public, load_state, read_private
 from .project_validation_github import GitHubValidationHTTP
 from .schema import require
-from .runtime_limits import load_runtime_limits
+from .runtime_limits import BudgetRefusal, capture_measurements, load_runtime_limits
 
 ACTIONS = ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect", "run", "resume", "handoff")
 
@@ -138,23 +141,115 @@ def retained(args, *, resolve=True):
 
 
 def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
+    with capture_measurements() as capture:
+        return _measured_run(args, capture, transport=transport, ci_transport=ci_transport, runtime=runtime,
+            clock=clock, publication_transport=publication_transport)
+
+
+def _measured_run(args, capture, *, transport, ci_transport, runtime, clock, publication_transport):
     from .personal_history_track import READ_TRANSPORT, cli_port
-    port = None
+    port, personal = None, None
+    started = time.monotonic()
     # Existing ordinary commands already admit native project reads. Resolve
     # their historical read route before effective() can need it. Archival
     # observation must never initialize credentials or a network adapter.
     if args.enroll_command not in ARCHIVAL + RECOVERY + ("inspect", "plan", "apply", "capabilities"):
         try:
-            port = cli_port(retained(args, resolve=False), publication_transport)
+            personal = retained(args, resolve=False)
+            port = cli_port(personal, publication_transport)
         except (ADPError, OSError, KeyError, TypeError, ValueError, AttributeError):
             pass  # The ordinary closed subject validation below reports it.
     binding = READ_TRANSPORT.set(port) if port is not None else None
     try:
-        return _run(args, transport=transport, ci_transport=ci_transport, runtime=runtime, clock=clock,
+        result = _run(args, transport=transport, ci_transport=ci_transport, runtime=runtime, clock=clock,
             publication_transport=publication_transport)
+        return result
     finally:
         if binding is not None:
             READ_TRANSPORT.reset(binding)
+        diagnostic = _retain_measurements(personal, capture, time.monotonic() - started, command=args.enroll_command)
+        # Diagnostics cannot change the ordinary result/exit code or authorize
+        # anything. Unexpected product exceptions still propagate unchanged.
+        if "result" in locals() and args.enroll_command in PUBLICATION + PRODUCT + TRACK:
+            result[0]["runtime_diagnostics"] = diagnostic
+
+
+def _retain_measurements(personal, capture, elapsed, *, command=None):
+    """Replace one private bounded projection; never consumed as authority.
+
+    Only the already authenticated enrollment is used. No extra project,
+    credential, Memory or network observation is made to retain diagnostics.
+    """
+    if personal is None:
+        return {"status": "UNAVAILABLE", "reason": "NO_VALIDATED_PRIVATE_DESTINATION"}
+    try:
+        from .config import safe_path
+        from .personal_storage import LIMIT, private_directory
+        from .schema import encode
+        from .storage import atomic
+        # Only source-owned labels are retained; arbitrary exception/config
+        # strings, endpoints, Worker content and credentials are never copied.
+        names = {"network", "network.request", "network.inspect_ref", "network.upload", "http.request", "discovery",
+            "forge.inventory", "forge.observe", "forge.submit", "project.validation_observation"}
+        names.update("publication." + n for n in ("proposed", "preview", "publish", "status"))
+        names.update("product." + n for n in ("proposed", "intent", "execution_preview", "execute_ci", "status",
+            "report_preview", "report_observation", "report"))
+        names.update("product_forge." + n for n in ("pull", "reviews", "observe", "submit"))
+        names.update("track." + n for n in ("registration", "register", "status", "completion_preview", "complete", "next_preview", "next"))
+        work = {"git.native", "memory.inspect", "configuration.load", "project.governance", "network.transport",
+            "network.supervisor_probe", "network.supervised_execution", "recovery.engine_digest",
+            "recovery.administration_snapshot", "publication.live", "publication.write_authorized",
+            "publication.count_admission", "publication.provider", "publication.reauthorize", "product.live",
+            "policy.plan", "policy.decide", "product.local", "publication.local", "product.facts",
+            "product.review_seal", "publication.current_original", "project.selection"}
+        boundaries = {"transport.entered", "transport.stop_confirmed", "transport.stop_unconfirmed", "response.validated", "http.supervision_requested", "http.supervision_returned",
+            "object.requested", "object.acknowledged", "cas.requested", "cas.acknowledged",
+            "intent.prepared", "intent.submitted", "dispatch.claimed", "target.present", "effect.settled"}
+        reasons = {"OPERATION_AND_REQUEST_COUNT_EXHAUSTED", "OPERATION_TIME_EXHAUSTED", "REQUEST_COUNT_EXHAUSTED",
+            "REQUEST_DEADLINE_EXHAUSTED", "CONSENT_EXPIRED"}
+        configuration = {"MISSING_FILE", "CONFIGURATION_FAILURE", "INVALID_VALUE"}
+        def number(value):
+            require(type(value) in (int, float) and math.isfinite(value), "Invalid diagnostic measurement")
+            return value
+        records, truncated = [], bool(capture["dropped"] or capture["errors"])
+        for raw in capture["rows"]:
+            row = {k: number(raw[k]) for k in ("wall_seconds", "request_attempts", "transport_calls", "parent_cpu_seconds",
+                "operation_allowance_seconds", "operation_remaining_seconds", "request_timeout_seconds", "request_limit",
+                "requests_remaining", "configuration_loading_seconds", "profile_initial_loading_seconds",
+                "substantive_execution_seconds", "orchestration_seconds", "refusals_dropped")}
+            row.update(name=raw["name"] if raw["name"] in names else "UNAVAILABLE",
+                outcome=raw["outcome"] if raw["outcome"] in ("RETURNED", "ERROR") else "UNKNOWN",
+                failure_stage=raw["failure_stage"] if raw["failure_stage"] in work else None,
+                final_refusal=raw["final_refusal"] if raw["final_refusal"] in reasons else None,
+                observed_refusals=[v if v in reasons else "UNKNOWN" for v in raw["observed_refusals"][-16:]],
+                configuration_events=[v if v in configuration else "UNKNOWN" for v in raw["configuration_events"][:3]])
+            row["work"] = {k: {"calls": number(v["calls"]), "seconds": number(v["seconds"])} for k, v in raw["work"].items() if k in work}
+            row["boundaries"] = {k: number(v) for k, v in raw["boundaries"].items() if k in boundaries}
+            row["request_latencies_seconds"] = [number(v) for v in raw["request_latencies_seconds"][-256:]]
+            truncated |= len(raw["request_latencies_seconds"]) > 256 or len(row["work"]) != len(raw["work"])
+            truncated |= bool(raw["refusals_dropped"])
+            records.append(row)
+        body = {"schema_version": 1, "invocation_wall_excluding_retention_seconds": number(elapsed), "operations": records,
+            "command": command if command in ACTIONS + PUBLICATION + PRODUCT + TRACK else "UNKNOWN",
+            "truncated": truncated, "operations_dropped": number(capture["dropped"]), "recording_errors": number(capture["errors"]),
+            "qualification": "NOT_CLAIMED",
+            "coverage": "EXISTING_OPERATION_SCOPES_ONLY", "latency_basis": "CAS_SETUP_THROUGH_TRANSPORT_OR_DECORATED_HTTP"}
+        while True:
+            try:
+                payload = encode(body, LIMIT)
+                break
+            except ADPError:
+                if not records:
+                    raise
+                records.pop(0); body["truncated"] = True
+        private_directory(personal.state)
+        atomic(safe_path(personal.state / "runtime-diagnostics.json"), payload)
+        return {"status": "RETAINED", "sha256": hashlib.sha256(payload).hexdigest(),
+            "operations": len(records), "truncated": body["truncated"]}
+    except Exception:
+        # Only this diagnostic projection is best effort; never catch or
+        # reinterpret the surrounding product operation's exceptions.
+        return {"status": "UNAVAILABLE", "reason": "DIAGNOSTIC_RETENTION_FAILED"}
 
 
 def _run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
@@ -289,6 +384,9 @@ def _run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, p
             blocker.update(subreason=exc.subreason,
                 operation=action if action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY else "UNKNOWN")
         report.update(status=exc.status, blockers=[blocker])
+    except BudgetRefusal as exc:
+        report.update(status="BLOCKED", blockers=[{"code": exc.reason,
+            "action": "Preserve the original limits and intent. Observe uncertain effects only; do not repeat or renew the operation."}])
     except (ADPError, OSError, ValueError, TypeError, KeyError):
         # Never disclose raw transport, policy, filesystem or worker exceptions.
         report.update(status="BLOCKED", blockers=[{"code": "PERSONAL_STATE_OR_AUTHORITY_UNVERIFIED",
