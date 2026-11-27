@@ -136,6 +136,14 @@ never POST again blindly. `report-status` observes; it does not manufacture guar
 accounting. The exact own comment's additive metadata is reconciled privately;
 unrelated source/version/native-edge/comment changes still stop admission.
 
+REPORT completion verification before POST checks the exact submitted reservation
+against its actual canonical snapshot. Only that coordination overlay may differ
+from accepted completion; original run, product, CI and independent Worker
+evidence remain required. This read-side predicate grants no effect authority.
+The subsequent transport callback separately requires its own in-flight marker
+and a fresh late Memory/permit/deadline check. A prior uncertain request is a
+refusal, never a reason to create another marker or submit again.
+
 Native merge remains HEAD_ATOMIC_BASE_OBSERVED, not atomic-base merge. Draft
 readiness remains a separately authorized external action. Automatic merge
 requires current project rules and its distinct explicit delegation; credentials

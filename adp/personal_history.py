@@ -40,7 +40,8 @@ def _anchor(root, memory, descriptor, master, receipt):
     from .personal_episode import episode_directory
     from .personal_history_git import verify
     from .policy_schema import sha
-    activation = read_private(episode_directory(root) / "activation.json")
+    activation = read_private(episode_directory(root) / "activation.json", optional=True)
+    require(activation is not None, "Exact episode activation is missing")
     fields(activation, "schema_version descriptor checkpoint relation")
     fields(receipt, "schema_version policy master initial guard result consents observations recovery")
     fields(master, "schema_version policy engine request view blueprint state tasks guard_state result_state result_tasks administration")

@@ -316,12 +316,13 @@ class PersonalTrack:
             require(personal.directory == self.personal.directory and report is not None
                     and callable(getattr(report, "report_record", None)) and coordination is not None,
                     "Accepted run changed outside the exact REPORT reservation")
-            intent = report.report_record()
+            report.service._check_stop()  # Pre-effect observation has no own POST marker.
+            intent = report.report_record(_observed=now)
             require(intent is not None and intent["view"]["operation"] == "REPORT"
                     and coordination["label"] == "personal-report:" + intent["action"]
                     and coordination["permit"] == intent["reservation"]
                     and coordination["requirement"] == intent["requirement"]
-                    and report.write_authorized() is True, "Unqualified REPORT reservation overlay")
+                    and report._submitted_authorized(_observed=now) is True, "Unqualified REPORT reservation overlay")
             run = {**run, "coordination": None}
         require(digest(run) == receipt["run"] and digest(product_record) == receipt["product"]
                 and product_record["gates"][-1] == receipt["ci"], "Accepted product/source ledger changed")

@@ -232,3 +232,8 @@ malformed output refuses. All four endpoint/remote observations stay unchanged.
 Default and writer local reads retain their original calls. This reduces native
 process overhead without caching state, ownership, URLs, time or authorization;
 whole-operation fit still needs fixed-budget qualification.
+
+Historical H3 observation requires the exact protected activation receipt. An
+absent receipt is an explicit unactivated-episode domain refusal at its first
+consumer. Malformed receipts, unsafe paths and unrelated I/O errors retain their
+own failures; no fallback activates an episode or renews an expired grant.

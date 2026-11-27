@@ -367,6 +367,14 @@ class PersonalProduct:
     def write_authorized(self):
         from .personal_read_frame import forbid_writes
         forbid_writes()
+        # Only the actual transport callback owns an in-flight request. Final
+        # pre-effect completion verification runs before this marker exists.
+        require(self.service._live_unknown is True and read_private(self.service._hazard_path(), optional=True) ==
+                {"status": "IN_FLIGHT_OR_UNKNOWN", "repository": self.target.node_id}, "Current request stop boundary changed")
+        return self._submitted_authorized()
+
+    def _submitted_authorized(self, *, _observed=None):
+        """Exact current dispatch reservation, not authority to start a POST."""
         if self.c.episode:
             from .personal_read_frame import _CURRENT
             require(_CURRENT.get() is not None and _CURRENT.get()["c"] is self.c, "No active historical invocation")
@@ -389,17 +397,14 @@ class PersonalProduct:
                  "operation": expected["operation"], "repository": self.forge.repository_id}
         require(read_private(self.forge._claim_path(identifier)) == claim, "Original forge dispatch claim changed")
         require(self.transport.credential_binding == self.active["binding"], "Current effect credential changed")
-        # The service already checked uncertainty before starting this request.
-        # Its own durable marker must remain intact until confirmed response.
-        require(self.service._live_unknown is True and read_private(self.service._hazard_path(), optional=True) ==
-                {"status": "IN_FLIGHT_OR_UNKNOWN", "repository": self.target.node_id}, "Current request stop boundary changed")
         if self.c.episode:
             self.c.episode_fence()
             from .personal_read_frame import _identity
             require(_identity(self.c) == _CURRENT.get()["identity"], "Historical invocation identity changed")
-        # Intent/claim/credential callbacks may observe or advance canonical
-        # state. Take the single actual late snapshot after those callbacks.
-        observed = self.c.memory.inspect()
+        # The transport takes its single late snapshot after all callbacks.
+        # Historical acceptance shares its actual same-stage canonical subject;
+        # the subsequent changing request still requires a fresh late read.
+        observed = self.c.memory.inspect() if _observed is None else _observed
         from .personal_episode import same_observation
         same_observation(subject, observed)
         state, task = observed["state"], observed["tasks"][key(self.c.task_id)]
