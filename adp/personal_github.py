@@ -43,7 +43,7 @@ class PersonalGitHubRead(GitHubHTTPTransport):
                             retained_error(response.code, raw, headers, path), headers)
 
 
-def owned_repository(transport, name, expected_id=None):
+def owned_repository(transport, name, expected_id=None, *, _repository=None):
     # Reuse accepted header/control/rate-limit validation without widening the
     # ordinary discovery transport's route allowlist. Exhaustion stops this read.
     bounded = GitHubDiscoveryAdapter(name, transport, max_requests=2)
@@ -61,6 +61,8 @@ def owned_repository(transport, name, expected_id=None):
     if (type(owner) is not dict or owner.get("type") != "User" or type(owner.get("id")) is not int or owner["id"] != user["id"]
             or type(permissions) is not dict or permissions.get("pull") is not True):
         raise PersonalBlocked("PERSONAL_OWNER_REQUIRED", "Use personal mode only for an observed personally owned repository with current read access.")
+    if _repository is not None:
+        _repository.update(repo)  # The very same authenticated observation.
     return {"account_id": user["id"], "repository_id": str(repo["id"]),
             "read_access": True,
             "push_access": permissions.get("push") if type(permissions.get("push")) is bool else None,

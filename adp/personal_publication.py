@@ -85,7 +85,6 @@ class PersonalPublication:
         self.evidence = self.personal.state / "publication-evidence"
         self._dispatching = False
         self._write_basis = None
-        self.c.check_administration(self.c.record())
         self.transport = transport or PersonalGitHubTransport(self.target,
             protected_roots=(self.personal.feature, Path(p["checkout"]["path"]), self.personal.directory, Path(__file__).resolve().parents[1]),
             authorize_write=self.write_authorized)
@@ -135,14 +134,19 @@ class PersonalPublication:
         require(existing is None or existing == task, "Canonical publication task differs")
         execution["tasks"][task_key] = task
 
-    def local(self, *, _history_capture=None):
-        bases = self.original_bases()
-        capture = OriginalRead(self.read, bases[0], additional=bases[1:])
-        self.c.transport = capture
-        try:
-            self.c.fresh(_history_capture=_history_capture) if _history_capture is not None else self.c.fresh()
-        finally:
-            self.c.transport = self.read
+    @measured("publication.local")
+    def local(self, *, _history_capture=None, _qualification=None):
+        self.c.live()
+        self.c.check_administration(self.c.record())
+        from .enrollment import local_checkout
+        from .personal_enrollment import governance
+        p = self.personal.plan
+        expected = dict(p["checkout"])
+        if not p["feature"]["prepare"]:
+            expected["head"] = self.c.revision()
+        require(local_checkout(Path(expected["path"]), expected["remote"]) == expected
+                and digest(governance(Path(expected["path"]))) == p["governance_digest"],
+                "Original checkout, source or committed governance changed")
         self.c.workers.fence()
         require(self.c.record()["phase"] == "LOCAL_DRAFT_CODE_REVIEWED" and self.c.record()["coordination"] is None,
                 "Finish the actual reviewed local draft and reconcile its original guard work")
@@ -150,9 +154,39 @@ class PersonalPublication:
         self.c.original_approval()
         self.c.verify_local_review()
         require(self.review_binding() == review_binding, "Canonical review evidence changed during genuine verification")
-        require(all(base in capture.observed and all(base + "/" + suffix + "?per_page=100&page=1" in capture.observed
-            for suffix in capture.SUFFIXES) for base in bases), "Full preflight did not validate all original-ticket observations")
-        return capture.observed, review_binding
+        observations = self.original(_capture=_qualification)
+        self.c.live(_history_capture=_history_capture) if _history_capture is not None else self.c.live()
+        return observations, review_binding
+
+    def original(self, *, _capture=None, _qualified=None):
+        """Selected original plus its actual admitted native closure only."""
+        p, issues = self.personal.plan, []
+        subjects = {}
+        if _qualified is not None:
+            prerequisites, subjects = _qualified["prerequisites"], _qualified["subjects"]
+            for identity in prerequisites:
+                require(identity in subjects and self.c.track.accepted(identity, _qualified=subjects[identity]) is not None,
+                        "Accepted prerequisite qualification missing")
+        else:
+            prerequisites = self.c.track.publication_prerequisites(_capture=subjects) if self.c.track is not None else ()
+        observations = self.current_original(_issues=issues, _prerequisites=prerequisites)
+        selected = [i for i in issues if i.identity.issue_id == p["issue_id"]]
+        require(len(selected) == 1 and self.c.original_matches(selected[0]), "Original scope or native dependencies changed")
+        if self.c.track is None:
+            require(not p["native_prerequisites"], "Native prerequisites need actual accepted completion")
+        else:
+            for issue in issues:
+                self.c.track.original_issue(issue.identity, issue)
+        identity = None
+        if _capture is not None:
+            repo = {}
+            owner = owned_repository(self.read, p["repository"]["name"], self.personal.repository_id, _repository=repo)
+            identity = repo, owner
+        require([enrollment_rules(self.read, p["repository"], p["owner"], item["ref"].removeprefix("refs/heads/"), _identity=identity)
+                 for item in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")
+        if _capture is not None:
+            _capture.update(prerequisites=prerequisites, subjects=subjects, identity=identity)
+        return observations
 
     def review_binding(self, *, _observed=None):
         """Current canonical evidence sealed by full genuine batch review.
@@ -163,10 +197,10 @@ class PersonalPublication:
         observed = _observed if _observed is not None else self.c.memory.inspect()
         require(observed["health"] == "SYNCED" and observed["local_owner"], "Current review owner is required")
         state, task = observed["state"], observed["tasks"][key(self.c.task_id)]
-        row, reviews = self.c.record(), {}
+        row, reviews, workers = self.c.record(), {}, self.c.workers.records()
         require(task["source_revision"] == row["revision"], "Canonical reviewed source changed")
         for name, purpose in (("original_review", "original"), ("code_review", "code")):
-            worker = self.c.worker(row[name])
+            worker = self.c.worker(row[name], _records=workers)
             assignment = task["assignments"].get(worker["assignment"]["assignment_id"])
             require(worker["purpose"] == purpose and worker["phase"] == "ACCOUNTED" and assignment is not None
                     and assignment["status"] == "accepted" and assignment["worker"] == "worker:" + row[name]
@@ -203,6 +237,7 @@ class PersonalPublication:
             for number in sorted(self.c.track.originals[i].issue.number for i in originals)
             if number != self.personal.plan["issue"]))
 
+    @measured("publication.current_original")
     def current_original(self, *, _issues=None, _prerequisites=None):
         bases = self.original_bases() if _prerequisites is None else self.original_bases(prerequisites=_prerequisites)
         capture = OriginalRead(self.read, bases[0], additional=bases[1:])
@@ -221,14 +256,13 @@ class PersonalPublication:
                 "Original-ticket pagination, permissions or stability is unverified")
         return capture.observed
 
-    def remote(self):
+    def remote(self, *, _identity=None):
         p = self.personal.plan
-        owner = owned_repository(self.read, p["repository"]["name"], self.personal.repository_id)
-        observer = GitHubDiscoveryAdapter(p["repository"]["name"], self.read, max_requests=1)
-        observer._halt, observer._requests = False, 0
-        response = observer._get(self.target.api)
-        require(response.status == 200 and type(response.body) is dict, "Current repository metadata unavailable")
-        repo = response.body
+        if _identity is None:
+            repo = {}
+            owner = owned_repository(self.read, p["repository"]["name"], self.personal.repository_id, _repository=repo)
+        else:
+            repo, owner = _identity
         require(owner == p["owner"] and owner["push_access"] is True
                 and repo.get("node_id") == self.target.node_id
                 and repo.get("default_branch") == p["repository"]["default_branch"]
@@ -236,14 +270,14 @@ class PersonalPublication:
         try:
             retained = self.record()
             self.service.personal_policy_binding = ((retained["view"].get("plan_policy"),) if retained is not None else None)
-            return self.service.inspect_ref(writable=True)
+            return self.service.inspect_ref(writable=True, _identity=(repo, owner))
         except (ADPError, OSError):
             raise PersonalBlocked("FEATURE_POLICY_UNVERIFIED",
                 "Verify current owner/admin access, exact feature ref and protections. A private plan-disabled fallback requires supported unprotected branch evidence, exact classic-plan evidence and separate operation assent. Other unknown or constrained refs remain blocked; never retry an uncertain write.") from None
 
     @network_operation("publication.proposed")
     @historical_operation
-    def proposed(self, approved=None):
+    def proposed(self, approved=None, *, _qualification=None):
         now = self.clock()
         if approved is None:
             issued, expires, nonce = now, min(now + 300, self.personal.plan["window"]["expires_at"]), secrets.token_hex(16)
@@ -256,8 +290,9 @@ class PersonalPublication:
         bind_consent({"runtime_limits": self.service.limits.values(), "expires_at": expires}, now)
         with self.service.bounded():
             capture = {} if self.c.episode else None
-            original_observation, review_binding = self.local(_history_capture=capture) if capture is not None else self.local()
-            old = self.remote()
+            qualification = {} if _qualification is None else _qualification
+            original_observation, review_binding = self.local(_history_capture=capture, _qualification=qualification)
+            old = self.remote(_identity=qualification["identity"])
             if old is not None:
                 require(self.port._value("--no-replace-objects", "merge-base", old, self.c.revision()) == old,
                         "Unknown or non-fast-forward feature ancestry; no fetch/force fallback")
@@ -339,86 +374,66 @@ class PersonalPublication:
     def write_authorized(self):
         from .personal_read_frame import forbid_writes
         forbid_writes()
-        if self.c.episode:
-            from .personal_read_frame import _CURRENT, _identity
-            from .personal_episode import same_observation
-            basis = self._write_basis
-            require(self._dispatching and basis is not None and _CURRENT.get() is not None
-                    and _CURRENT.get() is basis["invocation"] and _identity(self.c) == basis["identity"]
-                    and basis["service"] is self.service and basis["transport"] is self.transport
-                    and self.service.target == self.target == basis["target"] and self.port.service is self.service,
-                    "Exact invocation-local publication subject required")
-            row = self.record(_observed=basis["subject"])
-            require(row == basis["consent"], "Current publication intent changed")
-            observed = self.c.memory.inspect()  # One late actual canonical observation.
-            same_observation(basis["subject"], observed)
-            task = observed["tasks"][key(self.c.task_id)]
-            item = self.guard._get(observed["state"], task, row["requirement"])
-            permit = typed(Permit, row["reservation"]["permit"])
-            active = self.guard._active(observed["state"], task, item, permit.token)
-            action = observed["state"]["execution"]["actions"].get(row["action_id"])
-            require(action is not None and action["status"] == "SUBMITTED" and action["operation"] == Operation.PUSH
-                    and permit.decision.baseline.requirement_id == row["requirement"]
-                    and active["context"] == row["reservation"]["context"] and active["action"] == row["reservation"]["action"]
-                    and item["mode"] in ("normal", "running") and active["started"] <= self.guard._now() < active["deadline"]
-                    and read_private(self.port._claim_path(row["action_id"])) == self.port._claim(row["action_id"], action),
-                    "Current submitted intent, claim or original M2 reservation changed")
-            # _request already owns this exact hazard; _check_stop here would
-            # reject its own in-flight marker. Never remove or relabel it.
-            require(self.service._live_unknown is True and read_private(self.service._hazard_path()) ==
-                    {"status": "IN_FLIGHT_OR_UNKNOWN", "repository": self.target.node_id}, "Current request stop boundary changed")
-            budget = self.service._budget.get()
-            require(budget is basis["budget"] and budget.end <= basis["caps"][0]
-                    and budget.request_seconds <= basis["caps"][1] and budget.maximum_calls <= basis["caps"][2],
-                    "Original request/operation budget changed")
-            self.c.episode_fence()
-            require(self.transport.credential_binding == row["credential_binding"], "Publication credential changed")
-            now = self.guard._now()
-            require(active["started"] <= now < active["deadline"] and row["view"]["issued_at"] <= now < row["view"]["expires_at"],
-                    "Publication consent or permit expired")
-            budget.check()
-            return True
-        # The admitted worktree is trusted after immutable handoff. Recheck
-        # current canonical source/assignments, consent, owner, credential and
-        # guard bindings, without another worktree or stopped-worker admission.
-        row = self.live(review=False)
-        require(self._dispatching and row["requirement"] is not None and row["reservation"] is not None,
-                "Only the fresh one-use publication dispatch can mutate")
-        _, _, item = self.guard._snapshot(self.c.task_id, row["requirement"])
-        observed = self.journal.inspect()
-        action = observed["state"]["execution"]["actions"].get(row["action_id"])
+        from .personal_read_frame import _CURRENT, _identity
         from .personal_episode import same_observation
-        require(self._write_basis is not None, "Original immutable handoff required")
-        same_observation(self._write_basis["subject"], observed)
-        require(item["active"] is not None and item["active"]["id"] == row["reservation"]["permit"]["token"]
-                and self.clock() < item["active"]["deadline"] and action is not None and action["status"] == "SUBMITTED",
-                "Current M2 reservation and canonical SUBMITTED intent required")
+        basis = self._write_basis
+        require(self._dispatching and basis is not None
+                and basis["service"] is self.service and basis["transport"] is self.transport
+                and self.service.target == self.target == basis["target"] and self.port.service is self.service,
+                "Exact invocation-local publication subject required")
+        if self.c.episode:
+            require(_CURRENT.get() is not None and _CURRENT.get() is basis["invocation"]
+                    and _identity(self.c) == basis["identity"], "Historical invocation identity changed")
+        row = self.record(_observed=basis["subject"])
+        require(row == basis["consent"], "Current publication intent changed")
+        observed = self.c.memory.inspect()  # One late actual canonical observation.
+        same_observation(basis["subject"], observed)
+        task = observed["tasks"][key(self.c.task_id)]
+        item = self.guard._get(observed["state"], task, row["requirement"])
+        permit = typed(Permit, row["reservation"]["permit"])
+        active = self.guard._active(observed["state"], task, item, permit.token)
+        action = observed["state"]["execution"]["actions"].get(row["action_id"])
+        require(action is not None and action["status"] == "SUBMITTED" and action["operation"] == Operation.PUSH
+                and permit.decision.baseline.requirement_id == row["requirement"]
+                and active["context"] == row["reservation"]["context"] and active["action"] == row["reservation"]["action"]
+                and item["mode"] in ("normal", "running") and active["started"] <= self.guard._now() < active["deadline"]
+                and read_private(self.port._claim_path(row["action_id"])) == self.port._claim(row["action_id"], action),
+                "Current submitted intent, claim or original M2 reservation changed")
+        # _request already owns this exact hazard; _check_stop here would
+        # reject its own in-flight marker. Never remove or relabel it.
+        require(self.service._live_unknown is True and read_private(self.service._hazard_path()) ==
+                {"status": "IN_FLIGHT_OR_UNKNOWN", "repository": self.target.node_id}, "Current request stop boundary changed")
+        budget = self.service._budget.get()
+        require(budget is basis["budget"] and budget.end <= basis["caps"][0]
+                and budget.request_seconds <= basis["caps"][1] and budget.maximum_calls <= basis["caps"][2],
+                "Original request/operation budget changed")
+        if self.c.episode:
+            self.c.episode_fence()
+        require(self.transport.credential_binding == row["credential_binding"], "Publication credential changed")
+        now = self.guard._now()
+        require(active["started"] <= now < active["deadline"] and row["view"]["issued_at"] <= now < row["view"]["expires_at"],
+                "Publication consent or permit expired")
+        budget.check()
         return True
 
-    def validate_dispatch(self):
+    def validate_dispatch(self, *, _entry=None):
+        row = self.record()
+        budget = self.service._budget.get()
+        require(type(_entry) is tuple and len(_entry) == 7 and _entry[0] is budget
+                and _entry[1] is self.c.runtime and _entry[2:6] == (self.c.task_id, row["approval"],
+                    row["view"]["revision"], row["view"]["canonical_review_binding"])
+                and budget is not None, "Fresh owning-invocation cold qualification required")
         capture = {} if self.c.episode and self._dispatching else None
         self.live(_capture=capture) if capture is not None else self.live()
         p = self.personal.plan
         if self._write_basis is None:
-            self.c.workers.fence()
-            self.c.original_approval()
-            self.c.verify_local_review()
             from .personal_read_frame import current_source
             current_source(self, self.record())  # One immutable source handoff.
-        prerequisites = None
-        if self.c.track is None:
-            require(not p["native_prerequisites"], "Native prerequisites need independent acceptance before publication")
-        else:
-            # Full current M4 admission/preflight is bound into the approved raw
-            # maps for EVERY selected original. Reobserve those exact maps below
-            # and the actual prerequisite receipts here, without another whole
-            # repository inventory inside the unchanged CAS request budget.
-            prerequisites = self.c.track.publication_prerequisites()
         expected_original = self.record()["view"]["original_observation"]
-        require(self.current_original() == expected_original, "Original-ticket scope or native evidence changed")
-        require([enrollment_rules(self.read, p["repository"], p["owner"], item["ref"].removeprefix("refs/heads/"))
-                for item in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")
-        require(self.remote() == self.record()["view"]["expected_old"], "Remote authority or exact ref changed before CAS")
+        current = {}
+        require(self.original(_qualified=_entry[6], _capture=current) == expected_original, "Original-ticket scope or native evidence changed")
+        old = self.remote(_identity=current["identity"])
+        require(old == self.record()["view"]["expected_old"], "Remote authority or exact ref changed before CAS")
         if capture is not None:
             from .personal_read_frame import _CURRENT
             from .personal_episode import same_observation
@@ -439,12 +454,17 @@ class PersonalPublication:
             from .personal_episode import same_observation
             actual = self.c.memory.inspect()
             if self._write_basis is None:
-                self._write_basis = {"subject": actual}
+                budget = self.service._budget.get()
+                require(budget is not None, "Original publication budget required")
+                self._write_basis = dict(subject=actual, consent=self.record(_observed=actual),
+                    service=self.service, transport=self.transport, target=self.target,
+                    budget=budget, caps=(budget.end, budget.request_seconds, budget.maximum_calls))
             else:
                 same_observation(self._write_basis["subject"], actual)
+        return self.service, self.target.ref, old
 
     @measured("publication.count_admission")
-    def admit_objects(self, objects, budget, adapter):
+    def admit_objects(self, objects, budget, adapter=None):
         """Negative-only count envelope over the already completed closure."""
         basis = self._write_basis
         require(basis is not None and budget is basis["budget"], "Original qualified dispatch budget required")
@@ -462,10 +482,10 @@ class PersonalPublication:
     def proof(self, purpose, subject, kind, payload):
         from .personal_read_frame import forbid_writes
         forbid_writes()
-        row = self.live()
+        row = self.record()
         body = {"purpose": purpose, "subject": subject, "kind": kind, "payload": payload,
             "principal": "personal:operator", "approval": row["approval"], "generation": row["view"]["generation"]}
-        self.validate_proof(body)
+        self.validate_proof(body, _row=row)
         create_private(self.evidence)
         identity = digest(body)
         path = self.evidence / (identity + ".json")
@@ -478,7 +498,6 @@ class PersonalPublication:
 
     def verify(self, evidence, *, purpose, subject):
         try:
-            self.live()
             require(type(evidence) is Attestation and evidence.reference.startswith("personal-publication:"), "Unqualified publication proof")
             identity = evidence.reference.removeprefix("personal-publication:")
             require(re.fullmatch("[0-9a-f]{64}", identity) is not None, "Unsafe proof reference")
@@ -490,10 +509,11 @@ class PersonalPublication:
         except (ADPError, OSError, KeyError, ValueError, TypeError):
             return False
 
-    def validate_proof(self, body):
+    def validate_proof(self, body, *, _row=None):
         fields(body, "purpose subject kind payload principal approval generation")
-        row = self.record()
-        require(body["approval"] == row["approval"] and body["generation"] == row["view"]["generation"], "Publication proof belongs to another consent")
+        row = self.record() if _row is None else _row
+        require(body["approval"] == row["approval"] and body["generation"] == row["view"]["generation"]
+                and row["view"]["issued_at"] <= self.clock() < row["view"]["expires_at"], "Publication proof belongs to another or expired consent")
         purpose, subject, payload = body["purpose"], body["subject"], body["payload"]
         kind = body["kind"]
         if kind == "admission":
@@ -568,11 +588,13 @@ class PersonalPublication:
     @measured("publication.provider")
     def provider(self, permit):
         row = self.live()
-        old = self.remote()
-        require(old == row["view"]["expected_old"], "Expected feature ref changed")
-        adapter = GitHubPolicyAdapter(self.cfg, self.service, governance=tuple(d["path"] for d in self.personal.intent["governance"]))
+        old = row["view"]["expected_old"]
+        adapter = GitHubPolicyAdapter(self.cfg, self.service, push_ref=self.target.ref,
+            governance=tuple(d["path"] for d in self.personal.intent["governance"]))
         provider = PolicyProvider(adapter, authority=self, safety=ReservedSafety(self.guard, permit), clock=self.clock)
         snapshot = adapter.inspect()
+        require(next((r.revision for r in snapshot.remote_refs if r.name == self.target.ref), None) == old,
+                "Expected feature ref changed")
         issued, expires = row["view"]["issued_at"], row["view"]["expires_at"]
         claims = [SourceClaim(SourceKind.OPERATOR, "personal:exact-publication-policy", digest(row["view"]), self.rules(), issued, expires)]
         claims += [SourceClaim(d.kind, d.reference, d.digest, self.rules(), issued, expires) for d in snapshot.documents]
@@ -589,11 +611,11 @@ class PersonalPublication:
         task = Task(self.personal.repository_id, self.c.task_id, self.target.branch.split("/")[-1], row["view"]["revision"], self.target.ref,
             row["requirement"], state["generation"], state["progress_guard"]["task_epochs"][key(self.c.task_id)],
             observed["tasks"][key(self.c.task_id)]["iteration"], self.c.source_authors())
-        plan = provider.plan(task, Request(Operation.PUSH))
+        plan = provider.plan(task, Request(Operation.PUSH), _snapshot=snapshot)
         if self.c.episode:
             require(digest(snapshot) == plan.snapshot_digest, "UNKNOWN: actual publication snapshot changed")
         authorization = Authorization(self.proof("policy/operation", PolicyProvider.authorization_subject(plan), "operation", data(plan)))
-        require(provider.decide(plan, authorization).effect == Effect.ALLOW, "Actual M3 refused publication")
+        require(provider._decide(plan, replace(plan, safety=provider._safety(task)), authorization).effect == Effect.ALLOW, "Actual M3 refused publication")
         return provider, plan, authorization
 
     @measured("publication.reauthorize")
@@ -601,7 +623,7 @@ class PersonalPublication:
         current = provider.plan(plan.task, plan.request)
         require(replace(current, safety=plan.safety) == plan, "Publication policy, repository, source or exact payload changed after reservation")
         authorization = Authorization(self.proof("policy/operation", PolicyProvider.authorization_subject(current), "operation", data(current)))
-        require(provider.decide(current, authorization).effect == Effect.ALLOW, "Current checkpoint-bound M3 refused publication")
+        require(provider._decide(current, replace(current, safety=provider._safety(current.task)), authorization).effect == Effect.ALLOW, "Current checkpoint-bound M3 refused publication")
         return current, authorization
 
     def settle(self, observation):
@@ -638,11 +660,12 @@ class PersonalPublication:
         require(authorized is True and assume_quiescence is True and confirm_project_rules is True,
                 "Separately confirm the exact publication, project rules and finite quiescence warrant")
         with invocation_lock(self.c.memory.control):
+            qualification = {}
             existing = self.record()
             if existing is None:
                 # The operator token seals this entire fresh view and actual
                 # credential. A second pre-lock full proposal added no gate.
-                view, token, binding = self.proposed(reviewed)
+                view, token, binding = self.proposed(reviewed, _qualification=qualification)
                 require(token == reviewed, "Publication changed under invocation lock")
                 require("plan_disabled_rules_assent" not in view or accept_plan_unavailable is True,
                         "PLAN_UNAVAILABLE: separately accept this exact publication's plan-disabled rules warrant")
@@ -652,7 +675,7 @@ class PersonalPublication:
                 require(reviewed == existing["approval"], "Use the original publication intent; do not renew it")
                 bind_consent(existing["view"])
                 with self.service.bounded():
-                    self.local()
+                    self.local(_qualification=qualification)
                     self.remote()  # Observe current credentials without granting replay.
                 self.live()
             permit = self.initialize()
@@ -679,9 +702,12 @@ class PersonalPublication:
             # Internal phases cannot renew it or the original M2 permit.
             self._dispatching = True
             try:
-                admission = (lambda objects, budget: self.admit_objects(objects, budget, provider.adapter)) if self.c.episode else None
-                result = self.port.submit(action, provider, plan, authorization, dispatch=dispatch, validate=self.validate_dispatch,
-                    **({"admit_objects": admission} if admission is not None else {}))
+                admission = self.admit_objects
+                entry = (self.service._budget.get(), self.c.runtime, self.c.task_id, row["approval"],
+                    row["view"]["revision"], row["view"]["canonical_review_binding"], qualification)
+                result = self.port.submit(action, provider, plan, authorization, dispatch=dispatch,
+                    validate=lambda: self.validate_dispatch(_entry=entry),
+                    admit_objects=admission)
             except OSError:
                 result = None  # Observe only after clearing mutation authority.
             finally:

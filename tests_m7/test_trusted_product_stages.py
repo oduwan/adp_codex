@@ -121,24 +121,41 @@ class TrustedProductStageTests(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaises(ADPError):p.current_original(_issues=[])
 
     def test_immutable_handoff_is_once_but_remote_and_canonical_checks_remain_fresh(self):
+        from test_runtime_limits import service
         p = PersonalPublication.__new__(PersonalPublication)
         observed = {"health": "SYNCED", "local_owner": True, "local_head": "a"*40, "remote_head": "a"*40,
                     "inbox_count": 0, "state": {"generation": 1}, "tasks": {}}
-        p.c = SimpleNamespace(episode=False, track=None, memory=SimpleNamespace(inspect=lambda: deepcopy(observed)),
-            workers=SimpleNamespace(fence=Mock()), original_approval=Mock(), verify_local_review=Mock())
-        p.personal = SimpleNamespace(plan={"native_prerequisites": [], "branch_rules": []})
+        p.c = SimpleNamespace(episode=False, track=None, task_id="task", runtime=object(),
+            memory=SimpleNamespace(inspect=lambda: deepcopy(observed)), live=Mock(return_value=observed),
+            record=lambda: {"phase": "LOCAL_DRAFT_CODE_REVIEWED", "coordination": None},
+            workers=SimpleNamespace(fence=Mock()), original_approval=Mock(), verify_local_review=Mock(),
+            check_administration=Mock())
+        p.personal = SimpleNamespace(plan={"checkout": {"path": "/tmp/owned-source", "remote": "forge"},
+            "feature": {"prepare": True}, "governance_digest": digest([])})
+        p.service, p.target = service(), SimpleNamespace(ref="refs/heads/work/task")
+        p.transport = p.service.transport
         p._dispatching, p._write_basis = True, None
-        row = {"view": {"original_observation": {"ticket": "admitted"}, "expected_old": None}}
-        p.live, p.record = Mock(), Mock(return_value=row)
-        p.current_original, p.remote = Mock(return_value={"ticket": "admitted"}), Mock(return_value=None)
-        with patch("adp.personal_read_frame.current_source") as source:
-            p.validate_dispatch();p.validate_dispatch()
+        row = {"approval": "exact-consent", "view": {"revision": "a"*40, "canonical_review_binding": "reviewed",
+            "original_observation": {"ticket": "admitted"}, "expected_old": None}}
+        p.live, p.record, p.review_binding = Mock(), Mock(return_value=row), Mock(return_value="reviewed")
+        def original(**kw):
+            if kw.get("_capture") is not None:kw["_capture"]["identity"] = ("observed", "same-boundary")
+            return {"ticket": "admitted"}
+        p.original, p.remote = Mock(side_effect=original), Mock(return_value=None)
+        with p.service.bounded() as budget, patch("adp.personal_read_frame.current_source") as source, \
+                patch("adp.enrollment.local_checkout", return_value=p.personal.plan["checkout"]), \
+                patch("adp.personal_enrollment.governance", return_value=[]):
+            p.local()  # The owning operation's actual cold handoff, once.
+            p.original.reset_mock()
+            entry = (budget, p.c.runtime, p.c.task_id, row["approval"], "a"*40, "reviewed", {})
+            with self.assertRaises(ADPError):p.validate_dispatch()  # No entry/restart bypass.
+            p.validate_dispatch(_entry=entry);p.validate_dispatch(_entry=entry)
             source.assert_called_once()
             p.c.workers.fence.assert_called_once()
             p.c.verify_local_review.assert_called_once()
-            self.assertEqual((p.current_original.call_count, p.remote.call_count), (2, 2))
+            self.assertEqual((p.original.call_count, p.remote.call_count), (2, 2))
             observed["state"]["generation"] = 2
-            with self.assertRaises(ADPError):p.validate_dispatch()
+            with self.assertRaises(ADPError):p.validate_dispatch(_entry=entry)
             self.assertEqual(source.call_count, 1)
 
     def test_actual_source_ref_index_and_worktree_are_checked_at_handoff(self):

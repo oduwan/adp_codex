@@ -259,10 +259,11 @@ class GitHubCAS:
         return actual
 
     @network_operation("network.inspect_ref", service=lambda self, **k: self)
-    def inspect_ref(self, *, writable=False):
+    def inspect_ref(self, *, writable=False, _identity=None):
         if self.personal:
             from .personal_rules import inspect_ref
-            return inspect_ref(self, writable=writable)
+            return inspect_ref(self, writable=writable, _identity=_identity)
+        require(_identity is None, "Signed inspection requires its own actual observation")
         return self._inspect_ref(writable=writable)
 
     def _inspect_ref(self, *, writable=False):
@@ -326,13 +327,19 @@ def _unchanged():
 
 class GitHubPolicyAdapter(GitPolicyAdapter):
     """Local accepted policy inspection, HTTP-only authenticated remote refs."""
-    def __init__(self, config: Config, service: GitHubCAS, *, product_base=None, **kwargs):
+    def __init__(self, config: Config, service: GitHubCAS, *, product_base=None, push_ref=None, **kwargs):
         super().__init__(config, **kwargs)
         self.service = service
         self.product_base = product_base
+        require(push_ref is None or service.personal and product_base is None and push_ref == service.target.ref,
+                "Only the exact personal PUSH ref may select scoped publication metadata")
+        self.push_ref = push_ref
 
     def _remote_refs(self, config):
         _endpoint(config, self.service.target)
+        if self.push_ref is not None:
+            current = self.service.inspect_ref(writable=False)
+            return () if current is None else (Ref(self.push_ref, current),)
         if self.product_base is not None:
             # Explicit personal Product projection, not a global absent-ref
             # inventory. Its selected rules permit only this source/base flow.
@@ -468,11 +475,18 @@ class GitHubGitExecutionPort(GitExecutionPort):
         require(claim == self._claim(action_id, action) and load_json(self._claim_path(action_id)) == claim,
                 "Network claim is missing, corrupt or belongs to another intent")
         with self.service.bounded() as budget:
+            def checked_ref():
+                observation = validate() if validate is not None else None
+                # A personal callback supplies the actual same-boundary native
+                # observation, not an ALLOW. Default/signed ports still inspect.
+                if (self.service.personal and type(observation) is tuple and len(observation) == 3
+                        and observation[0] is self.service and observation[1] == self.service.target.ref):
+                    current = observation[2]
+                else:
+                    current = self.service.inspect_ref(writable=True)
+                require(current == action["expected_target"], "Remote changed before immutable transfer or atomic CAS")
             require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
-            if validate is not None:
-                validate()
-            require(self.service.inspect_ref(writable=True)
-                    == action["expected_target"], "Remote changed before immutable object transfer")
+            checked_ref()
             objects = (closure(self.root, action["revision"], self.service.known_commit, git_reader=self._git)
                        if self.bound_git_directory is not None else closure(self.root, action["revision"], self.service.known_commit))
             self._authorize(action, provider, plan, authorization)
@@ -481,10 +495,7 @@ class GitHubGitExecutionPort(GitExecutionPort):
             self.service.upload(objects)
             # Upload latency/source/ownership/policy drift cannot authorize late CAS.
             self._authorize(action, provider, plan, authorization)
-            if validate is not None:
-                validate()
-            require(self.service.inspect_ref(writable=True)
-                    == action["expected_target"], "Remote changed before atomic CAS")
+            checked_ref()
             try:
                 self.service.cas(action["expected_target"], action["revision"], action_id)
             except (ADPError, OSError):

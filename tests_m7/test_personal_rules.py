@@ -268,7 +268,7 @@ class PersonalRulesTests(unittest.TestCase):
     def test_separate_publication_and_product_assent_precedes_durable_intent(self):
         pub = PersonalPublication.__new__(PersonalPublication)
         pub.record = lambda: None
-        pub.proposed = lambda _: ({"plan_disabled_rules_assent": PLAN_ASSENT}, "exact", "binding")
+        pub.proposed = lambda _, **kw: ({"plan_disabled_rules_assent": PLAN_ASSENT}, "exact", "binding")
         pub.save = Mock()
         with TemporaryDirectory() as directory:
             pub.c = SimpleNamespace(memory=SimpleNamespace(control=Path(directory)))

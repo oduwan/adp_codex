@@ -25,7 +25,7 @@ from test_guard import SyntheticAuthority
 
 
 class ProductWorkTests(PersonalFixture):
-    def seeded(self, product_type=PersonalProduct):
+    def seeded(self, product_type=PersonalProduct, *, publication=False):
         """Seed an admitted, already reviewed SHA; do not pretend to run Codex."""
         self.now = int(time.time())
         plan, original, docs = self.plan()
@@ -96,7 +96,8 @@ class ProductWorkTests(PersonalFixture):
             "workspace_key": digest(plan["administration"]), "admission": digest({"synthetic": "scope"}),
             "issue_digest": plan["original_digest"], "revision": row["revision"], "source_ref": target.ref,
             "product_iteration": task["iteration"], "kind": "PRODUCT", "stage": "PUBLISH", "jobs": {}, "review": None}
-        p.journal.change(lambda e, s, t: p.publication.admit_task(e, key(self.c.task_id), admitted))
+        if not publication:
+            p.journal.change(lambda e, s, t: p.publication.admit_task(e, key(self.c.task_id), admitted))
         p.review_seal = Mock(return_value="independently-seeded-exact-review")
         return p
 

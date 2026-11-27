@@ -262,8 +262,25 @@ class PersonalTrack:
         return observation
 
     @with_reads
-    def accepted(self, identity, *, transport=None, runtime=None, _history_capture=None):
+    def accepted(self, identity, *, transport=None, runtime=None, _history_capture=None, _capture=None, _qualified=None):
         """Read historical facts without reviving an expired execution grant."""
+        if _qualified is not None:
+            # Only an owning operation passes its fully authenticated historical
+            # operands. Current Memory and the mutable exact PR remain fresh.
+            memory, subject, product, receipt, previous = _qualified
+            require(receipt["identity"] == data(identity) and receipt["original"] == data(self.originals[identity]),
+                    "Qualified prerequisite identity changed")
+            item = product.forge.pull({k: receipt["pull"][k] for k in ("id", "number", "repository_id", "url")},
+                revision=receipt["source"], source_ref=receipt["merge_payload"]["head_ref"],
+                base_ref=receipt["merge_payload"]["base_ref"], expected_base=previous["base"]["sha"])
+            require(item is not None and item["merged"] is True and item["state"] == "closed"
+                    and item.get("node_id") == receipt["pull"]["node_id"]
+                    and item.get("merge_commit_sha") == receipt["merge"]
+                    and item.get("merged_by", {}).get("id") == receipt["actor"]
+                    and all(item.get(k) == previous.get(k) for k in ("title", "body")),
+                    "Current exact accepted prerequisite PR changed")
+            require(memory.inspect() == subject, "Accepted prerequisite canonical state changed")
+            return receipt
         path = self.completion_path(identity)
         if not path.exists():
             return None
@@ -394,6 +411,9 @@ class PersonalTrack:
             item = product.pull(allow_merged=True)
             require(observed.status == "PRESENT" and observed.revision == receipt["merge"]
                     and item.get("merged_by", {}).get("id") == receipt["actor"], "Current exact merged result/actor changed")
+        if _capture is not None:
+            require(memory.inspect() == now, "Accepted prerequisite changed during qualification")
+            _capture[identity] = (memory, now, product, receipt, item)
         return receipt
 
     @with_reads
@@ -429,7 +449,7 @@ class PersonalTrack:
             done.add(identity)
         return tuple(sorted(done - {selected.identity}))
 
-    def publication_prerequisites(self):
+    def publication_prerequisites(self, *, _capture=None):
         """Fresh receipt facts; the caller separately reobserves ALL raw originals.
 
         The immutable admission graph selects opaque IDs only. It is neither a
@@ -456,7 +476,8 @@ class PersonalTrack:
             require(edges(issues[identity]) == edges(self.originals[identity].issue),
                     "Admission prerequisite identities differ from the frozen original")
             if identity != selected:
-                require(self.accepted(identity) is not None, "Publication requires actual current accepted prerequisite evidence")
+                require(self.accepted(identity, **({"_capture": _capture} if _capture is not None else {})) is not None,
+                        "Publication requires actual current accepted prerequisite evidence")
             pending.extend(native[identity])
             done.add(identity)
         return tuple(sorted(done - {selected}))

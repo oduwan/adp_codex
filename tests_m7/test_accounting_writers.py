@@ -217,7 +217,7 @@ class AccountingWriterTests(unittest.TestCase):
                 local.assert_not_called()
                 product.history_binding.side_effect = None
                 publication.local()
-                local.assert_called_once_with(_history_capture=None)
+                local.assert_called_once_with(_history_capture=None, _qualification=None)
 
     def test_post_h3_adoption_uses_literal_recorded_engine_without_new_grant(self):
         from adp.personal_adoption import adopted

@@ -23,12 +23,16 @@ PERSONAL_REF_QUERY = REF_QUERY.replace(" branchProtectionRule { id }", "").repla
     "viewerPermission\n", "viewerPermission\n    defaultBranchRef { name prefix target { oid __typename } }\n")
 
 
-def private_repository(read, repository: dict, expected_owner: dict) -> dict:
+def private_repository(read, repository: dict, expected_owner: dict, *, _identity=None) -> dict:
     name = repository["name"]
-    owner = owned_repository(read, name, repository["repository_id"])
-    response = checked(read, name, "/repos/" + name)
-    repo = response.body
-    require(response.status == 200 and type(repo) is dict and owner == expected_owner
+    if _identity is None:
+        owner = owned_repository(read, name, repository["repository_id"])
+        response = checked(read, name, "/repos/" + name)
+        require(response.status == 200, "PLAN_UNAVAILABLE: current private repository unavailable")
+        repo = response.body
+    else:
+        repo, owner = _identity  # Same boundary's actual authenticated response.
+    require(type(repo) is dict and owner == expected_owner
             and all(owner.get(k) is True for k in ("read_access", "push_access", "admin_access"))
             and type(repo.get("id")) is int and repo["id"] == repository["database_id"]
             and repo.get("node_id") == repository["node_id"] and repo.get("full_name") == name
@@ -51,7 +55,7 @@ def supported_branch(response, branch: str, expected=None):
     return revision
 
 
-def enrollment_rules(read, repository: dict, owner: dict, branch: str) -> dict:
+def enrollment_rules(read, repository: dict, owner: dict, branch: str, *, _identity=None) -> dict:
     from .enrollment import branch_rules
     name = repository["name"]
     # Keep ordinary/signed enrollment byte-compatible; opt in here only.
@@ -67,7 +71,7 @@ def enrollment_rules(read, repository: dict, owner: dict, branch: str) -> dict:
     unavailable = plan_error(result, path)
     if unavailable is not None:
         try:
-            identity = private_repository(read, repository, owner)
+            identity = private_repository(read, repository, owner, _identity=_identity)
             supported_branch(observations["/repos/" + name + "/branches/" + quote(branch, safe="")], branch)
         except (ADPError, OSError, ValueError, TypeError):
             value["rules_action"] = "Exact plan error observed, but fresh private owner/admin and supported unprotected branch evidence are still required. No write is authorized."
@@ -81,7 +85,7 @@ def enrollment_rules(read, repository: dict, owner: dict, branch: str) -> dict:
     return value
 
 
-def inspect_ref(service, *, writable: bool):
+def inspect_ref(service, *, writable: bool, _identity=None):
     if not writable:
         repo = service._repository(PERSONAL_REF_QUERY, {"ref": service.target.ref})
         return ref_value(repo, service.target.branch)
@@ -102,7 +106,7 @@ def inspect_ref(service, *, writable: bool):
         require(repository["node_id"] == target.node_id and repository["database_id"] == target.database_id
                 and repository["repository_id"] == target.memory_id and repository["name"] == name,
                 "Personal capability context targets another immutable repository")
-        identity = private_repository(read, repository, owner)
+        identity = private_repository(read, repository, owner, _identity=_identity)
         repo = service._repository(PERSONAL_REF_QUERY, {"ref": target.ref})
         require(repo.get("viewerPermission") == "ADMIN", "UNKNOWN: independent owner permission unavailable")
         current = ref_value(repo, target.branch)
