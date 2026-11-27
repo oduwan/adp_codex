@@ -170,13 +170,16 @@ class PersonalPublication:
         else:
             prerequisites = self.c.track.publication_prerequisites(_capture=subjects) if self.c.track is not None else ()
         observations = self.current_original(_issues=issues, _prerequisites=prerequisites)
-        selected = [i for i in issues if i.identity.issue_id == p["issue_id"]]
-        require(len(selected) == 1 and self.c.original_matches(selected[0]), "Original scope or native dependencies changed")
-        if self.c.track is None:
-            require(not p["native_prerequisites"], "Native prerequisites need actual accepted completion")
+        if _qualified is not None:
+            require(observations == _qualified["observations"], "Original-ticket scope or native evidence changed")
         else:
-            for issue in issues:
-                self.c.track.original_issue(issue.identity, issue)
+            selected = [i for i in issues if i.identity.issue_id == p["issue_id"]]
+            require(len(selected) == 1 and self.c.original_matches(selected[0]), "Original scope or native dependencies changed")
+            if self.c.track is None:
+                require(not p["native_prerequisites"], "Native prerequisites need actual accepted completion")
+            else:
+                for issue in issues:
+                    self.c.track.original_issue(issue.identity, issue)
         identity = None
         if _capture is not None:
             repo = {}
@@ -185,7 +188,7 @@ class PersonalPublication:
         require([enrollment_rules(self.read, p["repository"], p["owner"], item["ref"].removeprefix("refs/heads/"), _identity=identity)
                  for item in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")
         if _capture is not None:
-            _capture.update(prerequisites=prerequisites, subjects=subjects, identity=identity)
+            _capture.update(prerequisites=prerequisites, subjects=subjects, identity=identity, observations=observations)
         return observations
 
     def review_binding(self, *, _observed=None):
@@ -386,6 +389,10 @@ class PersonalPublication:
                     and _identity(self.c) == basis["identity"], "Historical invocation identity changed")
         row = self.record(_observed=basis["subject"])
         require(row == basis["consent"], "Current publication intent changed")
+        claim = read_private(self.port._claim_path(row["action_id"]))
+        binding = self.transport.credential_binding
+        if self.c.episode:
+            self.c.episode_fence()
         observed = self.c.memory.inspect()  # One late actual canonical observation.
         same_observation(basis["subject"], observed)
         task = observed["tasks"][key(self.c.task_id)]
@@ -397,7 +404,7 @@ class PersonalPublication:
                 and permit.decision.baseline.requirement_id == row["requirement"]
                 and active["context"] == row["reservation"]["context"] and active["action"] == row["reservation"]["action"]
                 and item["mode"] in ("normal", "running") and active["started"] <= self.guard._now() < active["deadline"]
-                and read_private(self.port._claim_path(row["action_id"])) == self.port._claim(row["action_id"], action),
+                and claim == self.port._claim(row["action_id"], action),
                 "Current submitted intent, claim or original M2 reservation changed")
         # _request already owns this exact hazard; _check_stop here would
         # reject its own in-flight marker. Never remove or relabel it.
@@ -407,9 +414,7 @@ class PersonalPublication:
         require(budget is basis["budget"] and budget.end <= basis["caps"][0]
                 and budget.request_seconds <= basis["caps"][1] and budget.maximum_calls <= basis["caps"][2],
                 "Original request/operation budget changed")
-        if self.c.episode:
-            self.c.episode_fence()
-        require(self.transport.credential_binding == row["credential_binding"], "Publication credential changed")
+        require(binding == row["credential_binding"], "Publication credential changed")
         now = self.guard._now()
         require(active["started"] <= now < active["deadline"] and row["view"]["issued_at"] <= now < row["view"]["expires_at"],
                 "Publication consent or permit expired")

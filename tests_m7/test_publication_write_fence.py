@@ -127,6 +127,18 @@ class PublicationWriteFenceTests(unittest.TestCase):
         self.c.live.assert_not_called(); self.p.guard._snapshot.assert_not_called(); self.p.journal.inspect.assert_not_called()
         self.assertFalse(self.service.unconfirmed_contexts())
 
+    def test_credential_callback_canonical_change_precedes_only_late_snapshot(self):
+        self.c.episode = False  # The same direct fence now serves ordinary mode.
+        def actor():
+            self.snapshot["state"]["generation"] = 2
+            return self.actor
+        with self.service.bounded() as budget:
+            self.seed(budget)
+            with patch.object(self.transport, "_actor", side_effect=actor):
+                with self.assertRaises((ADPError, OSError)):self.blob()
+        self.assertEqual(self.http_calls, [])
+        self.assertEqual(self.c.memory.inspect.call_count, 1)
+
     def test_between_object_canonical_owner_permit_epoch_and_counter_changes_refuse(self):
         changes = ({"local_head": "f" * 40}, {"remote_head": "f" * 40}, {"local_owner": False}, {"inbox_count": 1},
             {"state": {**self.snapshot["state"], "generation": 2}})

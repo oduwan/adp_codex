@@ -22,6 +22,41 @@ import test_product_work as product_work
 
 
 class PublicationWorkTests(unittest.TestCase):
+    def test_identical_fresh_scope_reuses_semantics_and_changed_scope_or_edge_refuses(self):
+        from adp.discovery_schema import digest
+        from adp.runtime_limits import DEFAULTS
+        import personal_fixtures
+        f = personal_fixtures.PersonalFixture(methodName="runTest"); f.setUp()
+        self.addCleanup(f.doCleanups)
+        observation, owner = f.observe()
+        selected = next(i for i in observation.snapshot.issues if i.number == 1)
+        pub = PersonalPublication.__new__(PersonalPublication)
+        pub.c = SimpleNamespace(track=None, original_matches=Mock(side_effect=lambda i: data(i) == data(selected)))
+        pub.personal = SimpleNamespace(repository_id=f.rid, plan={"issue": 1, "issue_id": selected.identity.issue_id,
+            "repository": observation.repository, "owner": owner, "native_prerequisites": [],
+            "branch_rules": observation.facts["branch_rules"]})
+        pub.target = SimpleNamespace(api=f.prefix)
+        pub.read, pub.clock, pub.service = f.transport, lambda: f.now, SimpleNamespace(limits=DEFAULTS)
+        qualified = {}
+        first = pub.original(_capture=qualified)
+        pub.c.original_matches.assert_called_once()
+        future = f.transport.api.responses[f.prefix + "/issues/3"].body
+        future["body"] = "Unadmitted future change"
+        self.assertEqual(pub.original(_qualified=qualified, _capture={}), first)
+        pub.c.original_matches.assert_called_once()  # Actual GETs, one semantic interpretation.
+        row = f.transport.api.responses[f.prefix + "/issues/1"].body
+        original = row["body"]
+        row["body"] = "Unapproved selected change"
+        with self.assertRaises(ADPError):pub.original(_qualified=qualified, _capture={})
+        row["body"] = original
+        route = f.prefix + "/issues/1/dependencies/blocked_by?per_page=100&page=1"
+        before = f.transport.api.responses[route]
+        f.transport.api.responses[route] = Response(200, [f.transport.api.responses[f.prefix + "/issues/3"].body])
+        with self.assertRaises(ADPError):pub.original(_qualified=qualified, _capture={})
+        f.transport.api.responses[route] = before
+        self.assertEqual(pub.original(_capture={}), first)  # A new entry interprets again.
+        self.assertEqual(pub.c.original_matches.call_count, 2)
+
     def test_scoped_publication_refs_do_not_reconstruct_global_inventory(self):
         from adp.network_git import GitHubPolicyAdapter
         from test_personal_rules import Native, HEAD
@@ -71,12 +106,17 @@ class PublicationWorkTests(unittest.TestCase):
             pub.provider(object())
         self.assertGreaterEqual(f.safety.calls, 2)
 
-    def stage(self, number):
+    def stage(self, number, *, plan_disabled=False):
         timezone = patch.dict("os.environ", {"TZ": "UTC"}); timezone.start()
         self.addCleanup(timezone.stop)
         f = product_work.ProductWorkTests(methodName="runTest"); f.setUp()
         self.addCleanup(f.doCleanups)
         f.choices = replace(f.choices, issue=number, branch="work/issue-" + str(number))
+        if plan_disabled:
+            from test_personal_rules import denied
+            f.transport.api.responses[f.prefix].body["private"] = True
+            f.transport.api.responses[f.prefix + "/branches/trunk"].body["commit"] = {"sha": run(f.a, "rev-parse", "HEAD")}
+            f.transport.api.responses[f.prefix + "/rules/branches/trunk"] = denied()
         p = f.seeded(publication=True)
         def accepted(identity, **kw):
             if p.c.track.originals[identity].issue.number >= number:
@@ -99,10 +139,33 @@ class PublicationWorkTests(unittest.TestCase):
         pub = PersonalPublication(f.c, transport=http)
         pub.review_binding = Mock(return_value="synthetic-independent-exact-sha-review")
         http.authorize_write = pub.write_authorized
+        if plan_disabled:
+            from test_personal_rules import denied
+            from adp.network_http import Response as NativeResponse
+            for branch in ("trunk", "work%2Fissue-" + str(number)):
+                f.transport.api.responses[f.prefix + "/rules/branches/" + branch] = denied()
+                f.transport.api.responses[f.prefix + "/branches/" + branch + "/protection"] = denied(classic=True)
+            f.transport.api.responses[f.prefix + "/branches/work%2Fissue-" + str(number)] = Response(200,
+                {"name": target.branch, "protected": False, "commit": {"sha": f.c.revision()}})
+            http.server.permission = "ADMIN"
+            ordinary = http.request
+            def request(method, path, body, **kw):
+                if method == "GET" and ("/rules/branches/" in path or path.endswith("/protection")):
+                    if path.endswith("/protection"):
+                        from copy import deepcopy
+                        f.transport.calls.append(path)
+                        reply = deepcopy(f.transport.api.responses.get(path, Response(404, None)))
+                    else:
+                        reply = f.transport.get(path)
+                    raw = json.dumps(reply.body).encode()
+                    http.last_response = reply.status, raw, reply.headers
+                    return NativeResponse(reply.status, raw)
+                return ordinary(method, path, body, **kw)
+            http.request = request
         return f, pub, http
 
-    def publish(self, number):
-        f, pub, http = self.stage(number)
+    def publish(self, number, *, plan_disabled=False):
+        f, pub, http = self.stage(number, plan_disabled=plan_disabled)
         proposal = pub.preview()
         calls = []; actual = http.request
         def counted(method, path, body, **kw):
@@ -110,7 +173,8 @@ class PublicationWorkTests(unittest.TestCase):
         http.request = counted
         f.c.fresh = Mock(side_effect=AssertionError("No unrelated complete discovery during publication"))
         result = pub.publish(
-            reviewed=proposal["approval"], authorized=True, assume_quiescence=True, confirm_project_rules=True)
+            reviewed=proposal["approval"], authorized=True, assume_quiescence=True, confirm_project_rules=True,
+            accept_plan_unavailable=plan_disabled)
         self.assertEqual(result["status"], "PUBLISHED_UNACCEPTED")
         self.assertEqual(result["product_acceptance"], "NOT_ACCEPTED")
         self.assertEqual(http.server.refs()[pub.target.ref], f.c.revision())
@@ -122,7 +186,7 @@ class PublicationWorkTests(unittest.TestCase):
         self.assertFalse(any("/issues?" in path or "/pulls?" in path for _, path in calls))
         for future in range(number + 1, 4):
             self.assertFalse(any("/issues/" + str(future) in path for _, path in calls))
-        print("PUBLICATION_NATIVE_STAGE " + json.dumps({"issue": number, "http_calls": len(calls),
+        print("PUBLICATION_NATIVE_STAGE " + json.dumps({"issue": number, "plan_disabled": plan_disabled, "http_calls": len(calls),
             "costs": list(pub.service.measurements), "seams": "synthetic stopped review and accepted predecessor; not runtime proof"}, sort_keys=True), flush=True)
 
     def test_issue1_through_cas_and_settlement(self):
@@ -133,6 +197,9 @@ class PublicationWorkTests(unittest.TestCase):
 
     def test_issue3_through_cas_and_settlement(self):
         self.publish(3)
+
+    def test_issue3_verified_private_plan_disabled_through_cas_and_settlement(self):
+        self.publish(3, plan_disabled=True)
 
     def test_changed_dependency_or_scope_refuses_but_unrelated_future_does_not(self):
         f, pub, http = self.stage(2)
