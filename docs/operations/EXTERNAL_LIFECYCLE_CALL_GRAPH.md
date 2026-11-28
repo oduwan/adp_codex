@@ -173,3 +173,63 @@ means entering the effect adapter, not proof of on-wire delivery;
 `effect.acknowledged`, `effect.observed`, and `effect.settled` identify separate
 actual boundaries. Only the existing bounded private diagnostic whitelist is
 extended. No A3 exception or remote outcome is reconstructed.
+
+### Final residual source anchors and diagnostic boundary
+
+Anchors are the bb610c6 product source; final documentation-only commits do not
+move them. The multiplicities/conditions and A/B/C/D classification are in the
+preceding table. Counts are per owning boundary, not sums of nested telemetry.
+
+| Callee | File:line |
+| --- | --- |
+| `record` | `adp/personal_publication.py:103` |
+| `remote` | `adp/personal_publication.py:265` |
+| `write_authorized` | `adp/personal_publication.py:382` |
+| `validate_dispatch` | `adp/personal_publication.py:429` |
+| `proof` | `adp/personal_publication.py:492` |
+| `verify` | `adp/personal_publication.py:509` |
+| `validate_proof` | `adp/personal_publication.py:524` |
+| `provider` | `adp/personal_publication.py:601` |
+| `reauthorize` | `adp/personal_publication.py:634` |
+| `review_seal` | `adp/personal_product.py:173` |
+| `write_authorized` | `adp/personal_product.py:359` |
+| `provider` | `adp/personal_product.py:431` |
+| `final_boundary` | `adp/personal_product.py:458` |
+| `qualified` | `adp/personal_product.py:924` |
+| `verify_review` | `adp/personal_product.py:959` |
+| `check_matches` | `adp/personal_product.py:1001` |
+| `qualifications` | `adp/personal_product.py:1012` |
+| `refresh_merge_ci` | `adp/personal_product.py:1086` |
+| `_validate` | `adp/personal_product_review.py:187` |
+| `report_preview` | `adp/personal_report.py:95` |
+| `final_boundary` | `adp/personal_report.py:152` |
+| `observed_report` | `adp/personal_report.py:162` |
+| `report` | `adp/personal_report.py:199` |
+| `current` | `adp/personal_track.py:253` |
+| `accepted` | `adp/personal_track.py:265` |
+| `completion_preview` | `adp/personal_track.py:492` |
+| `complete` | `adp/personal_track.py:530` |
+| `status` | `adp/personal_track.py:587` |
+| `next_preview` | `adp/personal_track.py:740` |
+| `next` | `adp/personal_track.py:812` |
+| `_authorize` | `adp/network_git.py:429` |
+| `submit` | `adp/network_git.py:477` |
+| `request` | `adp/project_validation.py:209` |
+| `_observe_request` | `adp/project_validation.py:451` |
+| `inspect_project` | `adp/enrollment.py:153` |
+
+`publication.remote → inspect_ref` and `NEXT → apply_personal → selection →
+inspect_project → discovery` now rethrow existing typed BudgetRefusal before
+terminal domain wrapping. The generic opaque-error handlers remain unchanged.
+This differs from forge/CI catches that legitimately continue observation or
+return unqualified evidence: those inner refusals stay observed events and are
+not invented terminal causes. Two deterministic reproductions preserve the
+original masked errors and the corrected same-exception/opaque-fallback checks.
+
+Final focused publication totals (all service ports, not only native wrapper):
+55/80/105 requests for originals1/2/3,110 for private-Free3; four plans/two
+native authorizations, exact CAS and settlement. Actual R5 private-Free late
+stage attempts/transport: MERGE82/100/118; completion25/36/47; REPORT67/89/111;
+NEXT114/121. All complete at existing caps. These are single-page frozen
+fixture counts, not a universal pagination bound or scenario-specific predictor.
+Larger closure/page shapes remain bounded by the sole Budget and fail closed.

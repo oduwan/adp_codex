@@ -315,3 +315,255 @@ is not evidence of a product speedup.
 Final source identities, focused counts, comparative measurements, private
 integrity manifests, final review and readiness are supplied by the consolidated
 Issue69 handback. Missing mandatory results remain nonPASS until actually run.
+
+## Consolidated residual R1–R5 qualification
+
+This is focused Issue69 engineering evidence, not #58, M8, installation, real
+Codex execution, live GitHub CI, or pilot acceptance. Original A/A2/A3 and all
+nonPASS records remain unchanged. No expired intent is retried or reconciled.
+
+Source attribution is explicit. The complete positive late-stage component
+runs tested clean `d0ce3ea8f57f39123aec963c5013a8211f211ca1` (tree
+`df0b270be692e7b959f96791023a98ce80ada614`, product
+`60baedb45760075e7d302066db6a5178fd6d1893`). Subsequent product changes are
+only five lines: typed `BudgetRefusal` passthroughs in publication and
+enrollment, plus the existing-type import. No successful operation path, limit,
+fixture or assertion changed. Those measurements retain their exact d0 identity;
+independent branch-equivalence review establishes applicability, not execution
+on a later SHA. Directly affected checks tested `bb610c6064f0d1398df5a30101315e30a9673f59`
+(tree `06a8d19feb8344c748ccc00a5ce27030691e0192`, product
+`49096d8630a19b2faf7f4f8de0d41be3a93bbb1b`). The final handback binds the
+subsequent documentation-only HEAD/tree. No source approval is silently reused
+for an unreviewed changed HEAD.
+
+| Finding | Disposition |
+| --- | --- |
+| R1 publication | Same-subject row supplies proof construction and dispatch projections. The personal callback skips only adjacent initial native reauthorization; four full plans/two native authorizations remain, including fresh pre-first-POST and post-upload/pre-CAS checks. Each object still checks actual canonical subject, permit/deadline/revocation, claim, credentials, transport and uncertainty. No ALLOW is memoized. |
+| R2 MERGE/REPORT | Authenticate actual independent Worker and applicable CI once at the owning stage; existing ProductAuthority carries only typed immutable operands bound to exact active Budget/view/receipt/assignment/Guard. Current native principals remain fresh. Borrow initial actual validation plan only within the exact provider/task/request/Budget; closing query/request remains independent. Default/signed/candidate semantics stay unchanged. |
+| R3 completion/REPORT/NEXT | Completion shares one CI operand. REPORT authenticates selected acceptance and its closing subject, without whole-future-track discovery or successor READY claims. Post-reservation acceptance and both stable comment inventories remain. NEXT shares adjacent confirmed admission only before release; retained/restart reobserves, current parent checkpoint/generation and post-release enrollment remain fresh. Existing selected historical read port is GET-only, eliminating an actual wrong-port defect. |
+| R4 diagnostics | Known terminal budget reasons survive discovery, native/proof adapters, publication policy and successor discovery. Opaque errors remain fail-closed. Legitimately caught inner refusals remain observed events. Dispatch-request, acknowledgment, observation and settlement markers are distinct; dispatch-request does not prove on-wire delivery. A3's historical exception remains UNKNOWN. |
+| R5 evidence | Actual production MERGE/observation/settlement, acceptance, REPORT/comment/settlement, and NEXT enrollment/owner transition executed for the three originals on both Python versions. Seeded stopped receipts/source/published refs/PRs and synthetic transport are disclosed; no complete-operation mock or actual Worker dispatch. |
+
+Fresh boundaries retained: cold entry/restart; initial ticket/native prerequisite
+closure; current source/index/worktree and policy/ref/permission/credential
+checks; each actual write's canonical M1/M2/claim/stop/budget fence; pre-upload
+and post-upload/CAS; fresh pre-merge native CI and final native review eligibility;
+post-effect observation/settlement; REPORT reserved overlay; parent release and
+new successor enrollment/scope. Full next discovery is necessary to establish
+new original scope. Generic M3 verifier-to-Memory reads remain explicitly D
+(unproven optimization): this release adds no cross-layer observation protocol
+or general Memory redesign, and does not portray those costs as independent new
+security judgments. The call graph lists every removed and retained path.
+
+### Focused outcomes and provenance
+
+Selected denominator **90 distinct methods per interpreter**, all PASS; FAIL,
+ERROR, SKIP, TIMEOUT, NOTRUN and UNKNOWN are each0 **within this selection**.
+This is not a claim about the full unexecuted suite.
+
+| Selection | Python3.11.10 | Python3.12.16 |
+| --- | --- | --- |
+| Snapshot/review/CI/diagnostic/NEXT controls | 48 unchanged9f PASS + changed terminal diagnostic1bb PASS | 49bb PASS |
+| Affected publication/CAS/CI/accounting/rules/PR/report methods | 39bb PASS (167.464s) | 39bb PASS (171.069s) |
+| Changed inventory/seal preflight; full runner explicitly trapped | 1bb PASS | 1bb PASS |
+| Actual three-original late stages | 1d0 PASS (423.574s),27 completed operations | 1d0 PASS (352.839s),27 completed operations |
+| Scaffold check, separate from method denominator | PASS | PASS |
+
+The 3.11 unit run actually executed49 methods at9f; its one subsequently
+extended diagnostic method is superseded by the bb run, not counted twice.
+The other48 are reused with unchanged method bodies and demonstrated
+exception-only source applicability. No repeated171-method campaign occurred.
+The additive M7 inventory is694 distinct IDs (previous678 all retained), D4 is99
+(previous83 retained). Accepted193 M1–M6 source seals remain intact; full suites
+and CI workflows are NOTRUN under this release. No SKIP is promoted to PASS.
+
+On bb both lanes separately completed publication originals1/2/3 and the private
+Free Issue3 case through native Git upload/CAS/settlement: full Budget attempts
+and transport calls55/80/105/110; remaining73/48/23/18. Exactly four plans/two
+native authorizations each. 3.11 publication operation wall seconds
+8.907/9.595/9.023/9.498;3.12 9.352/9.499/9.247/9.534. Direct native wrapper
+counts55/73/91/96 exclude the other selected predecessor-read port; total Budget
+transport counts are authoritative. The retained prior full totals56/81/106/111
+are historical measurements, not same-environment fresh baseline timing.
+
+The new NEXT negative method invokes actual `next()` with narrow admission
+prerequisites and unreachable effect sentinels, real immutable intent storage
+and lock. Changed parent head/generation refuses before handoff/enrollment;
+retained snapshot/completion requires fresh status and refuses drift. It does
+not qualify successful reconnect or lost response. Separate retained controls
+cover unknown REPORT/no replay, lost Git acknowledgment, exact CAS race, source
+and dependency drift, credentials/permissions/policy, current owner/generation,
+expiry/revocation, missing/stale/foreign CI and original finite accounting.
+
+Independent raw evidence audit verifies both actual handoffs preserve the
+entire Guard tree, tasks/assignments and execution history; released parents
+remain unchanged at final Issue3. All12 stopped contexts per lane are distinct
+and internally bound to request/raw/stop/receipt records. These are synthetic
+receipt bindings, not genuine supervisor/Worker proof. Native loose merge
+objects have exact [base,source] parents and reviewed tree. Successor links,
+plans, base, setup consent and generation1 owner match; there is no run/tasks
+before new scope. REPORT success-repeat snapshots are byte-identical and no
+second comment is created. That success repeat is not a lost-response experiment.
+
+### Measured operations
+
+Both lanes use the same existing owned tmpfs for fresh disposable state, real
+fsync/Git/Memory/Guard, query allowance5000ms, and unchanged10/150/128. No mount,
+privilege, tool, security or product-limit change occurred. Disk latency and
+host power-loss durability remain NOTRUN. Cold historical H3 and real Codex
+Workers are not qualified by these component fixtures.
+
+Each row below is a completed actual operation; tuples are original1/2/3, or
+1→2/2→3 for NEXT. Attempts equal actual transport calls in every positive row.
+All27 roots/lane returned, telemetry dropped/errors/refusals were zero.
+
+| Operation | HTTP | M3 plans | Memory inspections | Git helper invocations | Wall seconds 3.11 | Wall seconds 3.12 |
+| --- | --- | --- | --- | --- | --- | --- |
+| MERGE preview | 22/33/44 | 0 | 32/36/40 | 572/726/888 | 4.341/5.250/5.836 | 3.331/4.339/5.266 |
+| MERGE effect + settlement | 82/100/118 | 5 each | 193/198/203 | 3792/3961/4139 | 30.076/27.943/28.101 | 22.390/23.507/25.487 |
+| Completion preview | 20/31/42 | 0 | 34/38/42 | 621/775/937 | 5.064/5.114/5.568 | 3.505/4.933/5.616 |
+| Completion apply | 25/36/47 | 0 | 39/43/47 | 784/938/1100 | 7.499/6.884/6.627 | 4.553/5.537/6.445 |
+| REPORT preview | 22/33/44 | 0 | 5/9/13 | 148/302/464 | 1.252/2.115/2.896 | 1.035/1.870/2.906 |
+| REPORT POST + settlement | 67/89/111 | 3 each | 102/110/118 | 2251/2559/2883 | 18.887/18.005/20.497 | 13.919/15.484/17.667 |
+| REPORT reobserve | 6 each | 0 | 6 each | 96 each | 0.757/0.611/0.555 | 0.521/0.574/0.528 |
+| NEXT preview | 53/59 | 0 | 5/9 | 234/410 | 1.919/2.860 | 1.481/2.462 |
+| NEXT enroll + release | 114/121 | 0 | 26/30 | 1058/1234 | 7.194/8.779 | 6.101/7.449 |
+| New unreviewed successor status | 36/42 | 0 | 5/9 | 255/435 | 1.688/2.882 | 1.563/2.608 |
+
+Worst positive request margin is NEXT2 with7 requests; MERGE3 leaves10 and
+REPORT3 leaves17. Minimum measured operation time remaining is119.925s on3.11
+and124.513s on3.12. These finite single-page fixture paths complete; seven
+requests is narrow headroom, not a guarantee for arbitrary additional pages,
+checks or concurrent changes. Larger/incomplete paths remain bounded/refuse;
+no speculative request predictor or additional accounting system was added.
+
+Parent CPU, waited-child CPU, endpoints and actual remaining allowances are
+retained per operation in the sealed measurement evidence. Existing Git,
+Memory, policy and network work durations are inclusive/nested; do not sum them
+or infer exclusive time. No exclusive nested attribution was fabricated. With
+one sample per revision/workload, no operation p95 or causal speedup is claimed.
+Request latency median/p95/max uses actual per-root samples and nearest-rank p95.
+| Lane | Pooled request samples | Median seconds | p95 seconds | Max seconds |
+| --- | --- | --- | --- | --- |
+| 311 | 1409 | 0.000819 | 0.011262 | 0.159088 |
+| 312 | 1409 | 0.000643 | 0.009728 | 0.124860 |
+
+These are pooled mixed-operation synthetic request samples, not real GitHub network latencies. Per-root distributions are retained separately.
+
+### Comparable historical baseline
+
+Same Python3.11, tmpfs, fixture bytes, one original, private Free policy and
+actual component implementations: historical production `27ca278` is unchanged
+(the two new test files are explicitly untracked). Comparison data are samples,
+not a controlled host-load experiment; identical work counts are stronger than
+wall-time attribution.
+
+| Original1 operation | HTTP before → after | Plans | Memory | Git | Wall seconds before → after |
+| --- | --- | --- | --- | --- | --- |
+| MERGE preview | 22 → 22 | 0 → 0 | 40 → 32 | 700 → 572 | 3.843 → 4.341 |
+| MERGE effect/settlement | 89 → 82 | 8 → 5 | 263 → 193 | 4978 → 3792 | 28.419 → 30.076 |
+| Completion preview | 20 → 20 | 0 → 0 | 42 → 34 | 749 → 621 | 4.490 → 5.064 |
+| Completion apply | 25 → 25 | 0 → 0 | 47 → 39 | 912 → 784 | 5.876 → 7.499 |
+| REPORT preview | 54 → 22 | 0 → 0 | 26 → 5 | 584 → 148 | 3.545 → 1.252 |
+| REPORT POST/settlement | 99 → 67 | 3 → 3 | 169 → 102 | 3429 → 2251 | 19.859 → 18.887 |
+| NEXT | 129 attempts/128 transports ERROR → 114/114 completed | 0 | Not comparable: baseline stopped early | Not comparable | Baseline4.553 refused; candidate7.194 completed |
+
+The baseline NEXT refused during successor discovery with145.448s still
+available, after parent release and before enrollment completed. Its terminal
+error was DISCOVERY_UNAVAILABLE wrapping demonstrated REQUEST_COUNT_EXHAUSTED.
+There was no uncertain GitHub mutation or retry. Baseline full-NEXT cost is
+NOTRUN; its shorter refused prefix is not a speedup. The retained observation
+led only to the narrow typed-refusal repair, not new product functionality.
+
+| Original1 component | Parent CPU before → after | Waited-child CPU before → after | Inclusive Git seconds before → after | Inclusive Memory seconds before → after |
+| --- | --- | --- | --- | --- |
+| merge.intent | 9.228 → 11.352 | 21.312 → 20.845 | 24.240 → 24.541 | 21.791 → 21.152 |
+| completion.apply | 2.090 → 2.961 | 4.202 → 4.922 | 4.831 → 5.946 | 4.412 → 5.343 |
+| report.intent | 6.804 → 7.586 | 14.488 → 12.622 | 16.563 → 14.851 | 14.044 → 11.740 |
+
+Do not add nested Git and Memory spans to wall time. Host load was not exclusively controlled; the first candidate also overlapped a read-only source-metric collection. Call-count differences are demonstrated; causal runtime speedup is not established.
+
+### Complexity and retained limitations
+
+| Source | Physical / nonblank / nonblank-noncomment lines | Functions | Classes | AST if/ifexp | require calls |
+| --- | --- | --- | --- | --- | --- |
+| `13fd859` | 26210 / 23892 / 23499 | 1240 | 249 | 2503 | 2324 |
+| `ac5ca6d` | 26365 / 24055 / 23662 | 1238 | 248 | 2554 | 2366 |
+| `27ca278` | 27034 / 24692 / 24271 | 1257 | 249 | 2678 | 2401 |
+| `bb610c6` | 27173 / 24828 / 24393 | 1259 | 249 | 2698 | 2409 |
+
+All rows cover100 product Python modules. Against the residual start, physical lines grow139, nonblank-noncomment122, functions2 and classes0; against frozen PR52, physical lines grow963. No deleted test ID or denominator change hides that growth. New persistent mechanisms/authority records:0. The final five-line exception-only adjustment adds no function/class.
+
+No new persistent authority record, cache, journal, database, policy engine,
+service or controller. ProductAuthority remains the existing verifier with
+invocation-local typed evidence; PersonalWorkers.accounted extracts the existing
+canonical checks for reuse. These are the two added product functions. The
+retained additions enforce exact operand lifetime/subject and refusal provenance;
+they replace repeated stopped-Worker/CI authentication, adjacent policy planning,
+self-generated proof reads and future-track discovery. Product code grew; this
+is scoped duplication reduction, not a claim that global architecture or every
+M3/Memory path shrank. AST branch/require counts are mechanical proxies, not
+counts of independent semantic security judgments.
+
+Historical nonPASS remain preserved and excluded from the final selected PASS
+ledger. Early missing branch/PR fixture fields, clock mismatch and a mock field
+were TEST_DEFECT; corrected within these focused fixtures. The discarded broad
+controller-based builder is not R5 proof. Aggregate300s supervision TIMEOUT is
+separate from product150s and native CI5000ms. The native CI overrun is proven at
+the post-observe deadline predicate, but fsync/storage/scheduling/attestation
+attribution remains UNKNOWN; no limit was increased. The wrong selected
+historical transport is a source-confirmed in-scope PRODUCT_DEFECT, repaired via
+the existing GET-only port. Its old underlying transport response is UNKNOWN.
+
+Two terminal budget-mask regressions were reproduced as ERROR, preserved, then
+corrected: publication FEATURE_POLICY_UNVERIFIED and enrollment
+DISCOVERY_UNAVAILABLE. The first reproduction also emitted a secondary unittest
+context-access error after its failing subtest; assertion nesting was corrected,
+not acceptance weakened. The first private baseline driver accidentally queued
+an imported class; it was stopped before any measured stage, with actual
+wait/reap and descendant receipt retained. Its23.065s INTERRUPTED outcome is a
+selection/procedure TEST_DEFECT, never PASS. Corrected baseline v2 remains ERROR1/1
+at request exhaustion. An earlier unsupervised canceled development selection
+has no confirmed stop receipt and is not qualification evidence. No historical
+failure, uncertain effect, expiry or counter is reset by this work.
+
+Private raw evidence remains outside Git. Public references are opaque artifact
+IDs and SHA256, not host identities, paths, credentials or transcripts:
+
+| Artifact | SHA256 |
+| --- | --- |
+| FINAL_FOCUSED_LEDGER.json | b57f0892f9bea19d5e755e758dc53a6420335a3d27bd67d93e4439693354aedb |
+| d0 three-original3.11 log | 35eda5b55e2fe902965040553dfe5b7bb13ffb47d75aa5584911348ff8a1ce46 |
+| d0 three-original3.12 log | 731d317fb1be2e8c660ee59e176b858981c9e57a9c84d77a99e105c17778bd80 |
+| bb affected3.11 log | 50ce95fc4fffa3fd2c10ab094216b4b925e614c8bd98b430d1e6bf8b171a825b |
+| bb affected3.12 log | 218d168d0e4750ac969764be6a498b63af534968f5f41ccfd7fea0491543af3d |
+| historical baseline v2 log | 374fc29ce546876d5530f1d0a6c6810a572cf695e4ef1faad45db0ef27611164 |
+| both-lane component evidence review | 89116d00139b46ca4e347a3192bf2c17abdddbd65ba19347881793b838001788 |
+| baseline/applicability evidence review | 434e17332373eb51dbaaeec12f1dd4f37898baca42621d223030799a1aae804d |
+| source metrics | 758858a1f99141ff414856f6bce7312aff838efec21ca60e16af7c699ec412c6 |
+
+The ledger binds all selected log/stop/source manifests and historical log
+hashes. Existing supervisor receipts record actual normal wait/reap or explicit
+interruption; raw fixture Worker-shaped stops are not substituted for supervisor
+receipts. Reviews are independently produced SHA-sealed records, not asserted
+cryptographic signatures. Final exact-HEAD source/security and consolidated
+evidence reviews, exact tree/product tree and the final readiness verdict are
+bound in the Issue69/PR62 handback after this documentation is frozen.
+
+Full qualification/#58, real GitHub/CI/Workers, disk/power-loss qualification,
+managed installation, pilot B execution, #70 and #72 remain NOTRUN/outside this
+release. Old qualifier descendant status remains UNKNOWN; no investigation or
+termination assumption was made. Further pilot B preparation/execution requires
+separate operator release. PR62 remains Draft, Issue69 open, no merge/install or
+live pilot state change.
+
+Changed-file inventory versus27ca278:15 product modules
+`discovery_github`, `enrollment`, `execution_github`, `github_product`,
+`network_git`, `personal_authority`, `personal_cli`, `personal_network`,
+`personal_product`, `personal_product_review`, `personal_publication`,
+`personal_report`, `personal_track`, `personal_workers`, `project_validation`.
+Six focused test/fixture files: `residual_stage_fixtures`, `test_lifecycle_reuse`,
+`test_publication_work`, `test_residual_reuse`, `test_residual_stages`,
+`test_runtime_work`. Documentation: this report, the external lifecycle call
+graph and additive D4 inventory. No core Memory/Guard or policy-engine source
+change, new runtime store or unrelated fixture maintenance.
