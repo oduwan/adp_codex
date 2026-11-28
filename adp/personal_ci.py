@@ -12,18 +12,23 @@ from .discovery_schema import digest
 from .project_validation_github import GitHubEvidenceSource
 from .project_validation_types import EvidenceRequest, Phase, RequiredCheck
 from .schema import integer, require, string
+from .runtime_limits import current_budget, operation_scope, settings_for
 
 
-def native_inventory(name, repository_id, source_ref, revision, transport, *, seconds=5):
+def native_inventory(name, repository_id, source_ref, revision, transport, *, seconds=None):
+    with operation_scope(settings_for(transport), name="project.native_inventory", seconds=seconds):
+        return _native_inventory(name, repository_id, source_ref, revision, transport)
+
+
+def _native_inventory(name, repository_id, source_ref, revision, transport):
     """Reuse #21's fixed-origin context and complete pagination checks.
 
     This only identifies actual origins. #21 later reobserves and evaluates the
     exact committed SHA and every prescribed result. Partial identity discovery
     cannot create a check policy or evidence of absent checks.
     """
-    require(type(seconds) is int and 1 <= seconds <= 30, "Invalid native observation budget")
     source = GitHubEvidenceSource(name, repository_id, repository_id, (), transport)
-    source._deadline = time.monotonic() + seconds
+    source._deadline = current_budget().end
     source._coverage = "UNKNOWN"
     request = EvidenceRequest(repository_id, source_ref, revision, "0" * 64,
                               Phase.BEFORE_PR, "personal-plan", 0, 0, 0)

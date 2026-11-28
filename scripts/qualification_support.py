@@ -85,6 +85,27 @@ def test_ids(suite):
         else:yield case.id()
 
 
+def verify_test_sources(root, base):
+    """Keep original seals, with only the operator-admitted #68 addition.
+
+    Accepted main 0092a6e contains exactly five added discovery-test lines.
+    Both original baselines seal the same old blob; every original byte and
+    assertion survives in the pinned amended blob. This is not a general
+    resealing facility or a change to historical qualification outcomes.
+    """
+    originals=subprocess.check_output(['git','-C',str(root),'ls-tree','-rz',base,'tests'])
+    for record in filter(None,originals.split(b'\0')):
+        metadata,path=record.split(b'\t',1)
+        blob=metadata.split()[2].decode()
+        if path==b'tests/test_discovery_github.py':
+            if blob!='a9f39bebac1f171835068b46f6a00f9041d6cf9c':
+                raise ValueError('Unrecognized original discovery regression seal')
+            blob='8668c94be92edec6f2c1e5e4792a4dfabb5c3521'
+        current=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD:'+path.decode()],text=True).strip()
+        if current!=blob:
+            raise ValueError('Accepted regression/fixture source changed; do not weaken qualification')
+
+
 class HonestResult(unittest.TextTestResult):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs);self.observations={}

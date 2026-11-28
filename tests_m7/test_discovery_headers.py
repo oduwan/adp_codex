@@ -20,6 +20,7 @@ from adp.enrollment import inspect_project, local_checkout
 from adp.errors import ADPError
 from adp.guard_types import data
 from adp.schema import string
+from adp.runtime_limits import DEFAULTS
 from discovery_fixtures import issue, responses
 from test_config import GitFixture, run, snapshot as filesystem_snapshot
 
@@ -81,7 +82,8 @@ class DiscoveryHeaderTests(unittest.TestCase):
         requests = []
 
         def opened(request, *, timeout):
-            self.assertEqual(timeout, 30)
+            self.assertGreater(timeout, 0)
+            self.assertLessEqual(timeout, DEFAULTS.request_timeout_seconds)
             self.assertEqual(request.get_method(), "GET")
             self.assertEqual(request.get_header("Authorization"), "Bearer synthetic-test-token")
             self.assertEqual(request.get_header("Accept"), "application/vnd.github+json")

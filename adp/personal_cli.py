@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import hashlib
+import time
+import math
 
 from .discovery_schema import digest
 from .enrollment import Blocked, local_checkout
@@ -19,12 +22,20 @@ from .personal_runner import PersonalCoordinator
 from .personal_storage import PersonalBlocked, approval, assert_public, load_state, read_private
 from .project_validation_github import GitHubValidationHTTP
 from .schema import require
+from .runtime_limits import BUDGET_REFUSALS, BudgetRefusal, capture_measurements, load_runtime_limits
 
 ACTIONS = ("inspect", "plan", "apply", "status", "doctor", "preview", "reconnect", "run", "resume", "handoff")
+
+
+def _read_transports(token):
+    settings = load_runtime_limits()
+    return (PersonalGitHubRead(token, runtime_settings=settings),
+            GitHubValidationHTTP(token, runtime_settings=settings))
 PUBLICATION = ("publication-preview", "publish", "publication-status")
 ARCHIVAL = ("archive-preview",)
 from .personal_product_cli import PRODUCT
 from .personal_track_cli import TRACK, WRITES
+from .personal_recovery_cli import ACTIONS as RECOVERY, WRITES as RECOVERY_WRITES
 
 
 def choices(parser):
@@ -62,6 +73,8 @@ def add_commands(commands):
 
 
 def publication_commands(stages, *, codex=False):
+    from .personal_recovery_cli import commands as recovery_commands
+    recovery_commands(stages, codex=codex)
     for action in ARCHIVAL:
         parser = stages.add_parser(action, help="Read-only expired NOTRUN archival proposal; no mutation authority")
         parser.add_argument("--repo", type=Path, required=True)
@@ -95,7 +108,7 @@ def publication_commands(stages, *, codex=False):
             parser.add_argument("--accept-plan-unavailable", action="store_true", help="Separately accept the exact proposal's private personal plan limitation; waive no project requirement")
 
 
-def retained(args):
+def retained(args, *, resolve=True):
     checkout = local_checkout(args.repo, args.remote)
     directory = args.directory
     if directory is None:
@@ -121,23 +134,139 @@ def retained(args):
             and checkout["repository"] == p["repository"]["name"] and checkout["remote"] == p["checkout"]["remote"]
             and str(args.repo.absolute()) in (p["checkout"]["path"], p["feature"]["workspace"]),
             "Reconnect only to the exact personal repository, issue and selected workspace")
+    if resolve and args.enroll_command not in ARCHIVAL + RECOVERY:
+        from .personal_episode import effective
+        personal = effective(personal)
     return personal
 
 
 def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
+    with capture_measurements() as capture:
+        return _measured_run(args, capture, transport=transport, ci_transport=ci_transport, runtime=runtime,
+            clock=clock, publication_transport=publication_transport)
+
+
+def _measured_run(args, capture, *, transport, ci_transport, runtime, clock, publication_transport):
+    from .personal_history_track import READ_TRANSPORT, cli_port
+    port, personal = None, None
+    started = time.monotonic()
+    # Existing ordinary commands already admit native project reads. Resolve
+    # their historical read route before effective() can need it. Archival
+    # observation must never initialize credentials or a network adapter.
+    if args.enroll_command not in ARCHIVAL + RECOVERY + ("inspect", "plan", "apply", "capabilities"):
+        try:
+            personal = retained(args, resolve=False)
+            port = cli_port(personal, publication_transport)
+        except (ADPError, OSError, KeyError, TypeError, ValueError, AttributeError):
+            pass  # The ordinary closed subject validation below reports it.
+    binding = READ_TRANSPORT.set(port) if port is not None else None
+    try:
+        result = _run(args, transport=transport, ci_transport=ci_transport, runtime=runtime, clock=clock,
+            publication_transport=publication_transport)
+        return result
+    finally:
+        if binding is not None:
+            READ_TRANSPORT.reset(binding)
+        diagnostic = _retain_measurements(personal, capture, time.monotonic() - started, command=args.enroll_command)
+        # Diagnostics cannot change the ordinary result/exit code or authorize
+        # anything. Unexpected product exceptions still propagate unchanged.
+        if "result" in locals() and args.enroll_command in PUBLICATION + PRODUCT + TRACK:
+            result[0]["runtime_diagnostics"] = diagnostic
+
+
+def _retain_measurements(personal, capture, elapsed, *, command=None):
+    """Replace one private bounded projection; never consumed as authority.
+
+    Only the already authenticated enrollment is used. No extra project,
+    credential, Memory or network observation is made to retain diagnostics.
+    """
+    if personal is None:
+        return {"status": "UNAVAILABLE", "reason": "NO_VALIDATED_PRIVATE_DESTINATION"}
+    try:
+        from .config import safe_path
+        from .personal_storage import LIMIT, private_directory
+        from .schema import encode
+        from .storage import atomic
+        # Only source-owned labels are retained; arbitrary exception/config
+        # strings, endpoints, Worker content and credentials are never copied.
+        names = {"network", "network.request", "network.inspect_ref", "network.upload", "http.request", "discovery",
+            "forge.inventory", "forge.observe", "forge.submit", "project.validation_observation"}
+        names.update("publication." + n for n in ("proposed", "preview", "publish", "status"))
+        names.update("product." + n for n in ("proposed", "intent", "execution_preview", "execute_ci", "status",
+            "report_preview", "report_observation", "report"))
+        names.update("product_forge." + n for n in ("pull", "reviews", "observe", "submit"))
+        names.update("track." + n for n in ("registration", "register", "status", "completion_preview", "complete", "next_preview", "next"))
+        work = {"git.native", "memory.inspect", "configuration.load", "project.governance", "network.transport",
+            "network.supervisor_probe", "network.supervised_execution", "recovery.engine_digest",
+            "recovery.administration_snapshot", "publication.live", "publication.write_authorized",
+            "publication.count_admission", "publication.provider", "publication.reauthorize", "product.live",
+            "policy.plan", "policy.decide", "product.local", "publication.local", "product.facts",
+            "product.review_seal", "publication.current_original", "project.selection"}
+        boundaries = {"transport.entered", "transport.stop_confirmed", "transport.stop_unconfirmed", "response.validated", "http.supervision_requested", "http.supervision_returned",
+            "object.requested", "object.acknowledged", "cas.requested", "cas.acknowledged",
+            "intent.prepared", "intent.submitted", "dispatch.claimed", "target.present", "effect.settled",
+            "effect.prepared", "effect.submitted", "effect.dispatch_requested", "effect.acknowledged", "effect.observed"}
+        reasons = BUDGET_REFUSALS
+        configuration = {"MISSING_FILE", "CONFIGURATION_FAILURE", "INVALID_VALUE"}
+        def number(value):
+            require(type(value) in (int, float) and math.isfinite(value), "Invalid diagnostic measurement")
+            return value
+        records, truncated = [], bool(capture["dropped"] or capture["errors"])
+        for raw in capture["rows"]:
+            row = {k: number(raw[k]) for k in ("wall_seconds", "request_attempts", "transport_calls", "parent_cpu_seconds",
+                "operation_allowance_seconds", "operation_remaining_seconds", "request_timeout_seconds", "request_limit",
+                "requests_remaining", "configuration_loading_seconds", "profile_initial_loading_seconds",
+                "substantive_execution_seconds", "orchestration_seconds", "refusals_dropped")}
+            row.update(name=raw["name"] if raw["name"] in names else "UNAVAILABLE",
+                outcome=raw["outcome"] if raw["outcome"] in ("RETURNED", "ERROR") else "UNKNOWN",
+                failure_stage=raw["failure_stage"] if raw["failure_stage"] in work else None,
+                final_refusal=raw["final_refusal"] if raw["final_refusal"] in reasons else None,
+                observed_refusals=[v if v in reasons else "UNKNOWN" for v in raw["observed_refusals"][-16:]],
+                configuration_events=[v if v in configuration else "UNKNOWN" for v in raw["configuration_events"][:3]])
+            row["work"] = {k: {"calls": number(v["calls"]), "seconds": number(v["seconds"])} for k, v in raw["work"].items() if k in work}
+            row["boundaries"] = {k: number(v) for k, v in raw["boundaries"].items() if k in boundaries}
+            row["request_latencies_seconds"] = [number(v) for v in raw["request_latencies_seconds"][-256:]]
+            truncated |= len(raw["request_latencies_seconds"]) > 256 or len(row["work"]) != len(raw["work"])
+            truncated |= bool(raw["refusals_dropped"])
+            records.append(row)
+        body = {"schema_version": 1, "invocation_wall_excluding_retention_seconds": number(elapsed), "operations": records,
+            "command": command if command in ACTIONS + PUBLICATION + PRODUCT + TRACK else "UNKNOWN",
+            "truncated": truncated, "operations_dropped": number(capture["dropped"]), "recording_errors": number(capture["errors"]),
+            "qualification": "NOT_CLAIMED",
+            "coverage": "EXISTING_OPERATION_SCOPES_ONLY", "latency_basis": "CAS_SETUP_THROUGH_TRANSPORT_OR_DECORATED_HTTP"}
+        while True:
+            try:
+                payload = encode(body, LIMIT)
+                break
+            except ADPError:
+                if not records:
+                    raise
+                records.pop(0); body["truncated"] = True
+                body["operations_dropped"] += 1
+        private_directory(personal.state)
+        atomic(safe_path(personal.state / "runtime-diagnostics.json"), payload)
+        return {"status": "RETAINED", "sha256": hashlib.sha256(payload).hexdigest(),
+            "operations": len(records), "truncated": body["truncated"]}
+    except Exception:
+        # Only this diagnostic projection is best effort; never catch or
+        # reinterpret the surrounding product operation's exceptions.
+        return {"status": "UNAVAILABLE", "reason": "DIAGNOSTIC_RETENTION_FAILED"}
+
+
+def _run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, publication_transport=None):
     action = args.enroll_command
     report = {"schema_version": 1, "backend": "PERSONAL", "command": action,
-        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") + WRITES else "READ_ONLY",
+        "mode": "MUTATING" if action in ("apply", "run", "resume", "handoff", "publish", "pr-create", "check-ci", "product-resume", "merge") + WRITES + RECOVERY_WRITES else "READ_ONLY",
         "status": "UNKNOWN", "questions": [], "plan": None, "approval": None, "result": None, "blockers": [],
         "runtime_qualification": "NOTRUN"}
     try:
         if action == "capabilities":
-            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL), "scope": "LOCAL_DRAFT",
+            report.update(status="AVAILABLE", result={"actions": list(ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY), "scope": "LOCAL_DRAFT",
                 "providers": "NOT_REQUIRED", "external_operations": "NOT_DELEGATED",
                 "publication": {"status": "AVAILABLE_UNDER_SEPARATE_EXACT_APPROVAL", "credential_envelope": "OPERATOR_ADMINISTRATIVE_QUIESCENCE"}})
             assert_public(report)
             return report, 0
-        require(action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL, "Unsupported personal command")
+        require(action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY, "Unsupported personal command")
         require(not any(getattr(args, name, None) for name in ("operator_trust", "operator_socket", "operator_profile")),
                 "Choose personal mode or the unchanged signed-provider mode; never convert an enrollment")
         require(getattr(args, "rounds", 1) == 1 and getattr(args, "maximum_parallel", 1) == 1,
@@ -149,6 +278,15 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, pu
             report.update(status=view["status"], result=view)
             assert_public(report)
             return report, 0
+        if action in RECOVERY:
+            from .personal_recovery_cli import dispatch
+            if transport is None and action not in ("archive-observe", "archive-status", "archive-revoke", "continuation-status"):
+                token = discovery_token("GH_TOKEN")
+                transport, ci_transport = _read_transports(token)
+            result = dispatch(args, retained(args), transport=transport, ci_transport=ci_transport, runtime=runtime, clock=clock)
+            report.update(result)
+            assert_public(report)
+            return report, 4 if report["status"].startswith("BLOCKED") else 0
         if action in TRACK:
             from .personal_track_cli import dispatch
             if transport is None and action in ("track-preview", "track-enroll", "track-status"):
@@ -194,7 +332,7 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, pu
         if transport is None and (action in ("inspect", "plan", "apply", "preview", "run", "resume", "reconnect", "doctor")
                                   or (getattr(args, "for_operation", None) in ("run", "resume"))):
             token = discovery_token(getattr(args, "token_env", "GH_TOKEN"))
-            transport, ci_transport = PersonalGitHubRead(token), GitHubValidationHTTP(token)
+            transport, ci_transport = _read_transports(token)
         if action in ("inspect", "plan", "apply"):
             observation, owner = selection(args.repo, args.remote, args.github_id, transport)
             if action == "inspect":
@@ -242,10 +380,18 @@ def run(args, *, transport=None, ci_transport=None, runtime=None, clock=None, pu
                         "qualification": "NOTRUN"}
         assert_public(report)
     except (PersonalBlocked, Blocked) as exc:
-        report.update(status=exc.status, blockers=[{"code": getattr(exc, "reason", getattr(exc, "code", "BLOCKED")), "action": str(exc)}])
+        blocker = {"code": getattr(exc, "reason", getattr(exc, "code", "BLOCKED")), "action": str(exc)}
+        if getattr(exc, "subreason", None) is not None:
+            blocker.update(subreason=exc.subreason,
+                operation=action if action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY else "UNKNOWN")
+        report.update(status=exc.status, blockers=[blocker])
+    except BudgetRefusal as exc:
+        report.update(status="BLOCKED", blockers=[{"code": exc.reason,
+            "action": "Preserve the original limits and intent. Observe uncertain effects only; do not repeat or renew the operation."}])
     except (ADPError, OSError, ValueError, TypeError, KeyError):
         # Never disclose raw transport, policy, filesystem or worker exceptions.
         report.update(status="BLOCKED", blockers=[{"code": "PERSONAL_STATE_OR_AUTHORITY_UNVERIFIED",
+            "subreason": "UNKNOWN", "operation": action if action in ACTIONS + PUBLICATION + PRODUCT + TRACK + ARCHIVAL + RECOVERY else "UNKNOWN",
             "action": "Reconcile the exact original plan, source, private state, permissions and retained receipts; do not reset or retry unknown effects."}])
     try:
         assert_public(report)

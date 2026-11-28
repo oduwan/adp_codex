@@ -15,6 +15,7 @@ from .config import Config
 from .errors import ADPError
 from .git import value
 from .schema import integer, require, string
+from .runtime_limits import BudgetRefusal, http_request, read_operation, settings_for
 from .discovery_schema import (MAX_ITEMS, NAME, digest, json_value, key, text,
     validate_snapshot)
 from .discovery_types import (Coverage, Identity, Issue, PullRequest, Relation,
@@ -53,20 +54,22 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class GitHubHTTPTransport:
     """Only fixed-origin HTTPS GETs. No redirects, subprocesses or disk cache."""
-    def __init__(self, token: str):
+    def __init__(self, token: str, *, runtime_settings=None):
         require(type(token) is str and 0 < len(token) <= 4096
                 and all(32 < ord(c) < 127 for c in token), "A bounded authentication token is required")
         self._token = token
+        self.runtime_settings = settings_for(settings=runtime_settings)
         self._opener = urllib.request.build_opener(_NoRedirect())
 
-    def get(self, path: str) -> Response:
+    @http_request
+    def get(self, path: str, *, seconds=None) -> Response:
         require(type(path) is str and (PATH.fullmatch(path) or ENROLLMENT_PATH.fullmatch(path)),
                 "Unsupported read-only GitHub path")
         request = urllib.request.Request(API + path, method="GET", headers={
             "Authorization": "Bearer " + self._token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "adp-codex-read-only"})
         try:
-            response = self._opener.open(request, timeout=30)
+            response = self._opener.open(request, timeout=seconds)
         except urllib.error.HTTPError as exc:
             response = exc
         except (OSError, urllib.error.URLError):
@@ -197,6 +200,8 @@ class GitHubDiscoveryAdapter:
             if response.status in (401, 403, 429) or controls.get("x-ratelimit-remaining") == "0":
                 self._halt = True
             return Response(response.status, response.body, tuple(headers))
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError, ValueError, TypeError):
             return Response(0, None)
 
@@ -296,6 +301,60 @@ class GitHubDiscoveryAdapter:
         require(match and match[1].lower() == self.name.lower(), "Selected Git remote does not identify the requested GitHub repository")
         return cfg.identity, value(cfg.root, "symbolic-ref", "--quiet", "HEAD"), value(cfg.root, "rev-parse", "HEAD")
 
+    def _issue(self, row, repo):
+        """One native Issue, using the same complete paging and stability checks."""
+        prefix = "/repos/" + self.name
+        target = _target(row)
+        require(target.repository.lower() == repo.name.lower(), "Foreign issue inventory")
+        number, iid = target.number, Identity(repo.id, target.issue_id)
+        base = prefix + "/issues/" + str(number)
+        label = "issue:" + key(iid)
+        comments_raw = self._pages(base + "/comments", label + ":comments")
+        timeline = self._pages(base + "/timeline", label + ":timeline")
+        dependencies = self._pages(base + "/dependencies/blocked_by", label + ":blocked_by")
+        children = self._pages(base + "/sub_issues", label + ":sub_issues")
+        comments = tuple(sorted((Text(_id(c), c.get("body") or "", _author(c), c["updated_at"],
+            f"{API}{base}/comments#{_id(c)}") for c in comments_raw), key=lambda c: c.id))
+        relations = [Relation("BLOCKED_BY", _target(dep), "NATIVE", API + base + "/dependencies/blocked_by") for dep in dependencies]
+        relations.extend(Relation("SUB_ISSUE", _target(child), "NATIVE", API + base + "/sub_issues") for child in children)
+        notices = []
+        for event_index, event in enumerate(timeline):
+            try:
+                require(type(event) is dict and type(event.get("event")) is str and bool(event["event"]), "Malformed timeline event")
+                if event["event"] in {"marked_as_duplicate", "unmarked_as_duplicate"}:
+                    notices.append("Native duplicate history requires current canonical disposition assessment: " + digest(event))
+                if event["event"] == "cross-referenced":
+                    require(type(event.get("source")) is dict and type(event["source"].get("issue")) is dict, "Malformed native cross-reference")
+                    source = event["source"]["issue"]
+                    target = _target(source)
+                    relations.append(Relation("PULL_REQUEST" if "pull_request" in source else "RELATED", target,
+                        "NATIVE", API + base + "/timeline#" + digest(event)))
+            except (ADPError, KeyError, TypeError, ValueError):
+                self._coverage(label + ":invalid-timeline:" + str(event_index), base + "/timeline", "PARTIAL", None, 0,
+                               "Malformed timeline event/cross-reference; known issue retained")
+        body = row.get("body") or ""
+        text(body)
+        relations.extend(inferred(body, repo.name, API + base + ":body"))
+        for comment in comments:
+            relations.extend(inferred(comment.body, repo.name, comment.source))
+        current = self._one(base, label + ":current")
+        if current is None or _issue_revision(current) != _issue_revision(row):
+            self._coverage(label + ":stable", base, "CHANGED", None, 0, "Issue changed or became inaccessible during observation")
+        else:
+            self._coverage(label + ":stable", base, "COMPLETE", current, 1)
+        issue = Issue(iid, number, f"{repo.url}/issues/{number}", row["title"], body, row["state"],
+            row.get("state_reason"), row["updated_at"], _issue_revision(row),
+            tuple(sorted(l["name"] if type(l) is dict else l for l in row.get("labels", []))),
+            tuple(sorted(_id(a) for a in row.get("assignees", []))),
+            tuple(sorted({_author(row), *(c.author for c in comments)})), comments,
+            tuple(sorted(set(relations), key=lambda r: (r.kind, r.target.repository, r.target.number, r.source))), tuple(sorted(set(notices))))
+        from .discovery_schema import validate_issue
+        validate_issue(issue, repo)
+        if "UNKNOWN" in issue.authors:
+            self._coverage(label + ":authors", base, "UNKNOWN", None, 0, "Canonical source author identity unavailable")
+        return issue
+
+    @read_operation("discovery")
     def discover(self) -> Snapshot:
         self._halt, self._requests, self._coverage_items = False, 0, []
         self._now = self.clock()
@@ -317,54 +376,10 @@ class GitHubDiscoveryAdapter:
             try:
                 target = _target(row)
                 require(target.repository.lower() == repo.name.lower(), "Foreign issue inventory")
-                number, iid = target.number, Identity(rid, target.issue_id)
+                number = target.number
                 require(number not in attempted_issues, "Duplicate/conflicting issue inventory identity")
                 attempted_issues.add(number)
-                base = prefix + "/issues/" + str(number)
-                label = "issue:" + key(iid)
-                comments_raw = self._pages(base + "/comments", label + ":comments")
-                timeline = self._pages(base + "/timeline", label + ":timeline")
-                dependencies = self._pages(base + "/dependencies/blocked_by", label + ":blocked_by")
-                children = self._pages(base + "/sub_issues", label + ":sub_issues")
-                comments = tuple(sorted((Text(_id(c), c.get("body") or "", _author(c), c["updated_at"],
-                    f"{API}{base}/comments#{_id(c)}") for c in comments_raw), key=lambda c: c.id))
-                relations = [Relation("BLOCKED_BY", _target(dep), "NATIVE", API + base + "/dependencies/blocked_by") for dep in dependencies]
-                relations.extend(Relation("SUB_ISSUE", _target(child), "NATIVE", API + base + "/sub_issues") for child in children)
-                notices = []
-                for event_index, event in enumerate(timeline):
-                    try:
-                        require(type(event) is dict and type(event.get("event")) is str and bool(event["event"]), "Malformed timeline event")
-                        if event["event"] in {"marked_as_duplicate", "unmarked_as_duplicate"}:
-                            notices.append("Native duplicate history requires current canonical disposition assessment: " + digest(event))
-                        if event["event"] == "cross-referenced":
-                            require(type(event.get("source")) is dict and type(event["source"].get("issue")) is dict, "Malformed native cross-reference")
-                            source = event["source"]["issue"]
-                            target = _target(source)
-                            relations.append(Relation("PULL_REQUEST" if "pull_request" in source else "RELATED", target,
-                                "NATIVE", API + base + "/timeline#" + digest(event)))
-                    except (ADPError, KeyError, TypeError, ValueError):
-                        self._coverage(label + ":invalid-timeline:" + str(event_index), base + "/timeline", "PARTIAL", None, 0,
-                                       "Malformed timeline event/cross-reference; known issue retained")
-                body = row.get("body") or ""
-                text(body)
-                relations.extend(inferred(body, repo.name, API + base + ":body"))
-                for comment in comments:
-                    relations.extend(inferred(comment.body, repo.name, comment.source))
-                current = self._one(base, label + ":current")
-                if current is None or _issue_revision(current) != _issue_revision(row):
-                    self._coverage(label + ":stable", base, "CHANGED", None, 0, "Issue changed or became inaccessible during observation")
-                else:
-                    self._coverage(label + ":stable", base, "COMPLETE", current, 1)
-                issue = Issue(iid, number, f"{repo.url}/issues/{number}", row["title"], body, row["state"],
-                    row.get("state_reason"), row["updated_at"], _issue_revision(row),
-                    tuple(sorted(l["name"] if type(l) is dict else l for l in row.get("labels", []))),
-                    tuple(sorted(_id(a) for a in row.get("assignees", []))),
-                    tuple(sorted({_author(row), *(c.author for c in comments)})), comments,
-                    tuple(sorted(set(relations), key=lambda r: (r.kind, r.target.repository, r.target.number, r.source))), tuple(sorted(set(notices))))
-                from .discovery_schema import validate_issue
-                validate_issue(issue, repo)
-                if "UNKNOWN" in issue.authors:
-                    self._coverage(label + ":authors", base, "UNKNOWN", None, 0, "Canonical source author identity unavailable")
+                issue = self._issue(row, repo)
                 require(number not in issues, "Duplicate/conflicting issue inventory identity")
                 issues[number] = issue
             except (ADPError, KeyError, TypeError, ValueError, AttributeError):

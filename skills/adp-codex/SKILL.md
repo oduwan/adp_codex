@@ -1,6 +1,6 @@
 ---
 name: adp-codex
-description: Guide first-use enrollment and finite ADP operations for an explicitly selected GitHub project. Use for ADP setup, inspection, status, doctor, preview, run, resume, or handoff.
+description: Guide first-use enrollment and finite ADP operations for an explicitly selected GitHub project. Use for ADP setup, inspection, status, doctor, preview, run, resume, handoff, or explicitly requested accounting-expiry observation and recovery.
 ---
 
 # ADP Codex
@@ -13,7 +13,9 @@ and public release are not implemented here.
 ## Start
 
 Use `"$HOME/.local/share/adp-codex-install/current/bin/adp"` for every ADP
-command below. First run `adp codex capabilities`. Require a single JSON result
+command below. For read-only archival observation, first use the static `adp
+personal capabilities` below and do not probe Codex. For other operations first
+run `adp codex capabilities`. Require a single JSON result
 with `interface: "adp-codex"`, `schema_version: 1`, and the requested action in
 `actions`. A missing launcher, incompatible result or failing probe needs the
 paired [managed installation or installer verify](../../docs/operations/INSTALL_ADP.md).
@@ -60,6 +62,17 @@ original directory/window; never re-enroll to renew counters or reuse an
 uncertain effect. Stop on unknown process/effect evidence or M2 refusal.
 Actual Developer/Reviewer runtime qualification is separate from offline tests.
 
+New personal run consents bind development protocol 2. The delegated Developer
+must implement and run original-ticket tests plus affected focused regressions,
+correct failures and revalidate within original bounds. Use existing tools,
+workspace-local temporary files with cleanup, and disabled bytecode/caches; no
+installs, network, unrelated suites or source/Git operations outside admission.
+Developer PASS means a locally validated candidate ready for independent review,
+never approval, qualified CI or acceptance. Keep actual local commands/results
+and limitations in the bounded result. Independent staged and exact-SHA reviews
+and project-owned CI remain separate. Old protocol windows/receipts are historical;
+never upgrade their grants or retry them under changed instructions.
+
 The publication backend preserves M7's unsigned UTC-commit object envelope.
 For an intended later publication, explain that restriction before the approved
 local run and use its UTC environment (`TZ=UTC`). Never rewrite a preexisting
@@ -97,7 +110,9 @@ Setup, run and push consent grant no PR or merge authority.
 Use `ci-preview` and the matching approved `check-ci` to observe actual project
 CI. Show any explicit native-job-record assent or no-required-check governance
 interpretation; UNKNOWN/403 is never absence, and NOT_REQUIRED is not PASS.
-Never install a runner, execute checks, dispatch workflows or invent check names.
+The CI observation command never installs a runner, executes checks, dispatches
+workflows or invents check names. This does not prohibit the Developer's admitted
+focused local development tests under its separate original delegation.
 Ordinary FAIL/ERROR and review rejection are same-ticket correction feedback
 within the existing delegation. Use the retained `product-preview`/`product-resume`
 review or correction operation, verify the required invocation consent and keep
@@ -145,6 +160,29 @@ must still produce an actual TicketPreparer READY packet. Never re-enroll an
 old Issue or reset its counters. Stop for unknown process/effect evidence,
 changed scope, missing authority or M2 refusal. Do not infer pilot, installation,
 release or engineering-merge permission from this development capability.
+
+For a separately requested accounting-expiry disposition, require the recovery
+verbs in capabilities and follow the [explicit recovery protocol](../../docs/operations/PERSONAL_RECOVERY.md).
+Start with `archive-observe`; it is read-only and needs the original trusted
+UID/machine/PID namespace. A sandbox mismatch or inaccessible receipt is BLOCKED.
+If the Codex client exposes a native host shell approval facility, ask separately
+to run **only the exact read-only managed launcher command** there; the command
+must still verify its actual host. Never spoof identity, copy receipts, change
+permissions, use sudo/nsenter or invent a service. An unavailable native route
+stays BLOCKED. Do not retry a write through this observation approval.
+
+Show the permanent UNKNOWN/STOP_UNSAFE overdue-accounting severity and UNKNOWN
+worker timeliness. Guard archival, original M1 UNKNOWN delivery, the one finite
+same-Issue episode, candidate copying and later run each need their own current
+preview and explicit operator reply. Preserve original enrollment, counters,
+evidence and terminal latch; no re-enrollment or general unsafe bypass. Setup
+and adoption dispatch no worker. Retained files remain unaccepted through fresh
+independent scope, staged-diff and committed-SHA reviews, project CI and all
+normal product acceptance/merge gates. Use only the exact recovery verb for a
+known interrupted intent, never a replacement window or blind retry. Existing
+tracks and signed mode do not acquire this exception automatically. Engineering
+qualification grants no live M8 observation, archival, installation, source
+promotion, worker, merge, acceptance or next-Issue authority.
 
 For the existing independently signed backend, keep the following flow:
 

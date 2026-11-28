@@ -30,6 +30,8 @@ from .policy_adapters import GitPolicyAdapter
 from .policy_schema import branch
 from .policy_types import Effect, Operation, Ref
 from .schema import decode, encode, require, string
+from .runtime_limits import (Budget as _Budget, BudgetRefusal, current_budget, operation_scope,
+                            measurements_for, network_operation, settings_for, work_span, reached)
 
 ZERO = "0" * 40
 REF_QUERY = """query ADPRef($id: ID!, $ref: String!) {
@@ -88,19 +90,16 @@ class NetworkUncertain(OSError):
     """No response text, URL, credential or arbitrary external exception escapes."""
 
 
-@dataclass
-class _Budget:
-    end: float
-    calls: int = 0
-
-
 class GitHubCAS:
     """Authenticated observations and immutable upload; rights remain external."""
-    def __init__(self, target: GitHubTarget, transport: HTTPTransport, *, personal=False):
+    def __init__(self, target: GitHubTarget, transport: HTTPTransport, *, personal=False, runtime_settings=None):
         require(type(target) is GitHubTarget, "Select a typed pinned GitHub target")
         require(callable(getattr(transport, "bind_repository", None)), "A repository-ID-confined authenticated transport is required")
         transport.bind_repository(target.node_id, target.database_id)
         self.target, self.transport = target, transport
+        self.runtime_settings = settings_for(transport, runtime_settings)
+        self.limits = self.runtime_settings.limits
+        self.measurements = measurements_for(self)
         self._budget = contextvars.ContextVar("adp-network-budget", default=None)
         self.control = None
         self._live_unknown = False
@@ -151,25 +150,51 @@ class GitHubCAS:
         except OSError:
             raise ADPError("UNKNOWN: cannot confirm durable transport stop boundary") from None
         self._live_unknown = False
+        reached("transport.stop_confirmed")
 
     @contextmanager
-    def bounded(self):
-        token = self._budget.set(_Budget(time.monotonic() + 45))
-        try:
-            yield
-        finally:
-            self._budget.reset(token)
+    def bounded(self, *, name="network", seconds=None):
+        with operation_scope(self.runtime_settings, name=name, seconds=seconds,
+                             budget=self._budget.get() or current_budget(), measurements=self.measurements) as budget:
+            token = self._budget.set(budget)
+            try:
+                yield budget
+            finally:
+                self._budget.reset(token)
 
-    def request(self, method, path, payload=None, *, missing=False):
+    def request(self, method, path, payload=None, *, missing=False, seconds=None):
+        if self._budget.get() is None and current_budget() is None:
+            with self.bounded(name="network.request"):
+                return self._request(method, path, payload, missing=missing, seconds=seconds)
+        return self._request(method, path, payload, missing=missing, seconds=seconds)
+
+    def _request(self, method, path, payload=None, *, missing=False, seconds=None):
+        from .personal_read_frame import forbid_writes
+        forbid_writes()
         self._check_stop()
-        budget = self._budget.get() or _Budget(time.monotonic() + 20)
-        budget.calls += 1
+        budget = self._budget.get() or current_budget()
+        budget.tighten(self.limits)
+        started = time.monotonic()
+        deadline = budget.request_deadline(seconds)
         left = budget.end - time.monotonic()
-        require(budget.calls <= 128 and left > 0, "Network operation exhausted its fixed budget")
         self._start_request()
+        transports = budget.transport_calls
         try:
-            response = self.transport.request(method, path, payload, seconds=min(5.0, left))
+            now = time.monotonic()
+            remaining = deadline - now
+            budget.check_request(deadline, now=now)
+            budget.transport_calls += 1
+            reached("transport.entered")
+            with work_span("network.transport"):
+                response = self.transport.request(method, path, payload, seconds=remaining)
+        except BudgetRefusal:
+            if budget.transport_calls == transports:
+                self._confirmed_stop()  # No transport was entered.
+            else:
+                reached("transport.stop_unconfirmed")
+            raise
         except UnconfirmedValidation as exc:
+            reached("transport.stop_unconfirmed")
             raise ADPError("UNKNOWN: unconfirmed network transport stop requires operator reconciliation") from None
         except NetworkTransportError:
             # The qualified transport raises this only after confirmed stop or
@@ -177,9 +202,14 @@ class GitHubCAS:
             self._confirmed_stop()
             raise NetworkUncertain("UNKNOWN: stopped trusted transport did not confirm delivery") from None
         except Exception:
+            reached("transport.stop_unconfirmed")
             # An arbitrary transport exception does not prove a process stopped.
             raise NetworkUncertain("UNKNOWN: trusted network transport did not confirm a response") from None
+        finally:
+            budget.latencies.append(time.monotonic() - started)
         self._confirmed_stop()
+        budget.check_request(deadline)
+        budget.check()
         require(type(response.status) is int and type(response.body) is bytes and len(response.body) <= 1048576,
                 "UNKNOWN: malformed or oversized network response")
         if missing and response.status == 404:
@@ -189,9 +219,11 @@ class GitHubCAS:
         try:
             wrapped = decode(b'{"value":' + response.body + b'}', 1048600)
             require(set(wrapped) == {"value"}, "Invalid response envelope")
-            return wrapped["value"]
         except ADPError:
             raise NetworkUncertain("UNKNOWN: malformed GitHub JSON response") from None
+        budget.check_request(deadline)
+        reached("response.validated")
+        return wrapped["value"]
 
     def _repository(self, query, variables):
         raw = self.request("POST", "/graphql", {"query": query, "variables": {"id": self.target.node_id, **variables}})
@@ -219,7 +251,8 @@ class GitHubCAS:
                                 "UNKNOWN: malformed remote ref")
                         name = item.get("name")
                         branch(name)
-                        result.append(Ref(prefix + name, oid(item["target"].get("oid"))))
+                        observed = Ref(prefix + name, oid(item["target"].get("oid")))
+                        result.append(observed)
                     require(len(result) <= 4096 and len({r.name for r in result}) == len(result), "UNKNOWN: duplicate/oversized ref inventory")
                     page = connection["pageInfo"]
                     require(type(page.get("hasNextPage")) is bool, "UNKNOWN: incomplete pagination")
@@ -229,12 +262,15 @@ class GitHubCAS:
                     string(after, 512)
                     require(after not in cursors, "UNKNOWN: repeated pagination cursor")
                     cursors.add(after)
-        return tuple(sorted(result, key=lambda r: r.name))
+        actual = tuple(sorted(result, key=lambda r: r.name))
+        return actual
 
-    def inspect_ref(self, *, writable=False):
+    @network_operation("network.inspect_ref", service=lambda self, **k: self)
+    def inspect_ref(self, *, writable=False, _identity=None):
         if self.personal:
             from .personal_rules import inspect_ref
-            return inspect_ref(self, writable=writable)
+            return inspect_ref(self, writable=writable, _identity=_identity)
+        require(_identity is None, "Signed inspection requires its own actual observation")
         return self._inspect_ref(writable=writable)
 
     def _inspect_ref(self, *, writable=False):
@@ -269,13 +305,17 @@ class GitHubCAS:
         require(type(result) is dict and result.get("sha") == sha, "UNKNOWN: remote object identity mismatch")
         return True
 
+    @network_operation("network.upload", service=lambda self, *a, **k: self)
     def upload(self, objects):
         for item in objects:
+            reached("object.requested")
             response = self.request("POST", self.target.api + "/git/" + {"blob": "blobs", "tree": "trees", "commit": "commits"}[item.kind], item.payload)
             require(type(response) is dict and response.get("sha") == item.oid,
                     "UNSUPPORTED_ATOMIC_REF: provider changed immutable object identity")
+            reached("object.acknowledged")
 
     def cas(self, expected, revision, intent_id):
+        reached("cas.requested")
         payload = {"repositoryId": self.target.node_id, "clientMutationId": intent_id,
                    "refUpdates": [{"name": self.target.ref, "beforeOid": expected or ZERO,
                                    "afterOid": oid(revision), "force": False}]}
@@ -284,6 +324,7 @@ class GitHubCAS:
                 and type(raw["data"].get("updateRefs")) is dict
                 and raw["data"]["updateRefs"].get("clientMutationId") == intent_id,
                 "UNKNOWN: GraphQL CAS acknowledgement incomplete")
+        reached("cas.acknowledged")
 
 
 @contextmanager
@@ -293,12 +334,25 @@ def _unchanged():
 
 class GitHubPolicyAdapter(GitPolicyAdapter):
     """Local accepted policy inspection, HTTP-only authenticated remote refs."""
-    def __init__(self, config: Config, service: GitHubCAS, **kwargs):
+    def __init__(self, config: Config, service: GitHubCAS, *, product_base=None, push_ref=None, **kwargs):
         super().__init__(config, **kwargs)
         self.service = service
+        self.product_base = product_base
+        require(push_ref is None or service.personal and product_base is None and push_ref == service.target.ref,
+                "Only the exact personal PUSH ref may select scoped publication metadata")
+        self.push_ref = push_ref
 
     def _remote_refs(self, config):
         _endpoint(config, self.service.target)
+        if self.push_ref is not None:
+            current = self.service.inspect_ref(writable=False)
+            return () if current is None else (Ref(self.push_ref, current),)
+        if self.product_base is not None:
+            # Explicit personal Product projection, not a global absent-ref
+            # inventory. Its selected rules permit only this source/base flow.
+            from .personal_rules import product_refs
+            return tuple(Ref(name, revision) for name, revision in
+                sorted(product_refs(self.service, self.product_base).items()))
         return self.service.refs()
 
 
@@ -420,27 +474,42 @@ class GitHubGitExecutionPort(GitExecutionPort):
             pass
         return ExternalObservation("UNKNOWN")
 
-    def submit(self, action, provider, plan, authorization, *, dispatch=None, validate=None):
+    def submit(self, action, provider, plan, authorization, *, dispatch=None, validate=None, admit_objects=None):
         if action["operation"] != Operation.PUSH:
             return super().submit(action, provider, plan, authorization)
         require(dispatch in self._dispatches, "Fresh one-use network dispatch capability required")
         action_id, claim = self._dispatches.pop(dispatch)
         require(claim == self._claim(action_id, action) and load_json(self._claim_path(action_id)) == claim,
                 "Network claim is missing, corrupt or belongs to another intent")
-        with self.service.bounded():
-            require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
-            if validate is not None:
-                validate()
-            require(self.service.inspect_ref(writable=True) == action["expected_target"], "Remote changed before immutable object transfer")
+        with self.service.bounded() as budget:
+            def checked_ref():
+                observation = validate() if validate is not None else None
+                # A personal callback supplies the actual same-boundary native
+                # observation, not an ALLOW. Default/signed ports still inspect.
+                if (self.service.personal and type(observation) is tuple and len(observation) == 3
+                        and observation[0] is self.service and observation[1] == self.service.target.ref):
+                    current = observation[2]
+                else:
+                    current = self.service.inspect_ref(writable=True)
+                require(current == action["expected_target"], "Remote changed before immutable transfer or atomic CAS")
+                return self.service.personal and type(observation) is tuple and len(observation) == 3 and observation[:2] == (self.service, self.service.target.ref)
+            # The personal callback supplies the just-reauthorized owning-stage
+            # subject. Direct/signed callers still need their initial full M3
+            # authorization; every path is authorized again BEFORE any POST.
+            if not (self.service.personal and validate is not None):
+                require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
+                checked_ref()
+            elif not checked_ref():
+                require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
             objects = (closure(self.root, action["revision"], self.service.known_commit, git_reader=self._git)
                        if self.bound_git_directory is not None else closure(self.root, action["revision"], self.service.known_commit))
-            self._authorize(action, provider, plan, authorization)
+            require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed before upload")
+            if admit_objects is not None:
+                admit_objects(objects, budget)
             self.service.upload(objects)
             # Upload latency/source/ownership/policy drift cannot authorize late CAS.
-            self._authorize(action, provider, plan, authorization)
-            if validate is not None:
-                validate()
-            require(self.service.inspect_ref(writable=True) == action["expected_target"], "Remote changed before atomic CAS")
+            require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed before CAS")
+            checked_ref()
             try:
                 self.service.cas(action["expected_target"], action["revision"], action_id)
             except (ADPError, OSError):

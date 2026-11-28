@@ -22,6 +22,7 @@ from .policy_schema import digest, ref
 from .project_validation import observation_subject
 from .project_validation_types import ProjectObservation, ProjectResult, ResultStatus
 from .schema import decode, encode, integer, require, string
+from .runtime_limits import http_request, read_operation, request_allowance, settings_for
 
 API = "https://api.github.com"
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
@@ -35,7 +36,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def validate_get(path: str, seconds: float) -> None:
     """Shared read grammar; selecting it grants no evidence or execution right."""
-    require(type(path) is str and ROUTE.fullmatch(path) and 0 < seconds <= 30,
+    request_allowance(seconds)
+    require(type(path) is str and ROUTE.fullmatch(path),
             "Unsupported project-validation GET")
     route, separator, raw_query = path.partition("?")
     if separator:
@@ -55,12 +57,14 @@ def validate_get(path: str, seconds: float) -> None:
 
 class GitHubValidationHTTP:
     """GET only, fixed origin, no redirects and no error body disclosure."""
-    def __init__(self, token: str):
+    def __init__(self, token: str, *, runtime_settings=None):
         require(type(token) is str and 0 < len(token) <= 4096
                 and all(32 < ord(c) < 127 for c in token), "Bounded authentication token required")
         self._token = token
+        self.runtime_settings = settings_for(settings=runtime_settings)
         self._opener = urllib.request.build_opener(_NoRedirect())
 
+    @http_request
     def get(self, path: str, *, seconds: float) -> Response:
         validate_get(path, seconds)
         request = urllib.request.Request(API + path, method="GET", headers={
@@ -110,6 +114,7 @@ class GitHubEvidenceSource:
                 and type(maximum_pages) is int and 1 <= maximum_pages <= 20, "Invalid GET inventory budget")
         self.name, self.repository_id, self.github_id = name, repository_id, github_id
         self.checks, self.transport, self.attest = checks, transport, attest
+        self.runtime_settings = settings_for(transport)
         self.clock = clock or (lambda: int(time.time()))
         self.per_page, self.maximum_pages = per_page, maximum_pages
 
@@ -117,7 +122,7 @@ class GitHubEvidenceSource:
         require(ROUTE.fullmatch(path), "Unsafe evidence route")
         left = self._deadline - time.monotonic()
         require(left > 0, "Observation request budget exhausted")
-        response = self.transport.get(path, seconds=min(30, left))
+        response = self.transport.get(path, seconds=min(self.runtime_settings.limits.request_timeout_seconds, left))
         require(type(response) is Response and type(response.status) is int, "Invalid GET response")
         headers = {k.lower(): v for k, v in response.headers}
         if response.status != 200:
@@ -198,6 +203,7 @@ class GitHubEvidenceSource:
         return digest({"repository": {k: metadata[k] for k in ("id", "full_name")},
                        "ref": branch, "pull": pull})
 
+    @read_operation("project.validation_observation")
     def observe(self, query):
         # Parallel lanes can share a configured read-only source without sharing
         # mutable request deadlines/coverage. The transport remains trusted.

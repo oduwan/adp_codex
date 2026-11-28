@@ -14,10 +14,11 @@ class PersonalPublicationProjectionTests(PersonalFixture):
     def preflight(self):
         observed, _ = self.observe()
         publication = object.__new__(PersonalPublication)
-        publication.personal = SimpleNamespace(plan={"issue": 2, "repository": {"name": self.name}})
+        publication.personal = SimpleNamespace(repository_id=self.rid, plan={"issue": 2, "repository": {"name": self.name}})
         publication.target = SimpleNamespace(api=self.prefix)
         publication.c = SimpleNamespace(track=SimpleNamespace(originals={
             issue.identity: SimpleNamespace(issue=issue) for issue in observed.snapshot.issues}))
+        publication.service = SimpleNamespace(limits=SimpleNamespace(request_limit=128))
         publication.read, publication.clock = self.transport, lambda: self.now
         bases = publication.original_bases()
         capture = OriginalRead(self.transport, bases[0], additional=bases[1:])

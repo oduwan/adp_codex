@@ -109,7 +109,7 @@ def constraints(branch, rules, legacy=None):
     return {"checks": sorted(checks), "origins": origins, "native_reviews": reviews, "methods": sorted(methods)}
 
 
-def observe_policy(read, target, base_ref, *, personal=None, expected_sha=None, service=None, expected_head=None):
+def observe_policy(read, target, base_ref, *, personal=None, expected_sha=None, service=None, expected_head=None, _identity=None):
     """Bounded complete native pages through the accepted authenticated read port."""
     branch = base_ref.removeprefix("refs/heads/")
     prefix = target.api
@@ -131,7 +131,7 @@ def observe_policy(read, target, base_ref, *, personal=None, expected_sha=None, 
                     and repository["repository_id"] == str(target.database_id) == target.memory_id
                     and repository["name"] == target.owner + "/" + target.name
                     and base_ref == "refs/heads/" + repository["default_branch"], "Plan capability targets a different base/repository")
-            identity = private_repository(read, repository, owner)
+            identity = private_repository(read, repository, owner, _identity=_identity)
             require(type(service) is GitHubCAS and service.target == target and expected_head is not None,
                     "PLAN_UNAVAILABLE: current authenticated source/ref service required")
             repo = service._repository(PERSONAL_REF_QUERY, {"ref": target.ref})

@@ -9,6 +9,7 @@ from .discovery_schema import json_value
 from .personal_storage import PersonalBlocked
 from .schema import require
 from .github_rules import retained_error
+from .runtime_limits import http_request
 
 
 class PersonalGitHubRead(GitHubHTTPTransport):
@@ -21,11 +22,15 @@ class PersonalGitHubRead(GitHubHTTPTransport):
     def get(self, path):
         if path != "/user" and not (ENROLLMENT_PATH.fullmatch(path) and "/rules/branches/" in path):
             return super().get(path)
+        return self._extra_get(path)
+
+    @http_request
+    def _extra_get(self, path, *, seconds=None):
         request = urllib.request.Request(API + path, method="GET", headers={
             "Authorization": "Bearer " + self._token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "adp-codex-read-only"})
         try:
-            response = self._opener.open(request, timeout=30)
+            response = self._opener.open(request, timeout=seconds)
         except urllib.error.HTTPError as exc:
             response = exc
         except (OSError, urllib.error.URLError):
@@ -38,7 +43,7 @@ class PersonalGitHubRead(GitHubHTTPTransport):
                             retained_error(response.code, raw, headers, path), headers)
 
 
-def owned_repository(transport, name, expected_id=None):
+def owned_repository(transport, name, expected_id=None, *, _repository=None):
     # Reuse accepted header/control/rate-limit validation without widening the
     # ordinary discovery transport's route allowlist. Exhaustion stops this read.
     bounded = GitHubDiscoveryAdapter(name, transport, max_requests=2)
@@ -56,6 +61,8 @@ def owned_repository(transport, name, expected_id=None):
     if (type(owner) is not dict or owner.get("type") != "User" or type(owner.get("id")) is not int or owner["id"] != user["id"]
             or type(permissions) is not dict or permissions.get("pull") is not True):
         raise PersonalBlocked("PERSONAL_OWNER_REQUIRED", "Use personal mode only for an observed personally owned repository with current read access.")
+    if _repository is not None:
+        _repository.update(repo)  # The very same authenticated observation.
     return {"account_id": user["id"], "repository_id": str(repo["id"]),
             "read_access": True,
             "push_access": permissions.get("push") if type(permissions.get("push")) is bool else None,

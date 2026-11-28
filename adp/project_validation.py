@@ -19,7 +19,7 @@ from .errors import ADPError
 from .execution_privacy import credential_shaped
 from .guard_types import Attestation, data
 from .policy_schema import digest, fingerprint, fresh, ref, sha
-from .policy_types import Authorization, Effect, Operation, OutcomeCount, Request, CandidateSource, CandidateValidationRequest
+from .policy_types import Authorization, Effect, Operation, OutcomeCount, Plan, Request, CandidateSource, CandidateValidationRequest
 from .project_validation_types import (EvidenceGate, EvidencePolicy, EvidenceRequest,
     ObservationQuery, Phase, ProjectObservation, ProjectResult, RequiredCheck, ResultStatus,
     CandidateEvidenceRequest, CandidateObservationQuery, CandidateProjectResult,
@@ -206,7 +206,7 @@ class ProjectValidation:
         require(self.provider.authority.verify(evidence, purpose="project-validation/" + purpose,
                     subject=subject) is True, "Unverified project evidence provenance")
 
-    def request(self, phase: Phase, *, authorization: Authorization, pull=None) -> EvidenceRequest:
+    def request(self, phase: Phase, *, authorization: Authorization, pull=None, _plan=None) -> EvidenceRequest:
         require(phase in set(Phase), "Unknown validation phase")
         if self.candidate is not None:
             from .git import value
@@ -215,8 +215,26 @@ class ProjectValidation:
                     and value(self.candidate_root, "symbolic-ref", "HEAD") == self.task.source_ref,
                     "Candidate source changed or phase is not precommit")
         request = CandidateValidationRequest(Operation.VALIDATE, candidate=self.candidate) if self.candidate else Request(Operation.VALIDATE)
-        plan = self.provider.plan(self.task, request)
-        require(self.provider.decide(plan, authorization).effect == Effect.ALLOW,
+        from .personal_product_review import ProductAuthority
+        if _plan is not None:
+            from .runtime_limits import current_budget
+            require(self.candidate is None and type(self.provider.authority) is ProductAuthority
+                    and type(_plan) is tuple and len(_plan) == 3 and _plan[0] is not None
+                    and _plan[0] is current_budget() and _plan[1] is self.provider
+                    and type(_plan[2]) is Plan and _plan[2].task == self.task and _plan[2].request == request,
+                    "A borrowed personal plan requires its actual owning operation/provider/subject")
+            _plan[0].check()
+            plan = _plan[2]
+        else:
+            plan = self.provider.plan(self.task, request)
+        if self.candidate is None and type(self.provider.authority) is ProductAuthority:
+            # Personal request() already owns this actual full observation.
+            # A second independent request() still closes the native query;
+            # signed/candidate callers retain their original public decide.
+            decision = self.provider._decide(plan, replace(plan, safety=self.provider._safety(self.task)), authorization)
+        else:
+            decision = self.provider.decide(plan, authorization)
+        require(decision.effect == Effect.ALLOW,
                 "Current exact M3 validation authorization is required")
         subject = policy_subject(plan, self.policy)
         self._verify(self.policy.evidence, "candidate-policy" if self.candidate else "policy", subject)
@@ -408,9 +426,9 @@ class ProjectValidation:
         return cls(request, status, tuple(results), tuple(missing), complete, reason,
                             "project-validation:" + subject)
 
-    def observe(self, phase: Phase, *, authorization: Authorization, pull=None, budget_ms=1000) -> EvidenceGate:
+    def observe(self, phase: Phase, *, authorization: Authorization, pull=None, budget_ms=1000, _plan=None) -> EvidenceGate:
         require(type(budget_ms) is int and 1 <= budget_ms <= 300000, "Invalid observation deadline")
-        request = self.request(phase, authorization=authorization, pull=pull)
+        request = self.request(phase, authorization=authorization, pull=pull, _plan=_plan)
         return self._observe_request(request, authorization, budget_ms, current=request)
 
     def reobserve(self, original, *, authorization: Authorization, evidence: Attestation, budget_ms=1000):

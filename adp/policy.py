@@ -17,6 +17,7 @@ from .policy_types import (Authorization, BranchPlan, Check, CommitPlan, Decisio
     EditPlan, PushPlan, ReportPlan, StagePlan, ValidationPlan, ProjectCheck, ProjectQualifications,
     CandidateSource, CandidateValidationRequest, CandidateValidationPlan, TicketEditRequest, TicketEditPlan)
 from .schema import integer, key, require, string
+from .runtime_limits import measured
 
 RANK = {SourceKind.OPERATOR: 0, SourceKind.GOVERNANCE: 1,
         SourceKind.CONTRACT: 1, SourceKind.PROFILE: 2}
@@ -100,8 +101,8 @@ class PolicyProvider:
         payload.pop("evidence")
         return digest({"scope": self._repository_scope(snapshot), "protection": payload})
 
-    def inspect_repository(self) -> Inspection:
-        snapshot = self.adapter.inspect()
+    def inspect_repository(self, *, _snapshot=None) -> Inspection:
+        snapshot = self.adapter.inspect() if _snapshot is None else _snapshot
         validate_snapshot(snapshot)
         now = self._now()
         docs = {d.reference: d for d in snapshot.documents}
@@ -213,7 +214,8 @@ class PolicyProvider:
         require(value.approval is None or value.approval == baseline, "M2 approval is stale or from another guard context")
         return value
 
-    def plan(self, task: Task, request: Request) -> Plan:
+    @measured("policy.plan")
+    def plan(self, task: Task, request: Request, *, _snapshot=None) -> Plan:
         validate_task(task)
         require(type(request) in (Request, CandidateValidationRequest, TicketEditRequest) and isinstance(request.operation, str)
                 and request.operation in set(Operation), "Unsupported policy operation")
@@ -232,7 +234,7 @@ class PolicyProvider:
                 and all(ord(c) >= 32 for c in request.report_target), "Invalid report target")
         require(isinstance(request.report_body, str) and len(request.report_body) <= 2048
                 and all(ord(c) >= 32 or c == "\n" for c in request.report_body), "Invalid bounded report")
-        inspection = self.inspect_repository()
+        inspection = self.inspect_repository(_snapshot=_snapshot)
         snapshot, op = inspection.snapshot, request.operation
         reasons = list(inspection.conflicts)
         denied = []
@@ -490,9 +492,20 @@ class PolicyProvider:
         payload.pop("evidence")
         return digest({"scope": self._scope(plan), "project_check": payload})
 
+    @measured("policy.decide")
     def decide(self, plan: Plan, authorization: Authorization | None = None) -> Decision:
         require(type(plan) is Plan, "Expected a typed policy plan")
         current = self.plan(plan.task, plan.request)
+        return self._decide(plan, current, authorization)
+
+    def _decide(self, plan, current, authorization=None):
+        """Pure evaluation of explicit observations, never an ALLOW cache.
+
+        Personal owning stages can consume their just-built plan directly.
+        Public decide still independently reconstructs current state. A new
+        checkpoint or external boundary must supply a new actual plan.
+        """
+        require(type(plan) is Plan and type(current) is Plan, "Expected actual typed policy plans")
         reasons, pending = [], []
         effect = current.policy_effect
         if current != plan:

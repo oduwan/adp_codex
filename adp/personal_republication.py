@@ -12,6 +12,14 @@ class RevisionPublication(PersonalPublication):
         self.product = product
         self.path = self.personal.state / "publication-revisions" / (self.c.revision() + ".json")
 
+    def local(self, *, _history_capture=None, _qualification=None):
+        correction = self.product.record()["correction"]
+        if self.c.episode:
+            require(correction is not None, "Exact correction intent required")
+            execution = next(e for e in self.product.record()["execution"] if e["approval"] == correction["approval"])
+            self.product.history_binding(view=execution["view"])
+        return super().local(_history_capture=_history_capture, _qualification=_qualification)
+
     def history(self):
         row = self.product.record()
         require(row is not None and row["correction"] is not None, "Only an admitted original-ticket correction may republish")

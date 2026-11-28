@@ -25,15 +25,17 @@ from .execution_ports import UnconfirmedValidation
 from .personal_network_child import context, validate_personal
 from .schema import decode, fields, require
 from .github_rules import checked, retained_error
+from .runtime_limits import BudgetRefusal, request_allowance, settings_for
 from .personal_rules import PERSONAL_REF_QUERY
 
 
 class PersonalGitHubTransport:
     validator = staticmethod(validate_personal)
     http_child = "personal_network_child.py"
-    def __init__(self, target: GitHubTarget, *, protected_roots=(), authorize_write=None):
+    def __init__(self, target: GitHubTarget, *, protected_roots=(), authorize_write=None, runtime_settings=None):
         require(type(target) is GitHubTarget, "Pin the exact personal target")
         self.target, self.protected_roots = target, tuple(Path(p).resolve() for p in protected_roots)
+        self.runtime_settings = settings_for(settings=runtime_settings)
         self.authorize_write = authorize_write
         self._binding = None
         self._context = None
@@ -61,12 +63,15 @@ class PersonalGitHubTransport:
         return context(str(binary), str(config))
 
     def _credential(self, seconds):
+        deadline = time.monotonic() + seconds
         actor = self._actor()
         require(self._context in (None, actor), "Selected gh account/configuration/executable changed")
         if self._token is None:
             payload = json.dumps({"kind": "credential", "context": actor}, separators=(",", ":")).encode()
             environment = {name: os.environ[name] for name in ("LANG", "LC_ALL", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR") if name in os.environ}
-            reply = decode(supervised_output(payload, seconds, child="personal_network_child.py", environment=environment), 16384)
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, "Credential context exhausted request budget")
+            reply = decode(supervised_output(payload, remaining, child="personal_network_child.py", environment=environment), 16384)
             fields(reply, "context token version")
             token = reply["token"]
             require(reply["context"] == actor and type(token) is str and 0 < len(token) <= 4096
@@ -90,7 +95,10 @@ class PersonalGitHubTransport:
 
     def request(self, method, path, body, *, seconds):
         self.last_response = None
+        started = time.monotonic()
         try:
+            request_allowance(seconds)
+            deadline = started + min(seconds, self.runtime_settings.limits.request_timeout_seconds)
             self.validator(method, path, body, seconds)
             require(self._binding == (self.target.node_id, self.target.database_id), "Bind the personal recipient first")
             require(path == "/user" or path == "/graphql" or path.partition("?")[0] == self.target.api
@@ -104,13 +112,18 @@ class PersonalGitHubTransport:
                 require(callable(self.authorize_write) and self.authorize_write() is True,
                         "Separate current publication/quiescence approval is required")
             require(_supported(), "Bounded Linux credential/HTTP supervision unavailable")
-            deadline = time.monotonic() + seconds
-            token = self._credential(seconds)
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, "Authorization exhausted request budget")
+            token = self._credential(remaining)
             remaining = deadline - time.monotonic()
             require(remaining > 0, "Credential lookup exhausted request budget")
             payload = json.dumps({"kind": "http", "method": method, "path": path, "body": body,
-                "seconds": min(5, remaining), "token": token}, separators=(",", ":"), allow_nan=False).encode()
-            reply = decode(supervised_output(payload, min(5, remaining), child=self.http_child), 2097152)
+                "seconds": remaining, "token": token}, separators=(",", ":"), allow_nan=False).encode()
+            from .runtime_limits import reached
+            reached("http.supervision_requested")
+            raw_reply = supervised_output(payload, remaining, child=self.http_child)
+            reached("http.supervision_returned")
+            reply = decode(raw_reply, 2097152)
             fields(reply, "status body_base64 headers")
             require(type(reply["status"]) is int and 100 <= reply["status"] <= 599 and not 300 <= reply["status"] <= 399
                     and type(reply["body_base64"]) is str and type(reply["headers"]) is list and len(reply["headers"]) <= 128,
@@ -142,11 +155,14 @@ class PersonalDiscoveryRead:
     """Preserve actual native status/headers through the accepted M4 parser."""
     def __init__(self, service):
         self.service = service
+        self.runtime_settings = service.runtime_settings
 
-    def get(self, path):
+    def get(self, path, *, seconds=None):
         self.service.transport.last_response = None
         try:
-            body = self.service.request("GET", path, missing=True)
+            body = self.service.request("GET", path, missing=True, seconds=seconds)
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError):
             body = None
         observed = self.service.transport.last_response

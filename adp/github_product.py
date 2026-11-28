@@ -21,6 +21,7 @@ from .policy_schema import fingerprint, fresh, ref, sha
 from .policy_types import Operation
 from .schema import encode, integer, require, string
 from .storage import sync_directory
+from .runtime_limits import BudgetRefusal, network_operation, reached
 
 
 class GitHubForgeHTTPTransport(GitHubHTTPTransport):
@@ -69,10 +70,13 @@ def delegation_subject(profile):
 class _Responses:
     def __init__(self, service):
         self.service = service
+        self.runtime_settings = service.runtime_settings
 
     def request(self, method, path, payload=None):
         try:
             return Response(200, self.service.request(method, path, payload))
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError):
             return Response(0, None)
 
@@ -83,13 +87,14 @@ class GitHubProductForge(GitHubForgeBackend):
     The native merge API has no atomic base precondition. Only independently
     authenticated HEAD_ATOMIC_BASE_OBSERVED project assent qualifies it.
     """
-    def __init__(self, service, journal, authority):
+    def __init__(self, service, journal, authority, *, personal=False):
         require(type(service) is GitHubCAS and type(journal) is ExecutionJournal,
                 "Actual pinned service and execution journal required")
         target = service.target
         require(journal.memory.config.identity == target.memory_id, "Forge/memory repository differs")
         service.bind_control(journal.memory.control)
-        super().__init__(target.owner + "/" + target.name, str(target.database_id), _Responses(service), authority)
+        super().__init__(target.owner + "/" + target.name, str(target.database_id), _Responses(service), authority,
+            head_ref=target.ref if personal else None)
         self.service, self.journal = service, journal
         self._dispatches = {}
 
@@ -124,11 +129,14 @@ class GitHubProductForge(GitHubForgeBackend):
         self._dispatches[ticket] = (key, claim)
         return ticket
 
+    @network_operation("product_forge.pull")
     def pull(self, identity, *, revision, source_ref, base_ref, expected_base=None):
         """Fresh current PR observation, distinct from historical create intent."""
         require(type(identity) is dict, "Exact PR identity required")
         integer(identity["number"], 1)
-        if not self._identity():
+        # Personal detail validates both exact repository identities below;
+        # generic/signed callers retain their independent identity request.
+        if self.head_ref is None and not self._identity():
             return None
         response = self.transport.request("GET", f"/repos/{self.repository}/pulls/{identity['number']}")
         item = response.body
@@ -148,6 +156,7 @@ class GitHubProductForge(GitHubForgeBackend):
             return None
         return item
 
+    @network_operation("product_forge.reviews")
     def reviews(self, identity, revision):
         """Complete review inventory, authenticated by the installed authority.
 
@@ -173,6 +182,7 @@ class GitHubProductForge(GitHubForgeBackend):
                 return tuple(rows[k] for k in sorted(rows))
         return None
 
+    @network_operation("product_forge.observe")
     def observe(self, key, operation, payload, *, attempted=False):
         self.service._check_stop()
         if operation != Operation.MERGE:
@@ -193,9 +203,12 @@ class GitHubProductForge(GitHubForgeBackend):
             expected = [payload["expected_base"], payload["revision"]] if payload["method"] == "merge" else [payload["expected_base"]]
             require(parents == expected, "Merged ancestry differs from observed base and reviewed source")
             return ExternalObservation("PRESENT", payload["pull"]["url"], result)
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError, KeyError, TypeError):
             return ExternalObservation("UNKNOWN")
 
+    @network_operation("product_forge.submit")
     def submit(self, key, operation, payload, *, authorization=None, plan_digest=None, dispatch=None, validate=None):
         require(callable(validate), "Fresh final M1/M2/M3 validation callback required")
         require(dispatch in self._dispatches, "Fresh one-use forge dispatch required")
@@ -221,8 +234,10 @@ class GitHubProductForge(GitHubForgeBackend):
             validate()  # after all provider reads, immediately before PUT
             # Native API atomically tests HEAD only. This is deliberately not #14 CAS.
             try:
+                reached("effect.dispatch_requested")
                 self.service.request("PUT", f"/repos/{self.repository}/pulls/{payload['pull']['number']}/merge",
                     {"sha": payload["revision"], "merge_method": payload["method"]})
+                reached("effect.acknowledged")
             except (ADPError, OSError):
                 pass
             return self.observe(key, operation, payload, attempted=True)

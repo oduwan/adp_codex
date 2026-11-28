@@ -84,7 +84,7 @@ accepted prerequisite verification. Its exact raw observations for every selecte
 original (including native dependency pages) are bound into publication consent.
 Both existing pre-upload/pre-CAS callbacks reobserve those complete targeted maps
 and actual accepted prerequisite receipts. This avoids repeating whole-repository
-inventories inside the unchanged 45-second/128-request batch; the raw-map limit
+inventories inside the bounded [shared operation](RUNTIME_LIMITS.md); the raw-map limit
 also stays81. No stale snapshot is called current and no cached READY grants a
 push. Standalone enrollment keeps its single-original map and prerequisite refusal.
 Each object authorization obtains a fresh actual M1 observation. Its generation
@@ -135,6 +135,14 @@ duplicates, partial inventory, foreign authors or changed bodies remain UNKNOWN;
 never POST again blindly. `report-status` observes; it does not manufacture guard
 accounting. The exact own comment's additive metadata is reconciled privately;
 unrelated source/version/native-edge/comment changes still stop admission.
+
+REPORT completion verification before POST checks the exact submitted reservation
+against its actual canonical snapshot. Only that coordination overlay may differ
+from accepted completion; original run, product, CI and independent Worker
+evidence remain required. This read-side predicate grants no effect authority.
+The subsequent transport callback separately requires its own in-flight marker
+and a fresh late Memory/permit/deadline check. A prior uncertain request is a
+refusal, never a reason to create another marker or submit again.
 
 Native merge remains HEAD_ATOMIC_BASE_OBSERVED, not atomic-base merge. Draft
 readiness remains a separately authorized external action. Automatic merge

@@ -240,3 +240,78 @@ class NetworkExecutionQualification(ExecutionFixture):
         self.assertEqual(again["status"], "COMPLETE", again)
         self.assertEqual(sum(kind == "ref" for kind, _ in self.server.mutations), 1)
         self.assertEqual(self.conductor.handoff(authorized=True)["health"], "SYNCED")
+
+    def test_object_count_admission_preserves_three_authorizations_and_two_validations(self):
+        with patch.dict(os.environ, {"TZ": "UTC"}):self.prepare()
+        ticket = self.port.prepare_dispatch(self.action_id, self.action)
+        self.conductor.journal.change(lambda execution, state, tasks: execution["actions"][self.action_id].update(status="SUBMITTED"))
+        provider, plan, auth = self.policy()
+        events = []
+        authorize, upload = self.port._authorize, self.service.upload
+        def observed_authorize(*args):
+            events.append("AUTHORIZE"); return authorize(*args)
+        def observed_upload(objects):
+            events.append("UPLOAD"); return upload(objects)
+        def admit(objects, budget):
+            self.assertEqual(events, ["AUTHORIZE", "VALIDATE", "AUTHORIZE"])
+            self.assertIs(budget, self.service._budget.get())
+            self.assertGreater(len(objects), 0)
+            self.assertFalse(self.server.mutations)
+            events.append("COUNT")
+        with patch.object(self.port, "_authorize", side_effect=observed_authorize), patch.object(self.service, "upload", side_effect=observed_upload):
+            result = self.port.submit(self.action, provider, plan, auth, dispatch=ticket,
+                validate=lambda: events.append("VALIDATE"), admit_objects=admit)
+        self.assertEqual(result.status, "PRESENT")
+        self.assertEqual(events, ["AUTHORIZE", "VALIDATE", "AUTHORIZE", "COUNT", "UPLOAD", "AUTHORIZE", "VALIDATE"])
+        self.assertEqual(sum(kind == "ref" for kind, _ in self.server.mutations), 1)
+
+    def test_unknown_count_admission_stops_before_any_object_and_cannot_remint_dispatch(self):
+        with patch.dict(os.environ, {"TZ": "UTC"}):self.prepare()
+        before = self.server.refs()
+        ticket = self.port.prepare_dispatch(self.action_id, self.action)
+        self.conductor.journal.change(lambda execution, state, tasks: execution["actions"][self.action_id].update(status="SUBMITTED"))
+        provider, plan, auth = self.policy()
+        def refuse(objects, budget):raise ADPError("UNKNOWN: unclassified mandatory tail")
+        with self.assertRaisesRegex(ADPError, "unclassified"):
+            self.port.submit(self.action, provider, plan, auth, dispatch=ticket, admit_objects=refuse)
+        self.assertFalse(self.server.mutations)
+        self.assertEqual(self.server.refs(), before)
+        self.assertEqual(self.port.observe(self.action).status, "UNKNOWN")
+        self.assertTrue(self.port._claim_path(self.action_id).exists())
+        with self.assertRaises(ADPError):self.port.submit(self.action, provider, plan, auth, dispatch=ticket, admit_objects=refuse)
+        with self.assertRaises(ADPError):self.port.prepare_dispatch(self.action_id, self.action)
+
+    def test_partial_immutable_upload_budget_exhaustion_never_cas_or_remint(self):
+        from adp.personal_publication import PersonalPublication
+        with patch.dict(os.environ, {"TZ": "UTC"}):self.prepare()
+        before = self.server.refs()
+        ticket = self.port.prepare_dispatch(self.action_id, self.action)
+        self.conductor.journal.change(lambda e, s, t: e["actions"][self.action_id].update(status="SUBMITTED"))
+        provider, plan, auth = self.policy()
+        original_upload = self.service.upload
+        budget_seen = []
+        def admission(objects, budget):
+            publication = PersonalPublication.__new__(PersonalPublication)
+            publication._write_basis = {"budget": budget}
+            self.assertEqual(publication.admit_objects(objects, budget, provider.adapter), "LOWER_BOUND_FITS")
+            self.assertGreater(len(objects), 1)
+            budget_seen.append(budget)
+        def partial(objects):
+            budget = self.service._budget.get()
+            self.assertIs(budget, budget_seen[0])
+            # Spend actual permitted read requests after lower-bound admission;
+            # do not edit counters, grants, limits or deadlines to simulate it.
+            while budget.calls < budget.maximum_calls - 1:
+                self.assertTrue(self.service.known_commit(self.initial))
+            original_upload(objects)
+        with patch.object(self.service, "upload", side_effect=partial), self.assertRaises(ADPError):
+            self.port.submit(self.action, provider, plan, auth, dispatch=ticket, admit_objects=admission)
+        self.assertEqual(budget_seen[0].calls, budget_seen[0].maximum_calls + 1)  # Includes refused attempt.
+        self.assertEqual(budget_seen[0].transport_calls, budget_seen[0].maximum_calls)
+        self.assertEqual(self.server.refs(), before)
+        self.assertEqual(len(self.server.mutations), 1)
+        self.assertFalse(any(kind == "ref" for kind, _ in self.server.mutations))
+        self.assertEqual(self.port.observe(self.action).status, "UNKNOWN")
+        self.assertTrue(self.port._claim_path(self.action_id).exists())
+        with self.assertRaises(ADPError):self.port.submit(self.action, provider, plan, auth, dispatch=ticket)
+        with self.assertRaises(ADPError):self.port.prepare_dispatch(self.action_id, self.action)

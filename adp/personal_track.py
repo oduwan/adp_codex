@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
 
+from .personal_read_frame import qualified as historical_operation
 from .discovery import complete_snapshot
 from .discovery_schema import digest, typed
 from .discovery_types import Issue, Snapshot
@@ -23,6 +24,8 @@ from .policy_schema import fingerprint, sha
 from .schema import encode, fields, key, require
 from .storage import atomic, locked
 from .ticket_preparation import TicketArchive
+from .personal_history_track import with_reads
+from .runtime_limits import network_operation, read_operation
 
 LINK = "track-link.json"
 
@@ -50,9 +53,10 @@ class PersonalTrack:
     def __init__(self, coordinator):
         self.c, self.personal = coordinator, coordinator.personal
         self.link = read_private(self.personal.state / LINK)
-        fields(self.link, "schema_version root index identity directory setup snapshot parent")
+        fields(self.link, "schema_version root index identity directory setup snapshot parent" +
+               (" episode original_link" if coordinator.episode else ""))
         fingerprint(self.link["index"]); fingerprint(self.link["snapshot"])
-        require(type(self.link["schema_version"]) is int and self.link["schema_version"] == 1
+        require(type(self.link["schema_version"]) is int and self.link["schema_version"] == (2 if coordinator.episode else 1)
                 and self.link["directory"] == str(self.personal.directory)
                 and self.link["setup"] == self.personal.intent["approval"]
                 and self.link["identity"] == self.personal.intent["original"]["identity"], "Track link identity differs")
@@ -89,6 +93,7 @@ class PersonalTrack:
                 "Retain the exact original track selection/approval evidence")
 
     @staticmethod
+    @read_operation("track.registration", transport=lambda c, numbers: c.transport)
     def registration(c, numbers):
         require(type(numbers) is tuple and 1 <= len(numbers) <= 8 and len(set(numbers)) == len(numbers)
                 and all(type(n) is int and n > 0 for n in numbers), "Select a finite original Issue inventory")
@@ -126,6 +131,7 @@ class PersonalTrack:
         return row["commit"]["sha"]
 
     @classmethod
+    @read_operation("track.register", transport=lambda cls, c, numbers, **k: c.transport)
     def register(cls, c, numbers, *, reviewed, authorized):
         require(authorized is True, "Separately approve original-track evidence writes")
         with invocation_lock(c.memory.control):
@@ -134,6 +140,7 @@ class PersonalTrack:
                 track = cls(c)
                 require(sorted(o.issue.number for o in track.originals.values()) == sorted(numbers), "Original track cannot be replaced")
                 return track
+            require(not c.episode, "Accounting episode must retain its original track attachment")
             view, token = cls.registration(c, numbers)
             require(token == reviewed, "Track original observation changed; review again")
             root = c.personal.state / "track"
@@ -170,13 +177,24 @@ class PersonalTrack:
         paths = sorted((self.root / "links").glob("*.json"))
         require(1 <= len(paths) <= len(self.originals), "Track links exceed original finite inventory")
         rows = [read_private(p) for p in paths]
+        effective_rows = []
         for p, row in zip(paths, rows):
             personal = load_state(Path(row["directory"]))
             require(p.stem == digest(row["identity"]) and row["index"] == self.link["index"]
                     and read_private(personal.state / LINK) == row and row["setup"] == personal.intent["approval"]
                     and row["identity"] == personal.intent["original"]["identity"], "Retain exact original enrollment links")
+            from .personal_episode import effective
+            current = effective(personal)
+            effective_rows.append(read_private(current.state / LINK))
         require(len({digest(r["identity"]) for r in rows}) == len(rows), "Duplicate original task link")
-        return rows
+        return effective_rows
+
+    def admission_path(self):
+        return (self.personal.state / "episode-admission.json" if self.c.episode else
+                self.root / "admissions" / (digest(self.link["identity"]) + ".json"))
+
+    def admission(self):
+        return read_private(self.admission_path())
 
     def completion_path(self, identity):
         require(identity in self.originals, "Completion outside original track")
@@ -191,8 +209,9 @@ class PersonalTrack:
         require(identity in self.originals and observed.identity == identity, "Wrong original Issue identity")
         expected = self.originals[identity].issue
         pointer = read_private(self.root / "links" / (digest(identity) + ".json"), optional=True)
-        known_report = (read_private(Path(pointer["directory"]) / "private" / "report.json", optional=True)
-            if pointer is not None else None)
+        from .personal_episode import effective
+        pointed = effective(load_state(Path(pointer["directory"]))) if pointer is not None else None
+        known_report = read_private(pointed.state / "report.json", optional=True) if pointed is not None else None
         if observed == expected and (known_report is None or known_report["after"] is None):
             return True
         link = next((r for r in self.links() if r["identity"] == data(identity)), None)
@@ -221,12 +240,16 @@ class PersonalTrack:
 
     def require_attachment(self):
         shared = read_private(self.root / "links" / (digest(self.link["identity"]) + ".json"), optional=True)
-        admission = read_private(self.root / "admissions" / (digest(self.link["identity"]) + ".json"), optional=True)
-        require(shared == self.link and admission is not None,
+        admission = read_private(self.admission_path(), optional=True)
+        require((shared == self.link if not self.c.episode else digest(shared) == self.link["original_link"]
+                 and self.link["episode"] == self.personal.descriptor["episode"]
+                 and admission == self.personal.descriptor["base"]["admission"])
+                and admission is not None,
                 "Complete the original next intent/track attachment before any execution")
         fields(admission, "policy_snapshot policy_sources completions")
         self.seed()  # Existence alone is not a qualified immutable snapshot.
 
+    @with_reads
     def current(self):
         p = self.personal.plan
         observation, owner = selection(Path(p["checkout"]["path"]), p["checkout"]["remote"], self.personal.repository_id, self.c.transport)
@@ -238,13 +261,37 @@ class PersonalTrack:
             self.original_issue(identity, found[identity])
         return observation
 
-    def accepted(self, identity, *, transport=None, runtime=None):
+    @with_reads
+    def accepted(self, identity, *, transport=None, runtime=None, _history_capture=None, _capture=None, _qualified=None):
         """Read historical facts without reviving an expired execution grant."""
+        if transport is None:
+            from .personal_history_track import READ_TRANSPORT, NativeReadOnly
+            selected = READ_TRANSPORT.get()
+            if selected is not None:
+                transport = NativeReadOnly(selected)
+        if _qualified is not None:
+            # Only an owning operation passes its fully authenticated historical
+            # operands. Current Memory and the mutable exact PR remain fresh.
+            memory, subject, product, receipt, previous = _qualified
+            require(receipt["identity"] == data(identity) and receipt["original"] == data(self.originals[identity]),
+                    "Qualified prerequisite identity changed")
+            item = product.forge.pull({k: receipt["pull"][k] for k in ("id", "number", "repository_id", "url")},
+                revision=receipt["source"], source_ref=receipt["merge_payload"]["head_ref"],
+                base_ref=receipt["merge_payload"]["base_ref"], expected_base=previous["base"]["sha"])
+            require(item is not None and item["merged"] is True and item["state"] == "closed"
+                    and item.get("node_id") == receipt["pull"]["node_id"]
+                    and item.get("merge_commit_sha") == receipt["merge"]
+                    and item.get("merged_by", {}).get("id") == receipt["actor"]
+                    and all(item.get(k) == previous.get(k) for k in ("title", "body")),
+                    "Current exact accepted prerequisite PR changed")
+            require(memory.inspect() == subject, "Accepted prerequisite canonical state changed")
+            return receipt
         path = self.completion_path(identity)
         if not path.exists():
             return None
         receipt = read_private(path)
-        fields(receipt, "schema_version identity directory setup checkpoint accepted_at original packet source tree merge actor pull merge_payload workers run product ci files acceptance")
+        fields(receipt, "schema_version identity directory setup checkpoint accepted_at original packet source tree merge actor pull merge_payload workers run product ci files acceptance" +
+               (" lineage origin" if receipt["schema_version"] == 2 else ""))
         for field in ("checkpoint", "source", "tree", "merge"):
             sha(receipt[field])
         for field in ("run", "product"):
@@ -253,7 +300,8 @@ class PersonalTrack:
         for identifier, hashed in receipt["workers"].items():
             fingerprint(identifier); fingerprint(hashed)
         personal = load_state(Path(receipt["directory"]))
-        require(receipt["schema_version"] == 1 and receipt["identity"] == data(identity)
+        episode = personal.intent["kind"] == "ACCOUNTING_EPISODE"
+        require(receipt["schema_version"] == (2 if episode else 1) and receipt["identity"] == data(identity)
                 and receipt["setup"] == personal.intent["approval"] and receipt["original"] == data(self.originals[identity])
                 and personal.plan["window"]["issued_at"] <= receipt["accepted_at"] < personal.plan["window"]["expires_at"]
                 and receipt["acceptance"] == "OPERATOR_CONFIRMED_CURRENT_PROJECT_ACCEPTANCE",
@@ -265,7 +313,7 @@ class PersonalTrack:
             require((personal.state / "report.json").exists(), "Retain the private receipt for the known canonical report effect")
         git(memory.config.root, "merge-base", "--is-ancestor", receipt["checkpoint"], now["local_head"])
         state, tasks = memory._read_ref(receipt["checkpoint"])
-        task_id = "personal:" + digest({"repository": personal.repository_id, "issue": personal.plan["issue_id"]})
+        task_id = personal.task_id if episode else "personal:" + digest({"repository": personal.repository_id, "issue": personal.plan["issue_id"]})
         task = tasks[key(task_id)]
         require(state["generation"] == now["state"]["generation"] and task["source_revision"] == receipt["source"]
                 and task == now["tasks"][key(task_id)]
@@ -273,8 +321,9 @@ class PersonalTrack:
                 and now["state"]["progress_guard"]["task_epochs"][key(task_id)] == state["progress_guard"]["task_epochs"][key(task_id)]
                 and all(a["status"] == "accepted" for a in task["assignments"].values()),
                 "Historical source, generation or assignments changed/incomplete")
-        require(all(g["active"] is None and g["mode"] == "normal" for g in state["progress_guard"]["requirements"].values()),
-                "Historical M2 has an unfinished/terminal reservation")
+        from .personal_episode import settled_guards
+        if not settled_guards(personal, state):
+            raise PersonalBlocked("PERSONAL_HISTORY_GUARD_UNSETTLED", "Historical M2 is not settled.", subreason="UNSETTLED_GUARD")
         for relative, hashed in receipt["files"].items():
             require(relative.startswith(("evidence/", "product-checks/")) and ".." not in Path(relative).parts
                     and digest(read_private(personal.state / relative)) == hashed, "Historical private check/policy proof missing")
@@ -289,12 +338,13 @@ class PersonalTrack:
             require(personal.directory == self.personal.directory and report is not None
                     and callable(getattr(report, "report_record", None)) and coordination is not None,
                     "Accepted run changed outside the exact REPORT reservation")
-            intent = report.report_record()
+            report.service._check_stop()  # Pre-effect observation has no own POST marker.
+            intent = report.report_record(_observed=now)
             require(intent is not None and intent["view"]["operation"] == "REPORT"
                     and coordination["label"] == "personal-report:" + intent["action"]
                     and coordination["permit"] == intent["reservation"]
                     and coordination["requirement"] == intent["requirement"]
-                    and report.write_authorized() is True, "Unqualified REPORT reservation overlay")
+                    and report._submitted_authorized(_observed=now) is True, "Unqualified REPORT reservation overlay")
             run = {**run, "coordination": None}
         require(digest(run) == receipt["run"] and digest(product_record) == receipt["product"]
                 and product_record["gates"][-1] == receipt["ci"], "Accepted product/source ledger changed")
@@ -351,6 +401,11 @@ class PersonalTrack:
         from .personal_product import PersonalProduct
         from .personal_product_review import ProductCoordinator
         coordinator = ProductCoordinator(personal, None, None, runtime=actual_runtime, clock=self.c.clock)
+        if episode:
+            relation, old_contexts = personal.active(memory=memory, _capture=_history_capture)
+            require(receipt["lineage"] == {k: v for k, v in relation.items() if k != "usage"}
+                    and receipt["origin"] == coordinator.source_origin(historical=True) and not contexts & old_contexts,
+                    "Qualified terminal lineage, retained source or independent successor evidence differs")
         product = PersonalProduct(coordinator, transport=transport)
         require(product.port._value("rev-parse", "HEAD") == receipt["source"]
                 and product.port._value("rev-parse", "HEAD^{tree}") == receipt["tree"]
@@ -361,8 +416,12 @@ class PersonalTrack:
             item = product.pull(allow_merged=True)
             require(observed.status == "PRESENT" and observed.revision == receipt["merge"]
                     and item.get("merged_by", {}).get("id") == receipt["actor"], "Current exact merged result/actor changed")
+        if _capture is not None:
+            require(memory.inspect() == now, "Accepted prerequisite changed during qualification")
+            _capture[identity] = (memory, now, product, receipt, item)
         return receipt
 
+    @with_reads
     def prerequisites(self, observation, *, transport=None, runtimes=None):
         require(complete_snapshot(observation.snapshot), "Native dependency coverage is unknown")
         issues = {i.identity: i for i in observation.snapshot.issues}
@@ -395,7 +454,7 @@ class PersonalTrack:
             done.add(identity)
         return tuple(sorted(done - {selected.identity}))
 
-    def publication_prerequisites(self):
+    def publication_prerequisites(self, *, _capture=None):
         """Fresh receipt facts; the caller separately reobserves ALL raw originals.
 
         The immutable admission graph selects opaque IDs only. It is neither a
@@ -422,15 +481,25 @@ class PersonalTrack:
             require(edges(issues[identity]) == edges(self.originals[identity].issue),
                     "Admission prerequisite identities differ from the frozen original")
             if identity != selected:
-                require(self.accepted(identity) is not None, "Publication requires actual current accepted prerequisite evidence")
+                require(self.accepted(identity, **({"_capture": _capture} if _capture is not None else {})) is not None,
+                        "Publication requires actual current accepted prerequisite evidence")
             pending.extend(native[identity])
             done.add(identity)
         return tuple(sorted(done - {selected}))
 
+    @network_operation("track.completion_preview", service=lambda self, product, **k: product.service)
+    @historical_operation
     def completion_preview(self, product):
+        from .personal_episode import settled_guards
         c = product.c
-        c.live(); c.fresh(); c.workers.fence(); c.original_approval(); c.verify_local_review()
-        product.qualified(); product.verify_review()
+        capture = {} if c.episode else None
+        # Completion has no publication consent to revive. Qualify the owned
+        # checkout and selected native closure, not all future work again.
+        product.publication.checkout()
+        product.local(_history_capture=capture)
+        product.original()
+        latest = product.qualified()
+        product.verify_review(_latest=latest)
         require(read_private(self.personal.state / "prepared-track.json", optional=True) is not None,
                 "Accepted TicketPreparer packet is required")
         result = product.status()
@@ -439,17 +508,25 @@ class PersonalTrack:
         current = c.memory.inspect()
         require(c.record()["coordination"] is None and all(w["phase"] == "ACCOUNTED" for w in c.workers.records())
                 and all(a["status"] == "OBSERVED" for a in current["state"]["execution"]["actions"].values())
-                and all(g["active"] is None and g["mode"] == "normal" for g in current["state"]["progress_guard"]["requirements"].values())
+                and settled_guards(self.personal, current["state"])
                 and not product.service.unconfirmed_contexts(), "Reconcile all original M1/M2/process/effect evidence")
         item = product.pull(allow_merged=True)
         view = {"repository": self.index["repository"], "identity": self.link["identity"],
             "source": c.revision(), "tree": product.port._value("rev-parse", "HEAD^{tree}"),
             "merge": result["revision"], "actor": item["merged_by"]["id"], "pull": result["pull"],
             "original": digest(self.originals[typed(Issue, self.personal.intent["original"]).identity]),
-            "checkpoint": current["local_head"], "ci": product.validation_binding(), "review": product.record()["review"],
+            "checkpoint": current["local_head"], "ci": product.validation_binding(_latest=latest), "review": product.record()["review"],
             "expires_at": self.personal.plan["window"]["expires_at"]}
-        return {"status": "COMPLETION_PROPOSED", "result": view, "approval": "personal-completion:" + digest(view)}
+        if capture is not None:
+            from .personal_history import _reader_binding
+            from .personal_episode import same_observation as same_subject
+            same_subject(capture["subject"], current)
+            view.update(_reader_binding(capture))
+        return {"status": "COMPLETION_PROPOSED", "result": view,
+            "approval": ("personal-completion2:" if c.episode else "personal-completion:") + digest(view)}
 
+    @network_operation("track.complete", service=lambda self, product, **k: product.service)
+    @historical_operation
     def complete(self, product, *, reviewed, authorized, confirm_acceptance):
         require(authorized is True and confirm_acceptance is True, "Separately confirm this original's actual project acceptance")
         identity = typed(Issue, self.personal.intent["original"]).identity
@@ -460,9 +537,18 @@ class PersonalTrack:
             proposal = self.completion_preview(product)
             require(proposal["approval"] == reviewed, "Exact completion evidence changed")
             view, row = proposal["result"], product.record()
+            subject = self.c.memory.inspect()
+            require(subject["local_head"] == view["checkpoint"], "Completion checkpoint advanced")
             intent = next((i for i in reversed(row["intents"]) if i["view"]["operation"] == "MERGE"), None)
             source = intent or next(i for i in row["intents"] if i["view"]["operation"] == "PR")
             v = source["view"]
+            from .personal_read_frame import current_source
+            # Compare the freshly approved completion source, including after
+            # correction/manual merge; retained PR consent is not reauthorized.
+            source_operand = {"view": {"revision": view["source"], "source_tree": view["tree"],
+                "source_ref": "refs/heads/" + self.personal.plan["feature"]["branch"],
+                "administration": digest(self.c.record()["feature_administration"])},
+                "binding": product.transport.credential_binding}
             payload = {"pull": {k: row["pull"][k] for k in ("id", "number", "repository_id", "url")},
                 "revision": view["source"], "head_ref": product.target.ref, "base_ref": v["facts"]["base_ref"],
                 "expected_base": v["facts"]["base_sha"], "source_tree": view["tree"],
@@ -472,16 +558,34 @@ class PersonalTrack:
                 for file in (self.personal.state / directory).glob("*.json"):
                     files[directory + "/" + file.name] = digest(read_private(file))
             receipt = {"schema_version": 1, "identity": data(identity), "directory": str(self.personal.directory),
-                "setup": self.personal.intent["approval"], "checkpoint": view["checkpoint"], "accepted_at": self.c.clock(),
+                "setup": self.personal.intent["approval"], "checkpoint": view["checkpoint"], "accepted_at": None,
                 "original": data(self.originals[identity]), "packet": read_private(self.personal.state / "prepared-track.json")["packet"],
                 "source": view["source"], "tree": view["tree"], "merge": view["merge"], "actor": view["actor"], "pull": row["pull"],
                 "merge_payload": payload, "workers": {w["request"]["id"]: digest(w) for w in self.c.workers.records()},
                 "run": digest(self.c.record()), "product": digest(row), "ci": row["gates"][-1],
                 "files": files, "acceptance": "OPERATOR_CONFIRMED_CURRENT_PROJECT_ACCEPTANCE"}
-            immutable(path, receipt)
+            if self.c.episode:
+                from .accounting_policy import entry
+                receipt.update(schema_version=2, lineage={k: v for k, v in entry(subject["state"]).items() if k != "usage"},
+                               origin=self.c.source_origin())
+            from .personal_episode import same_observation as same_subject
+            with locked(self.c.memory.control):
+                current_source(product, source_operand, product=True)  # One acceptance handoff, inside the canonical lock.
+                if self.c.episode:
+                    self.c.episode_fence()
+                same_subject(subject, self.c.memory.inspect())
+                accepted_at = self.c.clock()
+                require(self.personal.plan["window"]["issued_at"] <= accepted_at < view["expires_at"],
+                        "Completion consent expired before recording acceptance")
+                receipt["accepted_at"] = accepted_at
+                immutable(path, receipt)
             return self.accepted(identity, transport=product.transport, runtime=product.c.runtime)
 
-    def status(self, *, transport=None, runtimes=None):
+    @read_operation("track.status", transport=lambda self, **k: k.get("transport") or self.c.transport)
+    @with_reads
+    @historical_operation
+    def status(self, *, transport=None, runtimes=None, _history_capture=None):
+        from .personal_episode import settled_guards
         from .discovery import DependencyPlanner, review_subject
         from .discovery_types import Identity, ReadinessReview, Status
         from .guard_types import Attestation
@@ -491,13 +595,16 @@ class PersonalTrack:
         active = []
         for link in links:
             identity = typed(Identity, link["identity"])
-            accepted = self.accepted(identity, transport=transport, runtime=(runtimes or {}).get(identity))
+            qualified = {}
+            accepted = self.accepted(identity, transport=transport, runtime=(runtimes or {}).get(identity),
+                _capture=qualified,
+                **({"_history_capture": _history_capture} if _history_capture is not None
+                   and link["identity"] == self.link["identity"] else {}))
             personal = load_state(Path(link["directory"]))
-            state = personal.memory().inspect()
+            state = qualified[identity][1] if accepted is not None else personal.memory().inspect()
             require(state["health"] == "SYNCED", "Track M1 history is not synchronized")
             require(all(a["status"] == "OBSERVED" for a in state["state"]["execution"]["actions"].values())
-                    and all(g["active"] is None and g["mode"] == "normal"
-                        for g in state["state"]["progress_guard"]["requirements"].values())
+                    and settled_guards(personal, state["state"])
                     and not list(personal.memory().control.glob("network-stop-*.json")),
                     "A previous window has an unfinished/uncertain effect or reservation")
             if accepted is not None:
@@ -571,16 +678,28 @@ class PersonalTrack:
             "next_admission": "NOT_AUTHORIZED", "native_observed_at": snapshot.observed_at,
             "genuine_runtime_qualification": "NOTRUN"}, observation, completed
 
+    def next_binding(self, capture, view=None):
+        if not self.c.episode:
+            return {}
+        from .personal_history import _reader_binding
+        require(capture is not None and "historical_basis" in capture, "Accepted accounting predecessor proof required")
+        binding = _reader_binding(capture)
+        if view is not None:
+            require(view["schema_version"] == 2 and all(view.get(k) == v for k, v in binding.items()),
+                    "Legacy or changed NEXT reader; observe only")
+        return binding
+
     def next_record(self):
         row = read_private(self.personal.state / "next-intent.json", optional=True)
         if row is not None:
             fields(row, "view approval setup")
             view = row["view"]
-            fields(view, "schema_version index parent parent_checkpoint parent_generation completions plan snapshot original governance")
+            fields(view, "schema_version index parent parent_checkpoint parent_generation completions plan snapshot original governance" +
+                   (" historical_basis historical_engine reader_engine" if view["schema_version"] == 2 else ""))
             snapshot = typed(Snapshot, view["snapshot"])
             binding = {**view, "snapshot": data(replace(snapshot, observed_at=0))}
-            require(type(view["schema_version"]) is int and view["schema_version"] == 1
-                    and row["approval"] == "personal-next:" + digest(binding) and row["setup"] == approval(view["plan"])
+            require(type(view["schema_version"]) is int and view["schema_version"] in ((1, 2) if self.c.episode else (1,))
+                    and row["approval"] == ("personal-next2:" if view["schema_version"] == 2 else "personal-next:") + digest(binding) and row["setup"] == approval(view["plan"])
                     and view["index"] == self.link["index"] and view["parent"] == self.link["identity"]
                     and complete_snapshot(snapshot), "Original next-intent schema/consent/observation changed")
             sha(view["parent_checkpoint"])
@@ -615,7 +734,10 @@ class PersonalTrack:
             return child, True
         return child, False
 
-    def next_preview(self, product, choices, *, approved=None):
+    @network_operation("track.next_preview", service=lambda self, product, choices, **k: product.service)
+    @with_reads
+    @historical_operation
+    def next_preview(self, product, choices, *, approved=None, _observation=None):
         from .git import SHA
         require(type(choices) is PersonalChoices, "Typed explicit next choices required")
         retained = self.next_record()
@@ -637,14 +759,20 @@ class PersonalTrack:
                     "snapshot": retained["view"]["snapshot"], "completions": retained["view"]["completions"],
                     "recovery": "Reconnect to the original next directory/window; no new authority or budget."},
                     "approval": None, "setup_approval": None}
+            require(not self.c.episode or retained["view"]["schema_version"] == 2, "Legacy NEXT is observation-only")
             require(self.c.clock() < plan["window"]["expires_at"], "The original next window expired; never renew this intent")
-            _, observation, completed = self.status(transport=product.transport)
+            capture = {} if self.c.episode else None
+            _, observation, completed = self.status(transport=product.transport, _history_capture=capture)
+            self.next_binding(capture, retained["view"])
             require(same_observation(observation.snapshot, typed(Snapshot, retained["view"]["snapshot"]))
                     and {digest(i): digest(r) for i, r in completed.items()} == retained["view"]["completions"],
                     "Retained next intent no longer matches current native/acceptance evidence")
             return {"status": "NEXT_PROPOSED_RETAINED", "result": retained["view"],
                 "approval": retained["approval"], "setup_approval": retained["setup"]}
-        state, observation, completed = self.status(transport=product.transport)
+        capture = {} if self.c.episode else None
+        state, observation, completed = self.status(transport=product.transport, _history_capture=capture)
+        if _observation is not None:
+            _observation.append((state, observation, completed, capture))
         require(state["status"] == "NEXT_SCOPE_REQUIRED" and state["next_issue"] == choices.issue,
                 "Exactly one independently eligible original needs a new explicit scope/window")
         p = self.personal.plan
@@ -667,24 +795,29 @@ class PersonalTrack:
         require(original == data(next(o.issue for o in self.originals.values() if o.issue.number == choices.issue)),
                 "Next original version/scope changed")
         checkpoint = self.c.memory.inspect()
-        view = {"schema_version": 1, "index": self.link["index"], "parent": self.link["identity"],
+        view = {"schema_version": 2 if self.c.episode else 1, "index": self.link["index"], "parent": self.link["identity"],
             "parent_checkpoint": checkpoint["local_head"], "parent_generation": checkpoint["state"]["generation"],
             "completions": {digest(i): digest(r) for i, r in completed.items()}, "plan": plan,
             "snapshot": data(observation.snapshot), "original": original, "governance": docs}
         # Actual observation time is retained, but it grants no scope/authority;
         # repeating the same complete GET contents cannot change the consent.
+        view.update(self.next_binding(capture))
         binding = {**view, "snapshot": data(replace(observation.snapshot, observed_at=0))}
         return {"status": "NEXT_PROPOSED", "result": view,
-            "approval": "personal-next:" + digest(binding), "setup_approval": approval(plan)}
+            "approval": ("personal-next2:" if self.c.episode else "personal-next:") + digest(binding), "setup_approval": approval(plan)}
 
+    @network_operation("track.next", service=lambda self, product, choices, **k: product.service)
+    @with_reads
+    @historical_operation
     def next(self, product, choices, *, reviewed, setup_approval, authorized):
         require(authorized is True and type(choices) is PersonalChoices,
                 "Separately approve exactly this new original task, local setup and finite scope/window")
         path = self.personal.state / "next-intent.json"
         with locked(self.root):
+            admitted = []
             retained = self.next_record()
             if retained is None:
-                proposal = self.next_preview(product, choices, approved=setup_approval)
+                proposal = self.next_preview(product, choices, approved=setup_approval, _observation=admitted)
                 require(proposal["approval"] == reviewed, "Next source, original, policy, completion or window changed")
                 retained = {"view": proposal["result"], "approval": reviewed, "setup": setup_approval}
                 immutable(path, retained)  # before releasing old ownership or claiming another Issue
@@ -692,8 +825,19 @@ class PersonalTrack:
                     and retained["view"]["plan"]["effects"]["directory"] == str(choices.directory),
                     "Resume only the original next intent; no replacement window")
             view = retained["view"]
-            self.successor(view)  # incomplete attachment cannot hide execution
-            current, observation, completed = self.status(transport=product.transport)
+            child, complete = self.successor(view)
+            if complete:
+                return {"status": "NEXT_ALREADY_ENROLLED", "issue": child.plan["issue"],
+                    "directory": str(child.directory), "source": child.plan["checkout"]["head"],
+                    "scope": child.plan["paths"], "window": child.plan["window"],
+                    "execution": "NOT_REPEATED", "runtime_qualification": "NOTRUN"}
+            require(not self.c.episode or view["schema_version"] == 2, "Legacy NEXT is observation-only")
+            if admitted:
+                current, observation, completed, capture = admitted[0]
+            else:
+                capture = {} if self.c.episode else None
+                current, observation, completed = self.status(transport=product.transport, _history_capture=capture)
+            self.next_binding(capture, view)
             require(current["next_issue"] in (None, choices.issue)
                     and {digest(i): digest(r) for i, r in completed.items()} == view["completions"]
                     and same_observation(observation.snapshot, typed(Snapshot, view["snapshot"])),
@@ -711,6 +855,12 @@ class PersonalTrack:
             plan = view["plan"]
             with product.service.bounded():
                 require(product.facts()["base_sha"] == plan["checkout"]["head"], "Current native base changed after previous owner release")
+            if self.c.episode:
+                # Handoff is a permitted canonical transition, not permission
+                # to reinterpret the historical reader or next intent.
+                fresh = {}
+                self.personal.active(memory=self.c.memory, _capture=fresh)
+                self.next_binding(fresh, view)
             snapshot_reference = content(self.root / "observations", view["snapshot"])
             link = {"schema_version": 1, "root": str(self.root), "index": self.link["index"],
                 "identity": view["original"]["identity"], "directory": plan["effects"]["directory"], "setup": setup_approval,

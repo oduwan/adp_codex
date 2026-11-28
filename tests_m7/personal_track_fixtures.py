@@ -1,5 +1,6 @@
 """Only owned disposable Git + synthetic native API/worker evidence, NOT M8."""
 import copy
+from dataclasses import replace
 import json
 from pathlib import Path
 import re
@@ -111,6 +112,10 @@ class TrackFixture(ProductFixture):
         if purpose == "develop":
             (Path(request.workspace) / "product").write_text("original ticket " + str(context["original"]["number"]) + " implemented\n")
         result = WorkerResult(Outcome.PASS, purpose != "develop", () if purpose == "develop" else (purpose,), "Synthetic offline fixture verdict")
+        if purpose == "develop":
+            result = replace(result, summary=json.dumps({"change": "Synthetic in-scope fixture change",
+                "checks": [{"command": "fixture-local-check", "outcome": "PASS", "result": "Synthetic validation; not real Codex or CI"}],
+                "limitations": "Patched runtime fixture only"}))
         observed = RuntimeObservation(request.id, self.runtime.host, RuntimeStatus.COMPLETED, "synthetic-context:" + request.id,
             result, "runtime:synthetic:" + request.id, 1, digest(request), 1, 100, True)
         self.observed[request.id] = observed

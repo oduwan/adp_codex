@@ -1,5 +1,6 @@
 """Product-comment identity, least authority and actual-component recovery."""
 import copy
+from contextlib import nullcontext
 from dataclasses import replace
 from types import SimpleNamespace
 import unittest
@@ -52,7 +53,7 @@ class PersonalReportReceiptTests(unittest.TestCase):
             "permissions": {"pull": True, "push": True, "admin": True}}
         f.personal = SimpleNamespace(repository_id="17", plan={"issue": 2, "owner": owner})
         f.target = SimpleNamespace(api="/repos/personal/project", node_id="R_opaque")
-        f.service = SimpleNamespace(unconfirmed_contexts=lambda: (), request=lambda *args: metadata)
+        f.service = SimpleNamespace(bounded=lambda **kw: nullcontext(), unconfirmed_contexts=lambda: (), request=lambda *args: metadata)
         f.read = SimpleNamespace(get=lambda path: Response(200, {"id": 91} if path == "/user" else metadata))
         row = {"action": "a" * 64, "view": {"body": "Implemented the original behavior.", "revision": "b" * 40}, "comment": None}
         comment = self.comment()
@@ -85,14 +86,17 @@ class PersonalReportReceiptTests(unittest.TestCase):
                 f.observed_report(row)
 
     def test_report_transport_cannot_create_pr_merge_upload_or_expand_request_bounds(self):
-        validate_report("POST", "/repos/personal/project/issues/2/comments", {"body": "Exact outcome"}, 5)
+        from adp.runtime_limits import PARAMETERS
+        request = PARAMETERS["request_timeout_seconds"]
+        for seconds in (request.minimum, request.default, request.maximum):
+            validate_report("POST", "/repos/personal/project/issues/2/comments", {"body": "Exact outcome"}, seconds)
         for method, path, body, seconds in (
             ("POST", "/repos/personal/project/pulls", {"body": "x"}, 5),
             ("PUT", "/repos/personal/project/pulls/10/merge", {"sha": "a" * 40, "merge_method": "merge"}, 5),
             ("POST", "/repos/personal/project/git/blobs", {"content": "x", "encoding": "utf-8"}, 5),
             ("PATCH", "/repos/personal/project/issues/2", {"state": "closed"}, 5),
             ("POST", "/graphql", {"query": "mutation { closeIssue }", "variables": {}}, 5),
-            ("POST", "/repos/personal/project/issues/2/comments", {"body": "x"}, 6)):
+            ("POST", "/repos/personal/project/issues/2/comments", {"body": "x"}, request.maximum + 1)):
             with self.subTest(method=method, path=path), self.assertRaises((ADPError, ValueError, TypeError)):
                 validate_report(method, path, body, seconds)
 

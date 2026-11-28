@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from copy import deepcopy
 
 from .discovery_schema import digest, typed
 from .discovery_types import Issue
@@ -19,6 +20,7 @@ from .policy_types import (Operation, Plan, ProjectCheck, ProjectQualifications,
 from .project_validation import observation_subject, policy_subject
 from .project_validation_types import EvidencePolicy, ObservationQuery, ProjectObservation
 from .schema import require, fields, key
+from .runtime_limits import current_budget
 
 
 def original_with_own_relation(original, observed, identity, repository):
@@ -48,7 +50,8 @@ class ProductCoordinator(PersonalCoordinator):
         row = product.record()
         delta = original_with_own_relation(self.personal.intent["original"], issue, row["pull"], self.personal.plan["repository"]["name"])
         with product.service.bounded():
-            remote = {r.name: r.revision for r in product.service.refs()}.get(product.target.ref)
+            from .personal_rules import inspect_ref
+            remote = inspect_ref(product.service, writable=False)
             actions = product.journal.inspect()["state"]["execution"]["actions"].values()
             require(any(a["task_key"] == key(self.task_id) and a["operation"] == Operation.PUSH
                         and a["status"] == "OBSERVED" and a["revision"] == remote for a in actions),
@@ -58,7 +61,7 @@ class ProductCoordinator(PersonalCoordinator):
         return True
 
     def verify_local_review(self):
-        requirement = self.requirement("develop")
+        requirement = self.review_requirement()
         state, task, item = self.guard._snapshot(self.task_id, requirement)
         if item["active"] is None:
             return super().verify_local_review()
@@ -85,7 +88,7 @@ class ProductCoordinator(PersonalCoordinator):
 
     def reserved_code_review(self, permit, *, recovering=False):
         run = self.record()
-        requirement = self.requirement("develop")
+        requirement = self.review_requirement()
         state, task, item = self.guard._snapshot(self.task_id, requirement)
         self.guard._active(state, task, item, permit.token)
         self.check_administration(run)
@@ -152,83 +155,10 @@ class ProductCoordinator(PersonalCoordinator):
         # delivery; a SUBMITTED request may never be dispatched again.
         return self.workers.execute("product", context, self.personal.feature)
 
-    def context(self, purpose):
-        context = super().context(purpose)
-        product = getattr(self, "product", None)
-        if purpose == "develop" and product is not None and product.record() is not None and product.record()["correction"] is not None:
-            context["compound_correction"] = "One Developer result, scoped staging and one local commit under the original deadline; conclude before source transition."
-        return context
-
-    @staticmethod
-    def compound(row):
-        return row["purpose"] == "develop" and "compound_correction" in row["context"]
-
-    def worker_action(self, row, action):
-        if self.compound(row):
-            require(row["context"] == self.context("develop"), "Original prospective correction scope changed")
-            return replace(action, exit_criteria=row["context"]["compound_correction"])
-        return action
-
     def authorize_worker(self, row):
         if row["purpose"] == "product":
             require(row["context"] == self.product.review_context(), "Product review context/CI changed before dispatch")
         super().authorize_worker(row)
-        if self.compound(row):
-            current = self.record()
-            state, task, item = self.guard._snapshot(self.task_id, row["requirement"])
-            active = self.guard._active(state, task, item, row["permit"]["token"])
-            require(active["action"]["exit_criteria"] == row["context"]["compound_correction"], "Compound scope was not reserved before dispatch")
-            coordination = {"label": "commit:" + row["request"]["id"], "requirement": row["requirement"],
-                "permit": row["permit"], "action": active["action"], "context": row["guard_context"], "sequence": item["sequence"],
-                "observation": None, "next_phase": None, "check_state": None}
-            require(current["coordination"] in (None, coordination), "Another original operation is reserved")
-            current["coordination"] = coordination
-            self.save(current)  # Before SUBMITTED/dispatch, not retroactive coalescing.
-
-    def defer_developer_guard(self, row, observed):
-        if not self.compound(row) or observed.result.outcome != "PASS":
-            return False
-        coordination = self.record()["coordination"]
-        require(coordination is not None and coordination["permit"] == row["permit"]
-                and coordination["label"] == "commit:" + row["request"]["id"], "Durable original compound accounting missing")
-        state, task, item = self.guard._snapshot(self.task_id, row["requirement"])
-        active = self.guard._active(state, task, item, row["permit"]["token"])
-        require(self.clock() < active["deadline"] and active["action"]["exit_criteria"] == row["context"]["compound_correction"], "Compound deadline/definition changed")
-        return True
-
-    def worker_accounted(self, row):
-        if self.compound(row) and row["observation"]["result"]["outcome"] != "PASS":
-            current = self.record()
-            require(current["coordination"] is not None and current["coordination"]["permit"] == row["permit"], "Original failed correction missing")
-            current["coordination"] = None
-            self.save(current)
-
-    def _run(self):
-        current = self.record()
-        if current is not None and current["phase"] == "DEVELOP" and current["coordination"] is not None:
-            worker = self.worker(current["coordination"]["label"].removeprefix("commit:"))
-            require(self.compound(worker), "Only the exact retained compound correction can resume")
-            worker = self.workers.execute("develop", worker["context"], self.personal.feature)
-            current = self.record()
-            current.update(developer=worker["request"]["id"], phase="STAGE" if worker["observation"]["result"]["outcome"] == "PASS" else "DEVELOP")
-            self.save(current)
-        return super()._run()
-
-    def conclude(self, permit, reference, outcome="PASS", *, next_phase=None):
-        current = self.record()
-        coordination = current["coordination"]
-        if coordination is not None and coordination["label"].startswith("commit:") and coordination["observation"] is None:
-            worker = self.worker(coordination["label"].removeprefix("commit:"))
-            if self.compound(worker):
-                actual = self.workers.actual(worker, accounted=True)
-                state, task, item = self.guard._snapshot(self.task_id, worker["requirement"])
-                active = self.guard._active(state, task, item, permit.token)
-                elapsed = max(actual.elapsed_seconds, self.clock() - active["started"])
-                coordination["observation"] = data(Observation(outcome, (reference,), tuple(item["unresolved"]),
-                    elapsed_seconds=elapsed, samples=actual.samples, payload_bytes=actual.payload_bytes))
-                coordination["next_phase"] = next_phase
-                self.save(current)
-        return super().conclude(permit, reference, outcome, next_phase=next_phase)
 
     def check_stage(self):
         product = getattr(self, "product", None)
@@ -247,13 +177,21 @@ class ProductCoordinator(PersonalCoordinator):
 
 
 class ProductAuthority(PersonalAuthority):
-    def _validate(self, body):
+    def __init__(self, coordinator, *, qualification=None):
+        super().__init__(coordinator)
+        # Invocation-local authenticated facts, not a positive decision. The
+        # default authority (including after restart) always authenticates anew.
+        self.qualification = deepcopy(qualification)
+        self.operation = current_budget() if qualification is not None else None
+
+    def _validate(self, body, *, _observed=None, _history_capture=None):
         fields(body, "schema_version purpose subject kind payload principal approval generation expires_at")
         require(type(body["schema_version"]) is int and body["schema_version"] == 1, "Unsupported personal authority")
         kind = body.get("kind", "")
         if kind == "progress" and self.c.worker(body["payload"]["request_id"])["purpose"] == "product":
             row = self.c.worker(body["payload"]["request_id"])
-            self.c.live()
+            if _observed is None:
+                self.c.live()
             self.c.workers.actual(row, approval=True)
             require(row["context"] == self.c.product.review_context(), "Product acceptance review/CI is stale")
             measured = typed(Observation, body["payload"]["observation"])
@@ -272,11 +210,11 @@ class ProductAuthority(PersonalAuthority):
                         and item["approval"]["subject"] == body["subject"], "Current canonical product approval missing")
             return
         if not kind.startswith("product-"):
-            return super()._validate(body)
-        self.c.live()
+            return super()._validate(body, _observed=_observed, _history_capture=_history_capture)
+        observed = self.c.live() if _observed is None else _observed
         flow = self.c.product
         require(body["approval"] == self.c.personal.intent["approval"]
-                and body["generation"] == self.c.memory.inspect()["state"]["generation"]
+                and body["generation"] == observed["state"]["generation"]
                 and self.c.clock() < body["expires_at"] == self.c.personal.plan["window"]["expires_at"], "Expired product authority")
         purpose, subject, p = (body[k] for k in ("purpose", "subject", "payload"))
         kind = kind.removeprefix("product-")
@@ -302,7 +240,7 @@ class ProductAuthority(PersonalAuthority):
         elif kind == "operation":
             plan = typed(Plan, p["plan"])
             qualifications = typed(ProjectQualifications if "required" in p["qualifications"] else Qualifications, p["qualifications"])
-            flow.live()
+            flow.live(_observed=observed, _history_capture=_history_capture)
             require(plan.policy_effect == "ALLOW" and plan.task.repository_id == self.c.personal.repository_id
                     and plan.task.task_id == self.c.task_id and plan.task.revision == self.c.revision()
                     and plan.task.source_ref == flow.target.ref and plan.request.operation in (flow.active["view"]["operation"], Operation.VALIDATE)
@@ -321,7 +259,7 @@ class ProductAuthority(PersonalAuthority):
                         and plan.payload.target == v["target"] == self.c.personal.intent["original"]["url"]
                         and plan.payload.body == v["body"], "Separate exact target/body REPORT authority required")
         elif kind == "effect":
-            flow.live()
+            flow.live(_observed=observed, _history_capture=_history_capture)
             row = flow.journal.inspect()["state"]["execution"]["actions"].get(p["id"])
             require(purpose == "execution/effect" and p["id"] == flow.active["action"] and row is not None
                     and row["status"] == "SUBMITTED" and row["payload"] == p["payload"]
@@ -331,32 +269,51 @@ class ProductAuthority(PersonalAuthority):
             require(purpose == "project-validation/policy" and policy.evidence is None
                     and policy.checks == flow.checks() and subject == policy_subject(plan, policy), "Actual prescribed check policy differs")
         elif kind == "native":
-            query, observed = typed(ObservationQuery, p["query"]), typed(ProjectObservation, p["observation"])
-            require(purpose == "project-validation/observation" and observed.evidence is None
+            query, native = typed(ObservationQuery, p["query"]), typed(ProjectObservation, p["observation"])
+            require(purpose == "project-validation/observation" and native.evidence is None
                     and query.request.repository_id == self.c.personal.repository_id and query.request.revision == self.c.revision()
-                    and query.request.pull == flow.ci_identity() and subject == observation_subject(query, observed)
-                    and 0 <= self.c.clock() - observed.observed_at <= 300, "Native CI observation identity/freshness differs")
+                    and query.request.pull == flow.ci_identity(_observed=observed) and subject == observation_subject(query, native)
+                    and 0 <= self.c.clock() - native.observed_at <= 300, "Native CI observation identity/freshness differs")
         elif kind in ("project-check", "project-policy", "review"):
             plan = typed(Plan, p["plan"])
+            latest = None
+            if self.qualification is not None:
+                require(self.operation is not None and current_budget() is self.operation,
+                        "Stage qualification cannot cross an operation or restart")
+                self.operation.check()
+                view, latest, worker = self.qualification
+                row = flow.record(_observed=observed)
+                require(view == digest(flow.active["view"]) and row["gates"][-1] == latest
+                        and flow.active["view"]["issued_at"] <= self.c.clock() < flow.active["view"]["expires_at"]
+                        and row["review"] == worker["request"]["id"]
+                        and self.c.worker(row["review"]) == worker
+                        and worker["request"]["revision"] == self.c.revision()
+                        and 0 <= self.c.clock() - latest["observed_at"] <= 300,
+                        "Owning-stage review/check evidence changed or expired")
+                from .guard_schema import requirement_id
+                self.c.allowed(requirement_id(flow.ci_specification.contract, flow.ci_specification.gate), _observed=observed)
+                self.c.workers.accounted(worker, observed)
             if kind == "project-check":
                 value = typed(ProjectCheck, p["value"])
                 require(purpose == "policy/project-check" and subject == PolicyProvider(None).project_check_subject(plan, value)
-                        and flow.check_matches(value), "Project check lacks actual current #21 provenance")
+                        and flow.check_matches(value, _latest=latest), "Project check lacks actual current #21 provenance")
             elif kind == "project-policy":
                 value = typed(ProjectQualifications, p["value"])
-                flow.qualified()
+                if latest is None:
+                    flow.qualified()
                 require(purpose == "policy/project-validation" and subject == PolicyProvider(None).project_policy_subject(plan, value)
                         and value.required == tuple((c.name, str(c.phase)) for c in flow.checks()), "Project phase policy differs")
             else:
                 value = typed(Review, p["value"])
-                flow.verify_review()
+                if latest is None:
+                    flow.verify_review()
                 reviewers = flow.review_principals()
                 require(purpose == "policy/review" and value.reviewer in reviewers and value.approved is True
                         and value.revision == self.c.revision() and value.observed_at <= self.c.clock() < value.expires_at
                         and body["principal"] == value.reviewer and subject == PolicyProvider(None).review_subject(plan, value), "Independent exact-SHA review differs")
         elif kind == "report-delegation":
             value, plan = typed(DelegationProfile, p["profile"]), typed(Plan, p["plan"])
-            v = flow.live()
+            v = flow.live(_observed=observed, _history_capture=_history_capture)
             require(plan.request.operation == Operation.REPORT and v["operation"] == "REPORT"
                     and plan.task.repository_id == self.c.personal.repository_id and plan.task.task_id == self.c.task_id
                     and plan.task.revision == self.c.revision() and plan.task.source_ref == flow.target.ref

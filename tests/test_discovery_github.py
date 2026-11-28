@@ -18,6 +18,11 @@ from discovery_fixtures import Authority, assessed, discover, issue, pull, respo
 
 
 class GitHubDiscoveryTests(unittest.TestCase):
+    def test_foreign_issue_does_not_poison_later_valid_inventory_number(self):
+        snapshot, _ = discover([issue(1, name="foreign/product"), issue(1)])
+        self.assertEqual([i.number for i in snapshot.issues], [1])
+        self.assertTrue(any(c.status == "PARTIAL" for c in snapshot.coverage))
+
     def test_malformed_timeline_entries_are_incomplete_without_losing_the_issue(self):
         path = "/repos/alpha/product/issues/1/timeline?per_page=100&page=1"
         for event in (None, {"event": "cross-referenced", "source": {"issue": None}}):

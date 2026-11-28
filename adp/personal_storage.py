@@ -29,11 +29,27 @@ ROLE_LIMITS = {"maximum_tasks": 1, "maximum_rounds": 1, "maximum_parallel": 1,
                "code_reviewers": 2, "forensic_reviewers": 2,
                "maximum_check_observations": 3, "worker_seconds": 300}
 
+# Public wording is selected by known domain facts, never exception text.
+REFUSALS = {
+    "LEGACY_PROTOCOL": "Preserve the original window and receipts. Changed development instructions require separate prospective consent; do not replay or upgrade old grants.",
+    "ACTIVE_RESERVATION": "Reconcile the original active reservation and confirmed stop before new work; do not allocate a replacement.",
+    "EXPIRED_RESERVATION": "The original reservation is overdue. Preserve its deadline and stop evidence for supported accounting; do not backdate, renew or redispatch it.",
+    "FORENSIC_REQUIRED": "Independent bounded forensic disposition is required. Preserve the failed evaluations and original counters; do not retry development.",
+    "STOP_UNSAFE": "The original safety stop is terminal. Preserve its evidence and obtain the supported operator disposition; do not reset budgets.",
+    "OPERATOR_DECISION_REQUIRED": "The guard requires an explicit operator decision. Preserve its original disposition, evidence and finite budgets; do not reset or retry.",
+    "ACTIVE_CAMPAIGN": "Finish or reconcile the original finite diagnostic campaign before ordinary development; preserve all outcomes and limits.",
+    "UNSETTLED_GUARD": "Historical acceptance has an unfinished or terminal guard. Observe its original disposition; do not infer accepted completion or advance dependencies.",
+    "ROLE_BUDGET_EXHAUSTED": "The original finite role allowance is consumed. Preserve all requests and results; do not allocate a replacement or renew the window.",
+    "REVIEW_PURPOSE_MISMATCH": "The stopped Reviewer did not approve this exact code-review purpose. Preserve the original result and accounting; do not advance checks or allocate a replacement.",
+}
+
 
 class PersonalBlocked(ADPError):
-    def __init__(self, code, action, *, status="BLOCKED"):
-        super().__init__(action)
+    def __init__(self, code, action, *, status="BLOCKED", subreason=None):
+        require(subreason is None or subreason in REFUSALS, "Unsupported public refusal detail")
+        super().__init__(REFUSALS[subreason] if subreason is not None else action)
         self.reason, self.status = code, status
+        self.subreason = subreason
 
 
 def disjoint(a: Path, b: Path) -> bool:
@@ -238,6 +254,9 @@ class PersonalState:
 
 def load_state(directory: Path) -> PersonalState:
     private_directory(directory)
+    if (directory / "episode.json").exists():
+        from .personal_episode import load_episode
+        return load_episode(directory)
     row = read_private(directory / INTENT)
     fields(row, "schema_version kind phase plan original governance approval")
     require(type(row["schema_version"]) is int and row["schema_version"] == 1

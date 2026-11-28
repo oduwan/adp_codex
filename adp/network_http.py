@@ -25,6 +25,7 @@ from .execution_ports import UnconfirmedValidation, supervised_validation, valid
 from .network_http_child import (MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, MAX_RESPONSE_BYTES,
     UPDATE_REFS_MUTATION, validate_request)
 from .schema import decode, fields, require
+from .runtime_limits import measured, request_allowance, settings_for
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,7 @@ def _environment() -> dict[str, str]:
     return {name: os.environ[name] for name in ("LANG", "LC_ALL") if name in os.environ}
 
 
+@measured("network.supervisor_probe")
 def _supported() -> bool:
     if sys.platform != "linux" or not Path("/proc/self/stat").is_file():
         return False
@@ -163,7 +165,7 @@ class GitHubHTTPTransport:
     installation issuance restricted to exactly one immutable repository and
     narrow permissions. It cannot be replaced or refreshed in this instance.
     DNS/TLS/response reads happen only in the supervised child. Runtime budget is
-    at most five seconds plus bounded cancellation/reaping, with no retry. A lost
+    the validated request allowance plus bounded cancellation/reaping, with no retry. A lost
     stop receipt is UnconfirmedValidation and retains private forensic evidence.
     """
     permissions = REQUIRED_PERMISSIONS
@@ -171,7 +173,8 @@ class GitHubHTTPTransport:
     child = "network_http_child.py"
 
     def __init__(self, token: ScopedInstallationToken, *, authority: TokenScopeAuthority,
-                 clock: Callable[[], int] | None = None):
+                 clock: Callable[[], int] | None = None, runtime_settings=None):
+        self.runtime_settings = settings_for(settings=runtime_settings)
         self._credential = token
         self._authority = authority
         self._clock = clock or (lambda: int(time.time()))
@@ -211,7 +214,10 @@ class GitHubHTTPTransport:
         self._binding = expected
 
     def request(self, method: str, path: str, body: dict | None, *, seconds: float) -> Response:
+        started = time.monotonic()
         try:
+            request_allowance(seconds)
+            seconds = min(seconds, self.runtime_settings.limits.request_timeout_seconds)
             raw_body = self.validator(method, path, body, seconds)
         except (TypeError, ValueError, RecursionError, UnicodeError):
             raise NetworkTransportError("UNSUPPORTED_ATOMIC_REF: invalid bounded HTTP request") from None
@@ -227,13 +233,17 @@ class GitHubHTTPTransport:
                         "CAS repository differs from scoped installation identity")
             # Clone input through JSON so a concurrent caller cannot change the
             # request after validation. No token enters argv, environment or log.
-            payload = json.dumps({"method": method, "path": path, "body": checked_body,
-                "seconds": seconds, "token": value.token}, separators=(",", ":"), allow_nan=False).encode()
-            require(len(payload) <= MAX_INPUT_BYTES, "Private request exceeds bound")
         except Exception:
             raise NetworkTransportError("UNSUPPORTED_ATOMIC_REF: operator credential unavailable") from None
         try:
-            output = supervised_output(payload, seconds, child=self.child)
+            remaining = seconds - (time.monotonic() - started)
+            require(remaining > 0, "Request allowance exhausted before supervised launch")
+            # The child socket and the whole-process supervisor share the same
+            # remaining allowance; auth/probe time never renews the request.
+            payload = json.dumps({"method": method, "path": path, "body": checked_body,
+                "seconds": remaining, "token": value.token}, separators=(",", ":"), allow_nan=False).encode()
+            require(len(payload) <= MAX_INPUT_BYTES, "Private request exceeds bound")
+            output = supervised_output(payload, remaining, child=self.child)
             reply = decode(output, MAX_OUTPUT_BYTES)
             fields(reply, "status body_base64")
             require(type(reply["status"]) is int and 100 <= reply["status"] <= 599
@@ -248,12 +258,14 @@ class GitHubHTTPTransport:
             raise NetworkTransportError("UNKNOWN_NETWORK_OUTCOME: trusted HTTP response unavailable") from None
 
 
+@measured("network.supervised_execution", execution=True)
 def supervised_output(payload: bytes, seconds: float, *, child="network_http_child.py", environment=None) -> bytes:
     """Shared bounded private pipe/stop primitive; supplies no credential authority.
 
     Each trusted child bounds its own output; the caller validates its closed
     response grammar. Signed credential verification stays in the original port.
     """
+    request_allowance(seconds)
     if environment is not None:
         require(type(environment) is dict and set(environment) <= {"LANG", "LC_ALL", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}
                 and all(type(v) is str and len(v) <= 4096 and "\0" not in v for v in environment.values()),

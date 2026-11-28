@@ -139,3 +139,10 @@ old attempt, alias its requirement to replenish counters or silently reset budge
 Qualification here uses synthetic receipts and owned disposable Git only. It
 does not contact or reconcile the real M8 pilot. Genuine M8 acceptance and an
 actual separately authorized archival application remain NOTRUN.
+
+The later operator-approved continuation is documented separately in
+[ACCOUNTING_EXPIRY_CONTINUATION](PERSONAL_RECOVERY.md). It adds new explicit
+guard/result/episode/candidate approval verbs while retaining this original
+read-only proposal and NOTRUN→UNKNOWN bridge unchanged. This historical repair's
+qualification and limitations are not retroactively upgraded to live recovery
+or genuine M8 success.

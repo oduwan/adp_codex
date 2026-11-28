@@ -78,12 +78,15 @@ ADP never executes or changes target CI.
 
 Actual failed checks/rejected review are same-ticket feedback. Use
 `product-preview --for-operation correct` and its authorized `product-resume`.
-Original scope, paths, task, role counts and expiry remain. One prospectively
-defined compound correction holds the existing Developer permit through scoped
-staging/candidate review and one commit, under the same deadline. Actual worker
-metrics and whole-attempt elapsed time are accounted before source transition.
-The candidate has its own semantic guard within that remaining deadline; the
-new committed SHA needs a fresh code review. Historical attempts never combine.
+Original scope, paths, task, role counts and expiry remain. Protocol-2 Product
+corrections use the same [logical development accounting](../PROGRESS_GUARD.md)
+as local personal development. The separate Product compound-correction path is
+removed. A prospective logical attempt includes Developer, independently scoped
+staging/commit and exact-SHA evaluation, with separate bounded stage permits.
+Successful internal stages preserve counters until independent evaluation;
+failed stages account normally. Actual Worker metrics are charged once, without
+adding overlapping whole-attempt elapsed time. No old permit is extended or
+rebound across a source transition. Historical attempts never combine.
 
 Original publication receipts stay immutable. A corrected-SHA publication needs
 new exact consent and an append-only revision intent, reusing #40 expected-old
@@ -132,8 +135,11 @@ unknown mergeability and unsupported protections need a supported alternative
 or human action. A Draft waits for separately authorized external readiness;
 no PR_READY endpoint is added.
 
-Normal-user stored `gh auth`, private pipes, fixed origin, supervised five-second
-requests/45-second dispatch and durable unknown-stop fencing are reused. Product
+Normal-user stored `gh auth`, private pipes, fixed origin, supervised requests
+and durable unknown-stop fencing are reused. The centralized
+[runtime profile](RUNTIME_LIMITS.md) bounds fresh operations; old consent/M2
+reservations retain their original ceilings. Reviewer/Developer execution budgets
+remain separate; these preferences never grant or extend Worker execution. Product
 mutation selection permits only Draft PR POST and exact-head merge PUT, not
 Git uploads, reports or issue writes. The [personal quiescence
 warrant](PERSONAL_PUBLICATION.md) remains conditional; it is not signed-App

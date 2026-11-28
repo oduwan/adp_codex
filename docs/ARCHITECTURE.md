@@ -115,3 +115,60 @@ delegated REPORT/next-scope actions. It is not a second canonical task tracker.
 It requires the exact current merged base already local and never fetches objects.
 Issue editing/closure and automatic future execution remain undelegated. Synthetic code
 qualification is not genuine M8 runtime proof or integration authorization.
+
+The separately approved [accounting-expiry policy](operations/PERSONAL_RECOVERY.md)
+adds a closed one-use historical disposition and same-original-Issue episode.
+It preserves the original enrollment/marker/track index and canonical terminal
+parent, with an explicit linked successor in the same M1 namespace. It does not
+re-enroll, normalize STOP_UNSAFE, create a general recovery authority or dispatch
+workers. Retained source has a distinct unaccepted origin, followed by the same
+M7 scope/staged/SHA/project-CI/product/merge/acceptance gates. Track consumers
+resolve only the authenticated effective episode and cannot unblock later
+Issues from archival accounting. Same-host read-only Codex observation preserves
+machine/UID/PID-namespace authentication and returns BLOCKED where the client's
+native approved host route cannot provide the original context.
+
+## Personal historical trust boundary — D4 operator revision
+
+Within one authorized personal operation, the owning user's local Git object
+store and protected historical files are trusted against malicious same-UID
+modification. This deliberately excludes that threat; it is not a security
+control claimed to pass. Entry and every restart fully authenticate the existing
+H0→H1→H2→H3 basis, original host/request/stop receipts and source lineage.
+Invocation-local immutable facts replace historical byte replay, private-file
+inventory mirrors and repeated reader digests. They disappear on return/error
+and are neither persisted nor an ALLOW decision.
+
+Concurrent authorized transitions remain observable: each historical projection
+uses actual canonical Memory and verifies frozen parent/guard/epoch/generation,
+fixed H3 relation and literal ancestry. A changing request still checks current
+source HEAD/ref/tree, index flags and clean worktree, M1 ownership/checkpoint,
+M2 original permit/deadline, revocation, consent, SUBMITTED intent/claim,
+credential/transport/repository binding, network hazard and the SAME Budget.
+Original source/admin seals remain fresh at batch and pre-CAS boundaries.
+GitHub permissions/rules/refs remain mutable untrusted observations, with all
+existing M3, upload, exact expected-old CAS and uncertain-effect recovery gates.
+
+The existing Budget is the only request accounting mechanism. Known object
+POSTs plus mandatory CAS provide a negative lower-bound check, not a prediction
+that every future read fits. Exhaustion can leave partial immutable uploads;
+it never permits blind retry, ref mutation after expiry or a second submission.
+Accounting writers use the existing journal/consent interfaces with H3, original
+engine and current reader bindings. Old approvals are never upgraded or renewed.
+The [D4 cutover record](operations/GIT_NATIVE_CUTOVER_STATUS.md) distinguishes
+focused engineering evidence from separately unreleased #58 qualification.
+
+## Trusted dedicated personal worktree — Issue63
+
+The operator-selected [stage contract](operations/TRUSTED_WORKTREE_STAGES.md)
+trusts the admitted dedicated product checkout and local history under ADP's
+cooperative single writer. This supersedes the earlier requirement to probe
+HEAD/index/worktree/config/admin/history/old Workers inside every helper or HTTP
+request solely against malicious same-UID edits. Those attacks are outside the
+model, not passing controls. Actual stopped independent review, cold/restart
+provenance and a single immutable reviewed-SHA handoff remain real boundaries.
+Unselected personal runners and signed-provider semantics do not inherit a new
+trust grant. External GitHub scope/dependencies/policy/permissions/refs, current
+M1/M2, consent/deadlines/revocation, credentials and uncertain effects remain
+live. No ALLOW or permanent snapshot/cache/authority store is added. #64–#66 and
+full #58 qualification are independent subsequent gates.

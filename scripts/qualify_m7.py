@@ -9,7 +9,7 @@ import subprocess
 import sys
 import unittest
 
-from qualification_support import HonestResult, STATUSES, accounting, private_directory, private_file, sha256, test_ids, write_evidence
+from qualification_support import HonestResult, STATUSES, accounting, private_directory, private_file, sha256, test_ids, verify_test_sources, write_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -56,24 +56,15 @@ def summarize(inventory, result):
     return summary
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--inventory", type=Path, nargs="+", required=True)
-    parser.add_argument("--evidence-dir", type=Path, required=True)
-    args = parser.parse_args()
+def preflight(paths):
+    """Validate source seals and exact method IDs; never run the inventory."""
     require_clean = subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain"])
     if require_clean:
         raise ValueError("Qualify clean committed source")
     source = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
-    accepted = subprocess.check_output(["git", "-C", str(ROOT), "ls-tree", "-rz", BASE, "tests"])
-    for entry in filter(None, accepted.split(b"\0")):
-        metadata, path = entry.split(b"\t", 1)
-        blob = metadata.split()[2].decode()
-        current = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD:" + path.decode()], text=True).strip()
-        if current != blob:
-            raise ValueError("Accepted M1–M6 test/fixture changed")
+    verify_test_sources(ROOT, BASE)
     inventories, inventory = {}, []
-    for path in args.inventory:
+    for path in paths:
         resolved = path.resolve()
         if path.is_symlink() or not resolved.is_relative_to(ROOT / "docs/operations"):
             raise ValueError("Use committed operation inventories inside source")
@@ -86,10 +77,19 @@ def main():
             raise ValueError("Invalid, duplicate or overlapping frozen M7 inventory")
         inventories[relative] = cases
         inventory.extend(cases)
-    suite = unittest.defaultTestLoader.discover(str(ROOT / "tests_m7"))
+    suite = unittest.TestLoader().discover(str(ROOT / "tests_m7"))
     actual = sorted(test_ids(suite))
     if len(inventory) != len(set(inventory)) or sorted(inventory) != actual:
         raise ValueError("Frozen M7 test denominator changed")
+    return source, inventories, actual, suite
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--inventory", type=Path, nargs="+", required=True)
+    parser.add_argument("--evidence-dir", type=Path, required=True)
+    args = parser.parse_args()
+    source, inventories, actual, suite = preflight(args.inventory)
     directory = private_directory(args.evidence_dir, ROOT)
     with private_file(directory / "unittest.log", "w") as output:
         result = unittest.TextTestRunner(stream=output, verbosity=2, failfast=False, resultclass=M7Result).run(suite)

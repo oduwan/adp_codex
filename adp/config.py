@@ -31,6 +31,8 @@ def load_json(path: Path, limit: int = 65536, *, protected: bool = False) -> dic
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
             raise ADPError("JSON must be a regular bounded file")
         raw = os.read(descriptor, limit + 1)
+        if protected and len(raw) != metadata.st_size:
+            raise ADPError("Protected JSON must contain the complete opened file")
         if len(raw) > limit:
             raise ADPError("JSON payload exceeds size limit")
     finally:
@@ -96,7 +98,10 @@ class Config:
                  storage: Path | None = None, config: Path | None = None) -> Config:
         root = Path(value(repo, "rev-parse", "--show-toplevel"))
         config_path = config if config is not None else root / ".adp.json"
-        data = load_json(config_path) if config_path.exists() or config_path.is_symlink() else {}
+        if config_path.exists() or config_path.is_symlink():
+            data = load_json(config_path)
+        else:
+            data = {}
         if config is not None and not config_path.exists():
             raise ConfigurationError("Explicit configuration file does not exist")
         if set(data) - {"schema_version", "remote", "repository_id", "memory_branch", "storage"}:

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from adp.network_http import Response, NetworkTransportError, UPDATE_REFS_MUTATION
 from adp.schema import require
+from adp.runtime_limits import RuntimeSettings
 
 
 def git_bytes(root, *args, raw=None):
@@ -31,6 +32,7 @@ class ObjectServer:
     Git update boundary, after every client-side observation has finished.
     """
     def __init__(self, root, target):
+        self.runtime_settings = RuntimeSettings()  # Deterministic operator defaults.
         self.root, self.target = root, target
         self.calls, self.mutations = [], []
         self.permission = "WRITE"
@@ -60,7 +62,7 @@ class ObjectServer:
         return Response(status, json.dumps(value).encode())
 
     def request(self, method, path, body, *, seconds):
-        assert 0 < seconds <= 5
+        assert 0 < seconds <= self.runtime_settings.limits.request_timeout_seconds
         self.calls.append((method, path, body))
         if self.failure is not None:
             selector, response = self.failure
@@ -112,6 +114,10 @@ class ObjectServer:
                     "branchProtectionRule": {"id": "protected"} if self.protected else None}
                 repo["branchProtectionRules"] = {"totalCount": self.legacy,
                     "nodes": [] if not self.legacy else [{"id": "legacy"}], "pageInfo": {"hasNextPage": False}}
+                if "defaultBranchRef" in body["query"]:
+                    default = gv(self.root, "symbolic-ref", "HEAD").removeprefix("refs/heads/")
+                    repo["defaultBranchRef"] = {"prefix": "refs/heads/", "name": default,
+                        "target": {"oid": refs.get("refs/heads/" + default), "__typename": "Commit"}}
             return self.response({"data": {"node": repo}})
         if "/rules/branches/" in path:
             return self.response(self.rules)

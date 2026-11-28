@@ -9,6 +9,7 @@ from adp.execution_types import Capabilities, Role, WorkerResult
 from adp.guard_types import Outcome, data
 from adp.personal_enrollment import apply_personal
 from adp.personal_runner import PersonalCoordinator
+from adp import personal_workers
 from adp.personal_storage import approval, create_private
 from adp.schema import encode
 from adp.storage import atomic
@@ -32,14 +33,26 @@ class StoppedNotRunFixture(PersonalFixture):
         patch.object(self.runtime, "capabilities", return_value=caps).start()
         patch.object(self.runtime, "dispatch", side_effect=self.dispatch).start()
         self.c.initialize_run()
-        original = self.c.workers.execute("original", self.c.context("original"), self.a)
-        run = self.c.record()
-        run.update(original_review=original["request"]["id"], phase="FEATURE")
+        run = self.c.record(); run["schema_version"] = 1
         self.c.save(run)
-        self.c.prepare_feature()
-        with patch.object(self.c.workers, "finish", side_effect=OSError("Synthetic stopped-before-accounting interruption")):
-            with self.assertRaises(OSError):
-                self.c.workers.execute("develop", self.c.context("develop"), self.personal.feature)
+        original_prompt = personal_workers.prompt
+        def historical_prompt(purpose, context):
+            with patch.object(personal_workers, "protocol", return_value=1):
+                return original_prompt(purpose, context)
+        # Build original version-1 synthetic history, rather than relabel new
+        # CHECK attempts as old CORRECTION attempts. This fixture-only bridge
+        # grants no production legacy dispatch route and ends before return.
+        with patch.object(self.c, "require_development_protocol"), \
+             patch.object(personal_workers, "protocol", return_value=2), \
+             patch.object(personal_workers, "prompt", side_effect=historical_prompt):
+            original = self.c.workers.execute("original", self.c.context("original"), self.a)
+            run = self.c.record()
+            run.update(original_review=original["request"]["id"], phase="FEATURE")
+            self.c.save(run)
+            self.c.prepare_feature()
+            with patch.object(self.c.workers, "finish", side_effect=OSError("Synthetic stopped-before-accounting interruption")):
+                with self.assertRaises(OSError):
+                    self.c.workers.execute("develop", self.c.context("develop"), self.personal.feature)
         self.row = next(r for r in self.c.workers.records() if r["purpose"] == "develop")
         return self.row
 

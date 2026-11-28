@@ -90,6 +90,29 @@ an admitted pending dependency. CORRECTION_APPROVED binds the exact source SHA,
 task iteration, incarnation and ownership generation. Source drift, including a
 change away and back to the same SHA, invalidates current approval.
 
+Personal development protocol 2 prospectively identifies one logical attempt
+using the existing Developer request and canonical actions. Initial implementation
+is CHECK; CORRECTION requires retained concrete failed evaluation evidence. The
+Developer's locally validated, unapproved PASS and the observed independently
+scoped local commit are internal stages, not independent progress. The narrow
+`observe_stage` entry refuses by default: the personal authority must authenticate
+one of those fixed stages, its accepted M1 result or observed Git effect, and its
+exact active canonical subject while the original mutation lock is held. A
+successful stage closes its reservation without charging a failed correction or
+stall, resetting counters, removing acceptance criteria, or issuing approval.
+It still records the real observation and lifetime resource usage. All unsafe,
+overdue and exceeded-resource paths retain ordinary terminal accounting.
+
+Each stage has its own finite original permit; a Developer deadline is never
+extended through review. Commit accounting closes before the actual M1 source
+transition; exact-SHA review receives a new current-source permit within the same
+original role/window ceilings. A failed Developer, staged review or exact-SHA
+evaluation charges the corresponding logical attempt normally. Only verified
+independent progress resets counters. Once an evaluation reaches a threshold,
+no subsequent Developer may dispatch. Interrupted stage delivery reconciles the
+same original context/receipt and preserves the accounted result pointer before
+returning a terminal refusal. No second ledger or recovery grant is introduced.
+
 The first forensic request admits at most one reviewed discriminating action. If
 it produces no verified narrowing, one renewed independent review can admit one
 final bounded action. A second inconclusive proof produces the terminal
@@ -111,3 +134,32 @@ leave remaining cases NOTRUN. Original inventory order and denominator never
 shrink. Quarantined observations retain raw outcomes and are counted separately
 from effective PASS. Campaigns are diagnostic censuses, never formal acceptance.
 Only one census is admitted without new independently verified progress.
+
+## Explicit accounting-expiry successor policy
+
+The named Issue #50 `ACCOUNTING_EXPIRY_CONTINUATION` policy is a narrow opt-in
+terminal admission, not an unsafe reset. Only the exact original first personal
+Issue #1, confirmed stopped unapproved NOTRUN Developer, independently approved
+original scope, unchanged request/receipt/host/source/owner/generation, native
+#1→#2→#3 graph and pristine original reservation qualify. Request measurements
+must fit both original Worker and reservation caps. Other recorded hazards or
+unknown stops refuse; absolute stop timeliness remains UNKNOWN.
+
+Historical accounting performs the existing guard-first UNKNOWN/STOP_UNSAFE
+abandonment at current time, then the exact original M1 UNKNOWN delivery. Its
+latch, counters and history remain immutable. A separate finite operator grant
+can install one explicit same-Issue child whose product counters, thresholds,
+authors, facts and forensic history carry forward. Exactly one additive scope
+Reviewer is allocated; no fresh forensic grant is created. Per-role requests,
+checks and measured resource usage accumulate canonically alongside historical
+consumption. New semantic/source revalidation uses only existing personal M7
+gates, and every action still needs the unchanged Guard.
+
+Only new independently verified progress can clear the child's ordinary
+anti-loop counters. The old terminal and lifetime usage never clear. Exhausted
+correction/stall/role/time limits still stop; starting another episode cannot
+avoid them. Expired or revoked activation grants do not authorize execution.
+Every interrupted effect must match its exact durable intent and checkpoint;
+reconciliation grants account only for that effect, never a new attempt or
+execution window. Full boundaries and operator steps are in
+[personal recovery](operations/PERSONAL_RECOVERY.md).
