@@ -176,6 +176,21 @@ class ResidualDiagnosticsTests(unittest.TestCase):
         self.assertEqual(caught.exception.reason, "FEATURE_POLICY_UNVERIFIED")
         self.assertNotIn("Private underlying", str(caught.exception))
 
+        from adp.enrollment import inspect_project, Blocked
+        checkout = {"repository": "owned/project", "path": "/owned/disposable", "remote": "origin"}
+        for owner, route in ((None, "adp.enrollment.GitHubDiscoveryAdapter"),
+                ({"push_access": True}, "adp.personal_discovery.PersonalGitHubDiscoveryAdapter")):
+            with self.subTest(adapter=route), patch("adp.enrollment.canonical", return_value={"name": "owned/project", "repository_id": "17"}), \
+                    patch("adp.enrollment.Config.discover", return_value=object()), patch(route) as adapter:
+                adapter.return_value.discover.side_effect = failure
+                with self.assertRaises(BudgetRefusal) as caught:inspect_project(checkout, object(), "17", personal_owner=owner)
+                self.assertIs(caught.exception, failure)
+                adapter.return_value.discover.side_effect = ADPError("Private malformed discovery")
+                with self.assertRaises(Blocked) as caught:inspect_project(checkout, object(), "17", personal_owner=owner)
+                self.assertEqual(caught.exception.reason, "DISCOVERY_UNAVAILABLE")
+                self.assertEqual(caught.exception.status, "UNKNOWN")
+                self.assertNotIn("Private malformed", str(caught.exception))
+
     def test_effect_boundaries_are_retained_without_disclosing_unknown_labels(self):
         from tempfile import TemporaryDirectory
         from pathlib import Path

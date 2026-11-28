@@ -27,6 +27,7 @@ from .policy_schema import branch as git_branch
 from .project_validation_types import EvidenceRequest, ProjectObservation
 from .schema import encode, fields, require, string
 from .storage import atomic, locked, temporary_slot
+from .runtime_limits import BudgetRefusal
 
 SCHEMA = 1
 LIMIT = 131072
@@ -158,6 +159,8 @@ def inspect_project(checkout: dict, transport: ReadOnlyTransport, expected: str 
             from .personal_discovery import PersonalGitHubDiscoveryAdapter
             adapter = PersonalGitHubDiscoveryAdapter
         snapshot = adapter(repo["name"], transport, expected_id=repo["repository_id"], config=cfg).discover()
+    except BudgetRefusal:
+        raise
     except FAILURES as exc:
         raise Blocked("DISCOVERY_UNAVAILABLE", "Refresh complete repository, issue, and dependency observations.", status="UNKNOWN") from exc
     require((snapshot.repository.checkout_ref, snapshot.repository.checkout_sha) == (checkout["ref"], checkout["head"]),
