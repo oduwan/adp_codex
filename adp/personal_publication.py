@@ -277,6 +277,8 @@ class PersonalPublication:
             retained = self.record()
             self.service.personal_policy_binding = ((retained["view"].get("plan_policy"),) if retained is not None else None)
             return self.service.inspect_ref(writable=True, _identity=(repo, owner))
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError):
             raise PersonalBlocked("FEATURE_POLICY_UNVERIFIED",
                 "Verify current owner/admin access, exact feature ref and protections. A private plan-disabled fallback requires supported unprotected branch evidence, exact classic-plan evidence and separate operation assent. Other unknown or constrained refs remain blocked; never retry an uncertain write.") from None

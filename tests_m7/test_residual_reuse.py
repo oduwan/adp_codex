@@ -156,6 +156,26 @@ class ResidualDiagnosticsTests(unittest.TestCase):
         with self.assertRaises(BudgetRefusal) as caught:authority.verify(None, purpose="policy/review", subject="subject")
         self.assertIs(caught.exception, failure)
 
+        from adp.personal_publication import PersonalPublication
+        from adp.personal_storage import PersonalBlocked
+        owner = {"push_access": True}
+        repo = {"node_id": "R_owned", "default_branch": "trunk"}
+        for origin in ("record", "inspect_ref"):
+            publication = PersonalPublication.__new__(PersonalPublication)
+            publication.personal = SimpleNamespace(plan={"owner": owner, "repository": {"default_branch": "trunk"}})
+            publication.target = SimpleNamespace(node_id="R_owned", branch="work/issue-1")
+            publication.record = Mock(side_effect=failure if origin == "record" else None, return_value=None)
+            publication.service = SimpleNamespace(inspect_ref=Mock(side_effect=failure))
+            with self.subTest(origin=origin):
+                with self.assertRaises(BudgetRefusal) as caught:
+                    publication.remote(_identity=(repo, owner))
+                self.assertIs(caught.exception, failure)
+                self.assertEqual(caught.exception.reason, "REQUEST_DEADLINE_EXHAUSTED")
+        publication.service.inspect_ref.side_effect = ADPError("Private underlying policy error")
+        with self.assertRaises(PersonalBlocked) as caught:publication.remote(_identity=(repo, owner))
+        self.assertEqual(caught.exception.reason, "FEATURE_POLICY_UNVERIFIED")
+        self.assertNotIn("Private underlying", str(caught.exception))
+
     def test_effect_boundaries_are_retained_without_disclosing_unknown_labels(self):
         from tempfile import TemporaryDirectory
         from pathlib import Path
@@ -279,3 +299,56 @@ class ResidualHistoricalReadTests(unittest.TestCase):
         port.request.reset_mock()
         with self.assertRaisesRegex(ADPError, "GET only"):read.request("POST", "/selected", {}, seconds=1)
         port.request.assert_not_called()
+
+
+class ResidualNextTests(unittest.TestCase):
+    def test_shared_admission_still_refuses_late_parent_drift_and_restart_reobserves(self):
+        from contextlib import nullcontext
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from adp.discovery_types import Repository, Snapshot
+        from adp.personal_enrollment import PersonalChoices
+        from adp.personal_storage import read_private
+        from adp.personal_track import PersonalTrack
+        for changed in ("checkpoint", "generation", "retained-snapshot", "retained-completion"):
+            with self.subTest(changed=changed), TemporaryDirectory() as directory:
+                base = Path(directory)
+                state = base / "state"; state.mkdir(mode=0o700)
+                track = PersonalTrack.__new__(PersonalTrack)
+                track.root, track.personal = base / "track", SimpleNamespace(state=state)
+                snapshot = Snapshot(Repository("17", "owned/project", "https://github.com/owned/project"), (), (), (), 100)
+                observation = SimpleNamespace(snapshot=snapshot)
+                view = {"schema_version": 1, "completions": {}, "snapshot": data(snapshot),
+                    "parent_generation": 1, "parent_checkpoint": "a"*40,
+                    "plan": {"effects": {"directory": str(base / "child")}, "checkout": {"head": "b"*40}}}
+                retained = {"view": view, "approval": "exact-next", "setup": "exact-setup"}
+                fresh = not changed.startswith("retained-")
+                parent = {"local_owner": True, "local_head": "f"*40 if changed == "checkpoint" else "a"*40,
+                    "state": {"generation": 2 if changed == "generation" else 1}}
+                track.c = SimpleNamespace(episode=False, transport=None, ci_transport=None,
+                    memory=SimpleNamespace(inspect=Mock(return_value=parent)), invocation=Mock(), run=Mock())
+                product = SimpleNamespace(transport=None, service=SimpleNamespace(bounded=lambda **kw: nullcontext()),
+                    facts=Mock(return_value={"base_sha": "b"*40}))
+                track.next_record = Mock(return_value=None if fresh else retained)
+                track.successor = Mock(return_value=(None, False))
+                result = {"next_issue": 2}
+                def preview(product, choices, **kw):
+                    kw["_observation"].append((result, observation, {}, None))
+                    return {"result": view, "approval": "exact-next", "setup_approval": "exact-setup"}
+                track.next_preview = Mock(side_effect=preview if fresh else AssertionError("Retained intent is not a fresh admission"))
+                observed = SimpleNamespace(snapshot=replace(snapshot, repository=replace(snapshot.repository, name="other/project"))) if changed == "retained-snapshot" else observation
+                completed = {"changed": {"source": "c"*40}} if changed == "retained-completion" else {}
+                track.status = Mock(side_effect=AssertionError("Share actual same-stage admission") if fresh else None,
+                    return_value=(result, observed, completed))
+                choices = PersonalChoices(2, base / "child", ("product",))
+                with patch("adp.personal_track.apply_personal", side_effect=AssertionError("Refuse before enrollment")) as apply:
+                    with self.assertRaisesRegex(ADPError, "Previous window changed|Previous generation changed|Original next-intent observations changed"):
+                        track.next(product, choices, reviewed="exact-next", setup_approval="exact-setup", authorized=True)
+                apply.assert_not_called();track.c.invocation.assert_not_called();track.c.run.assert_not_called()
+                if fresh:
+                    track.status.assert_not_called()
+                    self.assertEqual(read_private(state / "next-intent.json"), retained)
+                    track.c.memory.inspect.assert_called_once_with()
+                else:
+                    track.status.assert_called_once()
+                    track.c.memory.inspect.assert_not_called()
