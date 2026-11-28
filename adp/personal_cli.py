@@ -204,7 +204,8 @@ def _retain_measurements(personal, capture, elapsed, *, command=None):
             "product.review_seal", "publication.current_original", "project.selection"}
         boundaries = {"transport.entered", "transport.stop_confirmed", "transport.stop_unconfirmed", "response.validated", "http.supervision_requested", "http.supervision_returned",
             "object.requested", "object.acknowledged", "cas.requested", "cas.acknowledged",
-            "intent.prepared", "intent.submitted", "dispatch.claimed", "target.present", "effect.settled"}
+            "intent.prepared", "intent.submitted", "dispatch.claimed", "target.present", "effect.settled",
+            "effect.prepared", "effect.submitted", "effect.dispatch_requested", "effect.acknowledged", "effect.observed"}
         reasons = BUDGET_REFUSALS
         configuration = {"MISSING_FILE", "CONFIGURATION_FAILURE", "INVALID_VALUE"}
         def number(value):

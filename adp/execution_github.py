@@ -167,6 +167,9 @@ class GitHubForgeBackend:
             request = {"body": body}
         if before_mutation is not None:
             before_mutation()
+        from .runtime_limits import reached
+        reached("effect.dispatch_requested")
         response = self.transport.request("POST", route, request)
+        reached("effect.acknowledged")
         # A response alone is not sufficient: observe actual source/body/HEAD.
         return self.observe(key, operation, payload, attempted=True)

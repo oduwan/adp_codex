@@ -30,7 +30,7 @@ from .policy_adapters import GitPolicyAdapter
 from .policy_schema import branch
 from .policy_types import Effect, Operation, Ref
 from .schema import decode, encode, require, string
-from .runtime_limits import (Budget as _Budget, current_budget, operation_scope,
+from .runtime_limits import (Budget as _Budget, BudgetRefusal, current_budget, operation_scope,
                             measurements_for, network_operation, settings_for, work_span, reached)
 
 ZERO = "0" * 40
@@ -178,6 +178,7 @@ class GitHubCAS:
         deadline = budget.request_deadline(seconds)
         left = budget.end - time.monotonic()
         self._start_request()
+        transports = budget.transport_calls
         try:
             now = time.monotonic()
             remaining = deadline - now
@@ -186,6 +187,12 @@ class GitHubCAS:
             reached("transport.entered")
             with work_span("network.transport"):
                 response = self.transport.request(method, path, payload, seconds=remaining)
+        except BudgetRefusal:
+            if budget.transport_calls == transports:
+                self._confirmed_stop()  # No transport was entered.
+            else:
+                reached("transport.stop_unconfirmed")
+            raise
         except UnconfirmedValidation as exc:
             reached("transport.stop_unconfirmed")
             raise ADPError("UNKNOWN: unconfirmed network transport stop requires operator reconciliation") from None
@@ -485,16 +492,23 @@ class GitHubGitExecutionPort(GitExecutionPort):
                 else:
                     current = self.service.inspect_ref(writable=True)
                 require(current == action["expected_target"], "Remote changed before immutable transfer or atomic CAS")
-            require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
-            checked_ref()
+                return self.service.personal and type(observation) is tuple and len(observation) == 3 and observation[:2] == (self.service, self.service.target.ref)
+            # The personal callback supplies the just-reauthorized owning-stage
+            # subject. Direct/signed callers still need their initial full M3
+            # authorization; every path is authorized again BEFORE any POST.
+            if not (self.service.personal and validate is not None):
+                require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
+                checked_ref()
+            elif not checked_ref():
+                require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed")
             objects = (closure(self.root, action["revision"], self.service.known_commit, git_reader=self._git)
                        if self.bound_git_directory is not None else closure(self.root, action["revision"], self.service.known_commit))
-            self._authorize(action, provider, plan, authorization)
+            require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed before upload")
             if admit_objects is not None:
                 admit_objects(objects, budget)
             self.service.upload(objects)
             # Upload latency/source/ownership/policy drift cannot authorize late CAS.
-            self._authorize(action, provider, plan, authorization)
+            require(self._authorize(action, provider, plan, authorization) == action_id, "Network intent changed before CAS")
             checked_ref()
             try:
                 self.service.cas(action["expected_target"], action["revision"], action_id)

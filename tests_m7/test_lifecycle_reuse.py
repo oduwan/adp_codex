@@ -197,26 +197,42 @@ class LifecycleReuseTests(unittest.TestCase):
             "pull": {"url": "https://github.com/owned/project/pull/10"}, "ci": {"status": "PASS"}}
         observation = SimpleNamespace(snapshot="actual-originals")
         track = SimpleNamespace(link={"identity": data(identity)},
-            status=Mock(return_value=({"status": "NEXT_SCOPE_REQUIRED", "next_issue": 2}, observation, {identity: accepted})),
-            accepted=Mock(side_effect=AssertionError("Status already verified this exact completion")),
+            status=Mock(side_effect=AssertionError("Reporting does not select next scope")),
+            accepted=Mock(return_value=accepted),
             current=Mock(side_effect=AssertionError("Do not scan the same track again")))
         p.clock = lambda: 100
         p.service = SimpleNamespace(limits=DEFAULTS, bounded=lambda **kw: nullcontext())
         p.c = SimpleNamespace(episode=False, runtime="explicit-runtime", task_id="task", track=track,
             revision=lambda: "a"*40, record=lambda: {"feature_administration": "owned"},
-            memory=SimpleNamespace(inspect=lambda: {"local_head": "d"*40, "state": {"generation": 1}}))
+            memory=SimpleNamespace(inspect=lambda: {"health": "SYNCED", "local_owner": True, "local_head": "d"*40, "canonical_head": "d"*40, "remote_head": "d"*40, "inbox_count": 0, "state": {"generation": 1}, "tasks": {}}))
+        p.c.live = p.c.memory.inspect
+        def accepted_once(selected, **kwargs):
+            kwargs["_capture"][selected] = (None, p.c.memory.inspect(), None, accepted, None)
+            return track.accepted.result
+        track.accepted.side_effect = accepted_once
+        track.accepted.result = accepted
         p.personal = SimpleNamespace(plan={"window": {"expires_at": 200}, "repository": {"name": "owned/project"},
             "issue": 1}, intent={"approval": "original", "original": {"title": "Original", "url": "https://github.com/owned/project/issues/1"}})
         p.transport, p.target = SimpleNamespace(credential_binding="credential"), SimpleNamespace(ref="refs/heads/task")
-        p.local, p.facts, p.original = Mock(return_value="review"), Mock(return_value={}), Mock(return_value={})
+        p.local, p.facts = Mock(return_value="review"), Mock(return_value={})
+        issue = SimpleNamespace(identity=identity)
+        p.original = Mock(side_effect=lambda **kw: kw["_capture"].update(issues=[issue]) or {})
         consumed = []
         result = p.report_preview(_observation=consumed)
         self.assertEqual(result["status"], "REPORT_PROPOSED")
-        self.assertEqual(consumed, [observation])
-        track.status.assert_called_once_with(transport=p.transport, runtimes={identity: "explicit-runtime"})
-        track.accepted.assert_not_called();track.current.assert_not_called()
-        track.status.return_value = ({"status": "ACTIVE_ORIGINAL", "next_issue": None}, observation, {})
+        self.assertEqual(consumed, [issue])
+        self.assertEqual(track.accepted.call_count, 1)
+        self.assertEqual(track.accepted.call_args.args, (identity,))
+        p.local.assert_called_once_with(genuine=False, _observed=p.c.memory.inspect())
+        track.status.assert_not_called();track.current.assert_not_called()
+        track.accepted.result = None
         with self.assertRaisesRegex(ADPError, "actual accepted completion"):p.report_preview()
+        track.accepted.result = accepted
+        p.c.live = lambda: {**p.c.memory.inspect(), "local_head": "e"*40}
+        with self.assertRaisesRegex(ADPError, "subject advanced"):p.report_preview()
+        p.c.live = p.c.memory.inspect
+        track.accepted.side_effect = lambda *a, **kw: accepted
+        with self.assertRaisesRegex(ADPError, "qualification is missing"):p.report_preview()
 
     def test_status_uses_qualified_snapshot_and_only_accepted_native_parent_unblocks_next(self):
         from adp.personal_track import PersonalTrack
@@ -267,7 +283,7 @@ class LifecycleReuseTests(unittest.TestCase):
             status=Mock(side_effect=lambda: subject.update(local_head="d"*40) or {
                 "status": "MERGED_DELEGATED_VERIFIED", "revision": "e"*40, "pull": "exact-pr"}),
             pull=Mock(return_value={"merged_by": {"id": 91}}), port=SimpleNamespace(_value=lambda *args: "b"*40),
-            validation_binding=lambda: "actual-CI", record=lambda: {"review": "independent"},
+            validation_binding=lambda **kw: "actual-CI", record=lambda: {"review": "independent"},
             service=SimpleNamespace(unconfirmed_contexts=lambda: False))
         track = PersonalTrack.__new__(PersonalTrack)
         track.c = c;track.personal = SimpleNamespace(state=Path(directory.name), intent={"original": data(original)},

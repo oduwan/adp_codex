@@ -264,6 +264,11 @@ class PersonalTrack:
     @with_reads
     def accepted(self, identity, *, transport=None, runtime=None, _history_capture=None, _capture=None, _qualified=None):
         """Read historical facts without reviving an expired execution grant."""
+        if transport is None:
+            from .personal_history_track import READ_TRANSPORT, NativeReadOnly
+            selected = READ_TRANSPORT.get()
+            if selected is not None:
+                transport = NativeReadOnly(selected)
         if _qualified is not None:
             # Only an owning operation passes its fully authenticated historical
             # operands. Current Memory and the mutable exact PR remain fresh.
@@ -493,7 +498,8 @@ class PersonalTrack:
         product.publication.checkout()
         product.local(_history_capture=capture)
         product.original()
-        product.qualified(); product.verify_review()
+        latest = product.qualified()
+        product.verify_review(_latest=latest)
         require(read_private(self.personal.state / "prepared-track.json", optional=True) is not None,
                 "Accepted TicketPreparer packet is required")
         result = product.status()
@@ -509,7 +515,7 @@ class PersonalTrack:
             "source": c.revision(), "tree": product.port._value("rev-parse", "HEAD^{tree}"),
             "merge": result["revision"], "actor": item["merged_by"]["id"], "pull": result["pull"],
             "original": digest(self.originals[typed(Issue, self.personal.intent["original"]).identity]),
-            "checkpoint": current["local_head"], "ci": product.validation_binding(), "review": product.record()["review"],
+            "checkpoint": current["local_head"], "ci": product.validation_binding(_latest=latest), "review": product.record()["review"],
             "expires_at": self.personal.plan["window"]["expires_at"]}
         if capture is not None:
             from .personal_history import _reader_binding
@@ -731,7 +737,7 @@ class PersonalTrack:
     @network_operation("track.next_preview", service=lambda self, product, choices, **k: product.service)
     @with_reads
     @historical_operation
-    def next_preview(self, product, choices, *, approved=None):
+    def next_preview(self, product, choices, *, approved=None, _observation=None):
         from .git import SHA
         require(type(choices) is PersonalChoices, "Typed explicit next choices required")
         retained = self.next_record()
@@ -765,6 +771,8 @@ class PersonalTrack:
                 "approval": retained["approval"], "setup_approval": retained["setup"]}
         capture = {} if self.c.episode else None
         state, observation, completed = self.status(transport=product.transport, _history_capture=capture)
+        if _observation is not None:
+            _observation.append((state, observation, completed, capture))
         require(state["status"] == "NEXT_SCOPE_REQUIRED" and state["next_issue"] == choices.issue,
                 "Exactly one independently eligible original needs a new explicit scope/window")
         p = self.personal.plan
@@ -806,9 +814,10 @@ class PersonalTrack:
                 "Separately approve exactly this new original task, local setup and finite scope/window")
         path = self.personal.state / "next-intent.json"
         with locked(self.root):
+            admitted = []
             retained = self.next_record()
             if retained is None:
-                proposal = self.next_preview(product, choices, approved=setup_approval)
+                proposal = self.next_preview(product, choices, approved=setup_approval, _observation=admitted)
                 require(proposal["approval"] == reviewed, "Next source, original, policy, completion or window changed")
                 retained = {"view": proposal["result"], "approval": reviewed, "setup": setup_approval}
                 immutable(path, retained)  # before releasing old ownership or claiming another Issue
@@ -823,8 +832,11 @@ class PersonalTrack:
                     "scope": child.plan["paths"], "window": child.plan["window"],
                     "execution": "NOT_REPEATED", "runtime_qualification": "NOTRUN"}
             require(not self.c.episode or view["schema_version"] == 2, "Legacy NEXT is observation-only")
-            capture = {} if self.c.episode else None
-            current, observation, completed = self.status(transport=product.transport, _history_capture=capture)
+            if admitted:
+                current, observation, completed, capture = admitted[0]
+            else:
+                capture = {} if self.c.episode else None
+                current, observation, completed = self.status(transport=product.transport, _history_capture=capture)
             self.next_binding(capture, view)
             require(current["next_issue"] in (None, choices.issue)
                     and {digest(i): digest(r) for i, r in completed.items()} == view["completions"]

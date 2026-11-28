@@ -129,3 +129,47 @@ They are not a persistent cache, second journal, authority record or trust
 service. Historical A/A2/A3 and prior qualification outcomes remain unchanged.
 In particular, A3's exact exception/request/effect history remains UNKNOWN and
 its expired uncertain PUSH is not retried or reconciled by this engineering.
+
+## Residual R1–R5 release after27ca278
+
+This section supersedes the earlier execution-count projections, not the retained
+historical measurements. The generic M3 policy/Memory APIs and persistent stores
+are unchanged. `B` means same-stage observation reuse; `C` pure projection;
+`A` a retained separate boundary; `D` an explicitly unoptimized possibility.
+
+| Owning path | Removed execution / actual replacement | Class and boundary |
+| --- | --- | --- |
+| `PersonalPublication.provider → proof → validate_proof` | Pass its actual admitted row for source/protection/operation proof construction instead of inspecting Memory again for each artifact | B; no canonical write in that construction |
+| `validate_dispatch → record/live/current_source/record/record` | The actual live row supplies original/source/ref operands; full cold entry and independent post-upload observation remain | B inside each boundary; A between boundaries |
+| `reauthorize → native submit → initial _authorize → decide → plan` | Qualified personal callback supplies its actual same-stage ref observation; omit the adjacent initial plan. Invalid/absent callbacks and signed ports retain the original full authorization | B only on the closed personal callback path |
+| `submit → closure → _authorize → upload → _authorize → checked_ref → CAS` | Full M3 before FIRST object POST and independently after upload are retained; both exact action IDs and expected-old checks still fence mutation | A; normal fresh personal publication has four full plans and two native authorizations |
+| `write_authorized → record` | Compare the actual private row with the already qualified immutable consent; do not reparse/hash its self-generated token per object | B/C; one fresh actual Memory inspection, current claim/credential/permit/deadline/hazard/Budget per write remain |
+| `Product.qualifications → qualified / verify_review → review_context → qualified` | Authenticate one actual latest CI and one stopped independent review; pass CI into context/binding projections | B/C after fresh pre-merge CI |
+| `qualifications → proof / verify → qualifications again` | Existing ProductAuthority consumes deep-copied typed facts, exact view, current latest receipt/worker identity, actual canonical assignment/Guard and UTC. It is bound to the SAME active Budget; defaults/restart still authenticate fully | B/C, never a cached ALLOW or persisted authority |
+| `qualified → record + allowed + ci_identity` | One actual canonical snapshot supplies those projections; protected #21 receipt and exact PR/SHA/status/age checks remain | B |
+| `native observation proof → ci_identity → record` | Use the actual post-query canonical observation already supplied to the semantic validator | B; native stability checks remain independent |
+| `validation_context → provider.plan → observe → request → plan → decide → plan` | Borrow ONLY the initial actual plan with exact active Budget/provider/task/request binding; each personal request consumes one full plan with late actual Safety | B; signed/candidate/default paths unchanged |
+| `native source.observe → evaluate → closing request` | ALWAYS construct a new full closing plan, compare the exact EvidenceRequest, recheck policy/provenance/source/owner/Guard | A; no borrowed operand in closing/reobserve/recovery |
+| `fresh MERGE proposed → native_reviews; refresh_merge_ci → native_reviews again` | Reuse entry's raw native review operands for internal proof projections. Retained/restart observes them anew. Final boundary always refreshes eligibility; removed/replaced actors cannot satisfy old evidence | B inside fresh preparation; A at final effect boundary |
+| `completion_preview → qualified → verify_review / validation_binding` | One actual CI operand supplies both projections | B/C; source/Memory lock handoff, fresh merged result and newly written completion receipt validation remain A |
+| `REPORT preview → local cold roles + full track.status` | Qualify only the selected accepted receipt, actual closing canonical subject and current source/Guard seal; targeted native original/closure, no unrelated future discovery | B; report makes no successor READY claim |
+| `REPORT reserve → SUBMITTED → final_boundary → accepted` | Full selected acceptance check AFTER reservation is retained, including #67's exact submitted overlay; pre-reservation snapshot is not borrowed here | A, different canonical subject |
+| `REPORT POST → observed_report inventories → own_report_delta → settlement` | Keep both consecutive comment inventories, exact target/body/actor and causal original delta, original claim and durable action/publication/Guard settlement | A; reobservation never POSTs again |
+| `NEXT → next_preview/status → status again` | Fresh confirmation consumes that same actual admitted status; retained/restart obtains a new one | B only before release |
+| `NEXT → handoff → apply_personal` | Keep current parent checkpoint/generation, stopped/effect checks, release, fresh base facts, complete actual successor discovery/policy/enrollment and attachment | A; no authority across owner release/new window |
+| `historical accepted → default transport` | When an authenticated read port is already selected, use the existing read-only context instead of constructing a second credential/transport path | Replaces an in-scope wrong-port defect; GET only, exact repository checks retained |
+
+Remaining D: default `PolicyProvider.plan/decide → authority.verify → record`
+Memory reads are NOT eliminated by a global envelope-only verifier. Supplying
+canonical observations across generic M3 inspection would introduce another
+cross-layer operand contract. No such protocol or generic Memory redesign is
+part of this release; those repeated reads remain disclosed costs, not new
+independent security judgments.
+
+Diagnostics preserve typed BudgetRefusal through discovery, personal reads,
+forge response/proof adapters and actual known deadline paths. Inner refusals
+followed by legitimate observation remain events. `effect.dispatch_requested`
+means entering the effect adapter, not proof of on-wire delivery;
+`effect.acknowledged`, `effect.observed`, and `effect.settled` identify separate
+actual boundaries. Only the existing bounded private diagnostic whitelist is
+extended. No A3 exception or remote outcome is reconstructed.

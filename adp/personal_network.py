@@ -25,7 +25,7 @@ from .execution_ports import UnconfirmedValidation
 from .personal_network_child import context, validate_personal
 from .schema import decode, fields, require
 from .github_rules import checked, retained_error
-from .runtime_limits import request_allowance, settings_for
+from .runtime_limits import BudgetRefusal, request_allowance, settings_for
 from .personal_rules import PERSONAL_REF_QUERY
 
 
@@ -161,6 +161,8 @@ class PersonalDiscoveryRead:
         self.service.transport.last_response = None
         try:
             body = self.service.request("GET", path, missing=True, seconds=seconds)
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError):
             body = None
         observed = self.service.transport.last_response

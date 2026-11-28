@@ -30,7 +30,7 @@ from .policy import PolicyProvider
 from .policy_types import Authorization, Effect, Operation, Permission, Plan, Protection, Qualifications, RepositorySnapshot, Request, Rules, SourceClaim, SourceKind, Task
 from .schema import encode, fields, key, require
 from .storage import atomic
-from .runtime_limits import bind_consent, consent_limits, measured, network_operation, reached
+from .runtime_limits import BudgetRefusal, bind_consent, consent_limits, measured, network_operation, reached
 from .github_rules import PLAN_ASSENT
 from .personal_rules import enrollment_rules
 
@@ -191,7 +191,7 @@ class PersonalPublication:
         require([enrollment_rules(self.read, p["repository"], p["owner"], item["ref"].removeprefix("refs/heads/"), _identity=identity)
                  for item in p["branch_rules"]] == p["branch_rules"], "Original branch requirements changed")
         if _capture is not None:
-            _capture.update(prerequisites=prerequisites, subjects=subjects, identity=identity, observations=observations)
+            _capture.update(prerequisites=prerequisites, subjects=subjects, identity=identity, observations=observations, issues=issues)
         return observations
 
     def review_binding(self, *, _observed=None):
@@ -390,8 +390,8 @@ class PersonalPublication:
         if self.c.episode:
             require(_CURRENT.get() is not None and _CURRENT.get() is basis["invocation"]
                     and _identity(self.c) == basis["identity"], "Historical invocation identity changed")
-        row = self.record(_observed=basis["subject"])
-        require(row == basis["consent"], "Current publication intent changed")
+        row = basis["consent"]
+        require(read_private(self.path) == row, "Current publication intent changed")
         claim = read_private(self.port._claim_path(row["action_id"]))
         binding = self.transport.credential_binding
         if self.c.episode:
@@ -432,16 +432,16 @@ class PersonalPublication:
                     row["view"]["revision"], row["view"]["canonical_review_binding"])
                 and budget is not None, "Fresh owning-invocation cold qualification required")
         capture = {} if self.c.episode and self._dispatching else None
-        self.live(_capture=capture) if capture is not None else self.live()
+        row = self.live(_capture=capture) if capture is not None else self.live()
         p = self.personal.plan
         if self._write_basis is None:
             from .personal_read_frame import current_source
-            current_source(self, self.record())  # One immutable source handoff.
-        expected_original = self.record()["view"]["original_observation"]
+            current_source(self, row)  # One immutable source handoff.
+        expected_original = row["view"]["original_observation"]
         current = {}
         require(self.original(_qualified=_entry[6], _capture=current) == expected_original, "Original-ticket scope or native evidence changed")
         old = self.remote(_identity=current["identity"])
-        require(old == self.record()["view"]["expected_old"], "Remote authority or exact ref changed before CAS")
+        require(old == row["view"]["expected_old"], "Remote authority or exact ref changed before CAS")
         if capture is not None:
             from .personal_read_frame import _CURRENT
             from .personal_episode import same_observation
@@ -487,10 +487,10 @@ class PersonalPublication:
                      branch_template=self.c.rules().branch_template,
                      checks=tuple(self.personal.plan["required_check_names"]))
 
-    def proof(self, purpose, subject, kind, payload):
+    def proof(self, purpose, subject, kind, payload, *, _row=None):
         from .personal_read_frame import forbid_writes
         forbid_writes()
-        row = self.record()
+        row = self.record() if _row is None else _row
         body = {"purpose": purpose, "subject": subject, "kind": kind, "payload": payload,
             "principal": "personal:operator", "approval": row["approval"], "generation": row["view"]["generation"]}
         self.validate_proof(body, _row=row)
@@ -514,6 +514,8 @@ class PersonalPublication:
                     and evidence == Attestation(body["principal"], "personal-publication:" + identity, subject), "Publication proof identity differs")
             self.validate_proof(body)
             return True
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError, KeyError, ValueError, TypeError):
             return False
 
@@ -607,11 +609,11 @@ class PersonalPublication:
         claims = [SourceClaim(SourceKind.OPERATOR, "personal:exact-publication-policy", digest(row["view"]), self.rules(), issued, expires)]
         claims += [SourceClaim(d.kind, d.reference, d.digest, self.rules(), issued, expires) for d in snapshot.documents]
         provider.sources = tuple(replace(source, evidence=self.proof("policy/" + source.kind.lower(), provider.source_subject(source, snapshot),
-            "source", {"source": data(source), "snapshot": data(snapshot)})) for source in claims)
+            "source", {"source": data(source), "snapshot": data(snapshot)}, _row=row)) for source in claims)
         reference = "personal:operator-plan-disabled-feature-policy" if row["view"].get("plan_policy") is not None else "personal:native-feature-policy"
         protection = Protection(self.target.ref, old, True, True, False, (), 1, (), (), reference, self.clock(), expires)
         provider.protections = (replace(protection, evidence=self.proof("policy/protection", provider.protection_subject(protection, snapshot),
-            "protection", {"protection": data(protection), "snapshot": data(snapshot)})),)
+            "protection", {"protection": data(protection), "snapshot": data(snapshot)}, _row=row)),)
         # These Task fields describe one canonical observation. Later policy
         # and dispatch fences still make their own independent observations.
         observed = self.c.memory.inspect()
@@ -622,7 +624,7 @@ class PersonalPublication:
         plan = provider.plan(task, Request(Operation.PUSH), _snapshot=snapshot)
         if self.c.episode:
             require(digest(snapshot) == plan.snapshot_digest, "UNKNOWN: actual publication snapshot changed")
-        authorization = Authorization(self.proof("policy/operation", PolicyProvider.authorization_subject(plan), "operation", data(plan)))
+        authorization = Authorization(self.proof("policy/operation", PolicyProvider.authorization_subject(plan), "operation", data(plan), _row=row))
         require(provider._decide(plan, replace(plan, safety=provider._safety(task)), authorization).effect == Effect.ALLOW, "Actual M3 refused publication")
         return provider, plan, authorization
 

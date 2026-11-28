@@ -15,6 +15,7 @@ from .policy import PolicyProvider
 from .policy_types import Authorization, Effect, Operation, Plan, Qualifications, SourceClaim
 from .schema import encode, fields, require
 from .storage import atomic
+from .runtime_limits import BudgetRefusal
 
 
 class PersonalAuthority:
@@ -55,12 +56,14 @@ class PersonalAuthority:
         self.c.episode_fence()
         return True
 
-    def _proof(self, purpose, subject, kind, payload, principal):
+    def _proof(self, purpose, subject, kind, payload, principal, *, _observed=None):
         from .personal_read_frame import forbid_writes
         forbid_writes()
         self.c.require_development_protocol()
         capture = {} if self.c.episode else None
-        observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
+        observed = _observed
+        if observed is None:
+            observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
         body = {"schema_version": 1, "purpose": purpose, "subject": subject, "kind": kind,
             "payload": payload, "principal": principal, "approval": self.c.personal.intent["approval"],
             "generation": observed["state"]["generation"],
@@ -87,6 +90,8 @@ class PersonalAuthority:
                     and body["purpose"] == purpose and body["subject"] == subject, "Evidence purpose or subject differs")
             self._validate(body, _observed=observed, _history_capture=capture)
             return True
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError, KeyError, ValueError, TypeError):
             return False
 

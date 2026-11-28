@@ -158,26 +158,40 @@ class PersonalWorkers:
                     and observed.result.outcome == Outcome.PASS and observed.result.criteria == (row["purpose"],),
                     "The actual independent context did not approve this purpose")
         if accounted:
-            require(row["phase"] == "ACCOUNTED" and assignment["status"] == "accepted"
-                    and assignment["result"] == self.result(row), "Actual M1 delivery is not accepted")
-            current = state
-            state, task = current["state"], current["tasks"][key(self.c.task_id)]
-            item = self.c.guard._get(state, task, row["requirement"])
-            if item["active"] is None:
-                self.c.allowed(row["requirement"], _observed=current)
-            else:
-                # Reusing already observed source evidence inside one actual
-                # coordinator reservation does not reserve a new guard attempt.
-                coordination = self.c.record()["coordination"]
-                require(coordination is not None and row["purpose"] in ("develop", "code", "product")
-                        and self.c.guard._qualified_accounting(state, task)
-                        and item["mode"] in ("normal", "running")
-                        and coordination["permit"]["token"] == item["active"]["id"]
-                        and task["source_revision"] == row["request"]["revision"]
-                        and item["active"]["started"] <= self.c.clock() <= item["active"]["deadline"],
-                        "Terminal or unrelated M2 reservation cannot reuse a worker approval")
-                self.c.guard._active(state, task, item, coordination["permit"]["token"])
+            self.accounted(row, state)
         return observed
+
+    def accounted(self, row, current):
+        """Canonical part of an already authenticated stopped Worker result.
+
+        Callers supplying the runtime-authenticated row must still supply a
+        current actual M1 observation; this never authenticates runtime bytes.
+        """
+        request = typed(WorkerRequest, row["request"])
+        assignment = current["tasks"][key(self.c.task_id)]["assignments"].get(row["assignment"]["assignment_id"])
+        require(current["health"] == "SYNCED" and current["local_owner"]
+                and request.generation == current["state"]["generation"] and assignment is not None
+                and assignment["worker"] == "worker:" + request.id
+                and assignment["generation"] == request.generation and assignment["source_revision"] == request.revision,
+                "Current worker ownership/assignment differs")
+        require(row["phase"] == "ACCOUNTED" and assignment["status"] == "accepted"
+                and assignment["result"] == self.result(row), "Actual M1 delivery is not accepted")
+        state, task = current["state"], current["tasks"][key(self.c.task_id)]
+        item = self.c.guard._get(state, task, row["requirement"])
+        if item["active"] is None:
+            self.c.allowed(row["requirement"], _observed=current)
+        else:
+            # Reusing already observed source evidence inside one actual
+            # coordinator reservation does not reserve a new guard attempt.
+            coordination = self.c.record()["coordination"]
+            require(coordination is not None and row["purpose"] in ("develop", "code", "product")
+                    and self.c.guard._qualified_accounting(state, task)
+                    and item["mode"] in ("normal", "running")
+                    and coordination["permit"]["token"] == item["active"]["id"]
+                    and task["source_revision"] == row["request"]["revision"]
+                    and item["active"]["started"] <= self.c.clock() <= item["active"]["deadline"],
+                    "Terminal or unrelated M2 reservation cannot reuse a worker approval")
+            self.c.guard._active(state, task, item, coordination["permit"]["token"])
 
     @staticmethod
     def result(row):

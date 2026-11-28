@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from copy import deepcopy
 
 from .discovery_schema import digest, typed
 from .discovery_types import Issue
@@ -19,6 +20,7 @@ from .policy_types import (Operation, Plan, ProjectCheck, ProjectQualifications,
 from .project_validation import observation_subject, policy_subject
 from .project_validation_types import EvidencePolicy, ObservationQuery, ProjectObservation
 from .schema import require, fields, key
+from .runtime_limits import current_budget
 
 
 def original_with_own_relation(original, observed, identity, repository):
@@ -175,6 +177,13 @@ class ProductCoordinator(PersonalCoordinator):
 
 
 class ProductAuthority(PersonalAuthority):
+    def __init__(self, coordinator, *, qualification=None):
+        super().__init__(coordinator)
+        # Invocation-local authenticated facts, not a positive decision. The
+        # default authority (including after restart) always authenticates anew.
+        self.qualification = deepcopy(qualification)
+        self.operation = current_budget() if qualification is not None else None
+
     def _validate(self, body, *, _observed=None, _history_capture=None):
         fields(body, "schema_version purpose subject kind payload principal approval generation expires_at")
         require(type(body["schema_version"]) is int and body["schema_version"] == 1, "Unsupported personal authority")
@@ -260,25 +269,44 @@ class ProductAuthority(PersonalAuthority):
             require(purpose == "project-validation/policy" and policy.evidence is None
                     and policy.checks == flow.checks() and subject == policy_subject(plan, policy), "Actual prescribed check policy differs")
         elif kind == "native":
-            query, observed = typed(ObservationQuery, p["query"]), typed(ProjectObservation, p["observation"])
-            require(purpose == "project-validation/observation" and observed.evidence is None
+            query, native = typed(ObservationQuery, p["query"]), typed(ProjectObservation, p["observation"])
+            require(purpose == "project-validation/observation" and native.evidence is None
                     and query.request.repository_id == self.c.personal.repository_id and query.request.revision == self.c.revision()
-                    and query.request.pull == flow.ci_identity() and subject == observation_subject(query, observed)
-                    and 0 <= self.c.clock() - observed.observed_at <= 300, "Native CI observation identity/freshness differs")
+                    and query.request.pull == flow.ci_identity(_observed=observed) and subject == observation_subject(query, native)
+                    and 0 <= self.c.clock() - native.observed_at <= 300, "Native CI observation identity/freshness differs")
         elif kind in ("project-check", "project-policy", "review"):
             plan = typed(Plan, p["plan"])
+            latest = None
+            if self.qualification is not None:
+                require(self.operation is not None and current_budget() is self.operation,
+                        "Stage qualification cannot cross an operation or restart")
+                self.operation.check()
+                view, latest, worker = self.qualification
+                row = flow.record(_observed=observed)
+                require(view == digest(flow.active["view"]) and row["gates"][-1] == latest
+                        and flow.active["view"]["issued_at"] <= self.c.clock() < flow.active["view"]["expires_at"]
+                        and row["review"] == worker["request"]["id"]
+                        and self.c.worker(row["review"]) == worker
+                        and worker["request"]["revision"] == self.c.revision()
+                        and 0 <= self.c.clock() - latest["observed_at"] <= 300,
+                        "Owning-stage review/check evidence changed or expired")
+                from .guard_schema import requirement_id
+                self.c.allowed(requirement_id(flow.ci_specification.contract, flow.ci_specification.gate), _observed=observed)
+                self.c.workers.accounted(worker, observed)
             if kind == "project-check":
                 value = typed(ProjectCheck, p["value"])
                 require(purpose == "policy/project-check" and subject == PolicyProvider(None).project_check_subject(plan, value)
-                        and flow.check_matches(value), "Project check lacks actual current #21 provenance")
+                        and flow.check_matches(value, _latest=latest), "Project check lacks actual current #21 provenance")
             elif kind == "project-policy":
                 value = typed(ProjectQualifications, p["value"])
-                flow.qualified()
+                if latest is None:
+                    flow.qualified()
                 require(purpose == "policy/project-validation" and subject == PolicyProvider(None).project_policy_subject(plan, value)
                         and value.required == tuple((c.name, str(c.phase)) for c in flow.checks()), "Project phase policy differs")
             else:
                 value = typed(Review, p["value"])
-                flow.verify_review()
+                if latest is None:
+                    flow.verify_review()
                 reviewers = flow.review_principals()
                 require(purpose == "policy/review" and value.reviewer in reviewers and value.approved is True
                         and value.revision == self.c.revision() and value.observed_at <= self.c.clock() < value.expires_at

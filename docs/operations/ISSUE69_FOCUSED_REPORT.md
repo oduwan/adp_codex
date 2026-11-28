@@ -276,3 +276,42 @@ by the Issue69 handback after this report is frozen. Private raw evidence and
 receipt hashes remain outside Git; no credentials, host identities or
 transcripts are published here. Operator integration and later separately
 released pilot B remain external decisions.
+
+## Residual R1–R5 engineering revision
+
+The operator's later static findings supersede any implication that the27ca278
+handback completed MERGE/completion/REPORT/NEXT qualification. Original results,
+failed attempts and review receipts remain historical; no prior FAIL, ERROR,
+TIMEOUT, UNKNOWN or missing evidence becomes PASS.
+
+The residual call paths and retained boundaries are documented in the updated
+[call graph](EXTERNAL_LIFECYCLE_CALL_GRAPH.md#residual-r1r5-release-after27ca278).
+No generic M3/Memory observation protocol, new persistent cache, journal, store,
+provider, role or execution controller is introduced. Existing private evidence
+is authenticated at entry/restart; invocation-local typed operands cannot be
+used by a new public operation's Budget. Current mutable source, native policy,
+credentials, owner/generation, M2/deadline/revocation, dispatch and uncertainty
+fences remain authoritative.
+
+Focused late-stage fixtures explicitly seed stopped Codex-shaped receipts,
+reviewed local source, published refs and existing PRs. They execute production
+MERGE/native observation/settlement, completion, REPORT/comment reconciliation
+and actual NEXT enrollment/owner release for the original three-Issue graph.
+They do NOT qualify Worker execution, source development, publication/PR creation,
+real GitHub CI, full H3, #58 or M8. No actual Worker dispatch is permitted by the
+fixture. Query allowance5000ms and product10/150/128 remain unchanged.
+
+Historical development observations include an aggregate300s supervisor TIMEOUT
+and a later Case2 MERGE refusal before submission. Independent forensic analysis
+established the immediate5s native-observation deadline failure after
+`source.observe` returned, with aggregate time/request allowance still available.
+It did not establish complete native evidence, nor attribute the overrun to
+fsync, storage, scheduling or attestation. That underlying cause remains UNKNOWN.
+Fresh disposable RAM-backed fixtures may qualify process-restart/Git/CAS behavior;
+they do not qualify disk latency or host power-loss durability. Before/after
+comparisons must use the same fixture/storage environment; a disk-to-RAM change
+is not evidence of a product speedup.
+
+Final source identities, focused counts, comparative measurements, private
+integrity manifests, final review and readiness are supplied by the consolidated
+Issue69 handback. Missing mandatory results remain nonPASS until actually run.

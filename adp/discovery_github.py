@@ -15,7 +15,7 @@ from .config import Config
 from .errors import ADPError
 from .git import value
 from .schema import integer, require, string
-from .runtime_limits import http_request, read_operation, settings_for
+from .runtime_limits import BudgetRefusal, http_request, read_operation, settings_for
 from .discovery_schema import (MAX_ITEMS, NAME, digest, json_value, key, text,
     validate_snapshot)
 from .discovery_types import (Coverage, Identity, Issue, PullRequest, Relation,
@@ -200,6 +200,8 @@ class GitHubDiscoveryAdapter:
             if response.status in (401, 403, 429) or controls.get("x-ratelimit-remaining") == "0":
                 self._halt = True
             return Response(response.status, response.body, tuple(headers))
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError, ValueError, TypeError):
             return Response(0, None)
 

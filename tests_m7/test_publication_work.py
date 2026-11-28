@@ -96,8 +96,8 @@ class PublicationWorkTests(unittest.TestCase):
         self.addCleanup(fixture.doCleanups)
         pub, f, _ = fixture.policy_projection()
         prove = pub.proof.side_effect
-        def changed(purpose, subject, *args):
-            result = prove(purpose, subject, *args)
+        def changed(purpose, subject, *args, **kwargs):
+            result = prove(purpose, subject, *args, **kwargs)
             if purpose == "policy/operation":f.safety.value = replace(f.safety.value, owns_memory=False)
             return result
         pub.proof.side_effect = changed
@@ -167,9 +167,16 @@ class PublicationWorkTests(unittest.TestCase):
             calls.append((method, path)); return actual(method, path, body, **kw)
         http.request = counted
         f.c.fresh = Mock(side_effect=AssertionError("No unrelated complete discovery during publication"))
-        result = pub.publish(
-            reviewed=proposal["approval"], authorized=True, assume_quiescence=True, confirm_project_rules=True,
-            accept_plan_unavailable=plan_disabled)
+        from adp.policy import PolicyProvider
+        actual_plan = PolicyProvider.plan
+        with patch.object(pub.port, "_authorize", wraps=pub.port._authorize) as authorize, \
+                patch.object(PolicyProvider, "plan", autospec=True, side_effect=actual_plan) as plans:
+            result = pub.publish(
+                reviewed=proposal["approval"], authorized=True, assume_quiescence=True, confirm_project_rules=True,
+                accept_plan_unavailable=plan_disabled)
+            self.assertEqual(authorize.call_count, 2)  # Before first POST; post-upload before CAS.
+            self.assertEqual(plans.call_count, 4)  # Entry, SUBMITTED, pre-POST, pre-CAS.
+            print("PUBLICATION_AUTHORIZATION_COUNTS " + json.dumps({"native": authorize.call_count, "plans": plans.call_count}), flush=True)
         self.assertEqual(result["status"], "PUBLISHED_UNACCEPTED")
         self.assertEqual(result["product_acceptance"], "NOT_ACCEPTED")
         self.assertEqual(http.server.refs()[pub.target.ref], f.c.revision())

@@ -134,7 +134,7 @@ class RuntimeWorkTests(unittest.TestCase):
         pub.live=Mock(return_value={"view":{"expected_old":task.revision,"revision":task.revision,
             "issued_at":90,"expires_at":200},"requirement":task.requirement_id})
         pub.remote=Mock(return_value=task.revision);pub.rules=Mock(return_value=fixture.rules)
-        pub.proof=Mock(side_effect=lambda purpose,subject,*a:fixture.authority.sign(subject,purpose.removeprefix("policy/")))
+        pub.proof=Mock(side_effect=lambda purpose,subject,*a,**kw:fixture.authority.sign(subject,purpose.removeprefix("policy/")))
         pub.verify=fixture.authority.verify
         return pub,fixture,observed
 

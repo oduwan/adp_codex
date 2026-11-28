@@ -21,7 +21,7 @@ from .policy_schema import fingerprint, fresh, ref, sha
 from .policy_types import Operation
 from .schema import encode, integer, require, string
 from .storage import sync_directory
-from .runtime_limits import network_operation
+from .runtime_limits import BudgetRefusal, network_operation, reached
 
 
 class GitHubForgeHTTPTransport(GitHubHTTPTransport):
@@ -75,6 +75,8 @@ class _Responses:
     def request(self, method, path, payload=None):
         try:
             return Response(200, self.service.request(method, path, payload))
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError):
             return Response(0, None)
 
@@ -201,6 +203,8 @@ class GitHubProductForge(GitHubForgeBackend):
             expected = [payload["expected_base"], payload["revision"]] if payload["method"] == "merge" else [payload["expected_base"]]
             require(parents == expected, "Merged ancestry differs from observed base and reviewed source")
             return ExternalObservation("PRESENT", payload["pull"]["url"], result)
+        except BudgetRefusal:
+            raise
         except (ADPError, OSError, KeyError, TypeError):
             return ExternalObservation("UNKNOWN")
 
@@ -230,8 +234,10 @@ class GitHubProductForge(GitHubForgeBackend):
             validate()  # after all provider reads, immediately before PUT
             # Native API atomically tests HEAD only. This is deliberately not #14 CAS.
             try:
+                reached("effect.dispatch_requested")
                 self.service.request("PUT", f"/repos/{self.repository}/pulls/{payload['pull']['number']}/merge",
                     {"sha": payload["revision"], "merge_method": payload["method"]})
+                reached("effect.acknowledged")
             except (ADPError, OSError):
                 pass
             return self.observe(key, operation, payload, attempted=True)

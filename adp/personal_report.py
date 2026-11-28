@@ -27,7 +27,7 @@ from .network_git import GitHubTarget
 from .policy_types import Effect, Operation, Request
 from .schema import encode, fields, key, require
 from .storage import atomic
-from .runtime_limits import bind_consent, network_operation
+from .runtime_limits import bind_consent, network_operation, reached
 
 
 class PersonalReportTransport(PersonalProductTransport):
@@ -107,21 +107,29 @@ class PersonalReport(PersonalProduct):
         identity = typed(Identity, track.link["identity"])
         with self.service.bounded():
             capture = {} if self.c.episode else None
-            seal = self.local(_history_capture=capture)
-            facts = self.facts()
-            original = self.original()
-            current, observation, completed = track.status(transport=self.transport, runtimes={identity: self.c.runtime})
-            accepted = completed.get(identity)
+            subjects = {}
+            accepted = track.accepted(identity, transport=self.transport, runtime=self.c.runtime, _capture=subjects)
             require(accepted is not None, "Only actual accepted completion can produce a product report")
+            require(type(subjects.get(identity)) is tuple and len(subjects[identity]) == 5,
+                    "Selected completion qualification is missing or malformed")
+            observed = self.c.live(_history_capture=capture) if capture is not None else self.c.live()
+            from .personal_episode import same_observation
+            same_observation(subjects[identity][1], observed)
+            # accepted() just authenticated all stopped roles, packet, source
+            # and CI at this same canonical subject. Do not authenticate them
+            # a second time through cold local admission in this stage.
+            seal = self.local(genuine=False, _observed=observed)
+            facts = self.facts()
+            original_capture = {}
+            original = self.original(_capture=original_capture)
             if _observation is not None:
-                _observation.append(observation)
+                _observation.append(next(i for i in original_capture["issues"] if i.identity == identity))
             body = ("Implemented original Issue " + str(self.personal.plan["issue"]) + ": " + self.personal.intent["original"]["title"]
                 + "\n\nReviewed source: `" + accepted["source"] + "`. " + accepted["pull"]["url"]
                 + "\nProject checks at acceptance: " + accepted["ci"]["status"]
                 + ". Independent review approved that exact source."
                 + "\nMerged as `" + accepted["merge"] + "` by github-user:" + str(accepted["actor"]) + "."
-                + ("\nNext original Issue " + str(current["next_issue"]) + " needs separate scope/window approval."
-                    if current["next_issue"] is not None else "\nTrack: " + current["status"] + "."))
+                + "\nAny next original requires fresh eligibility and separate scope/window approval.")
             product_text("Product outcome", body)
             observed = self.c.memory.inspect()
             view = {"operation": "REPORT", "runtime_limits": self.service.limits.values(),
@@ -199,8 +207,7 @@ class PersonalReport(PersonalProduct):
                 observation = []
                 proposal = self.report_preview(approved=reviewed, _observation=observation)
                 require(proposal["approval"] == reviewed, "Exact report proposal changed")
-                current = observation[0]
-                issue = next(i for i in current.snapshot.issues if data(i.identity) == self.c.track.link["identity"])
+                issue = observation[0]
                 row = {"view": proposal["result"], "approval": reviewed, "binding": proposal["binding"],
                     "action": self.report_key(), "requirement": None, "reservation": None, "observation": None,
                     "before": data(issue), "after": None, "comment": None}
@@ -241,8 +248,10 @@ class PersonalReport(PersonalProduct):
                         "expected_target": plan.expected_target, "payload": payload, "status": "PREPARED", "observation": None,
                         "plan_digest": digest(plan)}
                     self.journal.change(lambda e, s, t: e["actions"].update({row["action"]: action}))
+                    reached("effect.prepared")
                     dispatch = self.forge.prepare_dispatch(row["action"], action)
                     self.journal.change(lambda e, s, t: e["actions"][row["action"]].update(status="SUBMITTED"))
+                    reached("effect.submitted")
                     current = provider.plan(task, plan.request)
                     require(replace(current, safety=plan.safety) == plan, "Report plan changed after checkpoint")
                     plan = current
@@ -263,6 +272,7 @@ class PersonalReport(PersonalProduct):
                     self._writing = None
             with self.service.bounded():
                 observed, comment = self.observed_report(row)
+                reached("effect.observed")
                 canonical = self.journal.inspect()["state"]["execution"]
                 publication = {"action": row["action"], "body_digest": digest(row["view"]["body"]), "reference": observed.reference}
                 if (row["after"] is not None and row["observation"] == data(observed)
@@ -289,4 +299,5 @@ class PersonalReport(PersonalProduct):
                     {"action": row["action"], "body_digest": digest(row["view"]["body"]), "reference": observed.reference}}))
                 if self.c.record()["coordination"] is not None:
                     self.c.conclude(typed(Permit, row["reservation"]), "personal:report:" + row["action"])
+                reached("effect.settled")
                 return {"status": "REPORTED", "reference": observed.reference, "revision": self.c.revision(), "runtime_qualification": "NOTRUN"}
